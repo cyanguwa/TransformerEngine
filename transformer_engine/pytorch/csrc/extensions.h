@@ -6,22 +6,42 @@
 
 #include "common.h"
 
+//struct NVTETensorPack {
+//  static const int MAX_SIZE = 10;
+//  NVTETensor tensors[MAX_SIZE];
+//  bool set_zero[MAX_SIZE];
+//  size_t size;
+//};
+
 std::vector<at::Tensor> fused_attn_fwd(
                 int64_t b, int64_t max_seq_len,
                 int64_t total_seqs, int64_t h, int64_t d,
-                float attn_scale, float p_dropout,
-                int qkv_layout, bool is_training, bool set_zero,
-                const at::Tensor &QKV,
-                transformer_engine::DType QKV_type,
-                const at::Tensor &descaleQKV,
-                const at::Tensor &scaleS,
-                const at::Tensor &scaleO,
-                at::Tensor amaxS,
-                at::Tensor amaxO,
-                const at::Tensor &QKVRaggedOffset,
-                const at::Tensor &ORaggedOffset,
-                const at::Tensor &Seqlens,
+                bool is_training, float attn_scale, float p_dropout,
+                bool set_zero, int qkv_layout,
+                std::vector<at::Tensor> input_tensor_list,
+                transformer_engine::DType qkv_tex_dtype,
+                std::vector<at::Tensor> fp8_amax_list,
+                std::vector<at::Tensor> fp8_scale_list,
+                std::vector<at::Tensor> fp8_scale_inv_list,
+                std::vector<at::Tensor> seqlen_list,
                 const c10::optional<at::Generator> rng_gen);
+
+//std::vector<at::Tensor> fused_attn_fwd(
+//                int64_t b, int64_t max_seq_len,
+//                int64_t total_seqs, int64_t h, int64_t d,
+//                float attn_scale, float p_dropout,
+//                int qkv_layout, bool is_training, bool set_zero,
+//                const at::Tensor &QKV,
+//                transformer_engine::DType QKV_type,
+//                const at::Tensor &descaleQKV,
+//                const at::Tensor &scaleS,
+//                const at::Tensor &scaleO,
+//                at::Tensor amaxS,
+//                at::Tensor amaxO,
+//                const at::Tensor &QKVRaggedOffset,
+//                const at::Tensor &ORaggedOffset,
+//                const at::Tensor &Seqlens,
+//                const c10::optional<at::Generator> rng_gen);
 
 at::Tensor fused_attn_bwd(
                 int64_t b, int64_t max_seq_len,

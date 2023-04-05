@@ -2101,46 +2101,86 @@ void fa_fp8_bprop(
 
 }  // namespace fused_attn
 
-void fused_attn_fwd(
+void fused_attn_fwd_fp8(
             int64_t b, int64_t max_seq_len, int64_t h, int64_t d,
-            float attn_scale, float p_dropout,
-            int qkv_layout, bool is_training,
-            const Tensor *input_QKV,
-            Tensor *input_M, Tensor *input_ZInv,
-            Tensor *input_S, Tensor *input_O,
-            int32_t *QKVRaggedOffset, int32_t *ORaggedOffset,
-            int32_t *Seqlens, uint64_t *RngState,
+            bool is_training, float attn_scale,
+            float p_dropout, int qkv_layout,
+            const std::vector<Tensor*> input_list,
+            std::vector<float*> fp8_amax_dptr_list,
+            std::vector<float*> fp8_scale_dptr_list,
+            std::vector<float*> fp8_scale_inv_dptr_list,
+            std::vector<Tensor*> output_list,
+            std::vector<int32_t*> seqlen_list,
+            uint64_t *RngState,
             Tensor *workspace,
             cudaStream_t stream,
             cudnnHandle_t handle) {
+  // amax_s, amax_o = fp8_amax_list
+  // q_scale_s, q_scale_o = fp8_scale_list
+  // d_scale_qkv = fp8_scale_inv_list
+  const Tensor* input_QKV = input_list[0];
   void* devPtrQKV = input_QKV->data.dptr;
-  void* devPtrDescaleQ = input_QKV->scale_inv.dptr;
-  void* devPtrDescaleK = input_QKV->scale_inv.dptr;
-  void* devPtrDescaleV = input_QKV->scale_inv.dptr;
+  void* devPtrDescaleQ = fp8_scale_inv_dptr_list[0];
+  void* devPtrDescaleK = fp8_scale_inv_dptr_list[0];
+  void* devPtrDescaleV = fp8_scale_inv_dptr_list[0];
 
-  void* devPtrM = input_M->data.dptr;
-  void* devPtrZInv = input_ZInv->data.dptr;
+  void* devPtrAmaxS = fp8_amax_dptr_list[0];
+  void* devPtrScaleS = fp8_scale_dptr_list[0];
+  void* devPtrDescaleS = fp8_scale_inv_dptr_list[0]; // temporary
 
-  void* devPtrAmaxS = input_S->amax.dptr;
-  void* devPtrScaleS = input_S->scale.dptr;
-  void* devPtrDescaleS = input_S->scale_inv.dptr;
+  Tensor* output_O = output_list[0];
+  void* devPtrO = output_O->data.dptr;
+  void* devPtrAmaxO = fp8_amax_dptr_list[1];
+  void* devPtrScaleO = fp8_scale_dptr_list[1];
 
-  void* devPtrO = input_O->data.dptr;
-  void* devPtrAmaxO = input_O->amax.dptr;
-  void* devPtrScaleO = input_O->scale.dptr;
+  void* devPtrM = nullptr;
+  void* devPtrZInv = nullptr;
+  if (is_training) {
+    Tensor* output_M = output_list[1];
+    devPtrM = output_M->data.dptr;
+    Tensor* output_ZInv = output_list[2];
+    devPtrZInv = output_ZInv->data.dptr;
+  }
 
-  void* devPtrQKVRaggedOffset = reinterpret_cast<void *>(QKVRaggedOffset);
-  void* devPtrORaggedOffset = reinterpret_cast<void *>(ORaggedOffset);
-  void* devPtrDropoutSeed = reinterpret_cast<void *>(RngState);
-  void* devPtrDropoutOffset = reinterpret_cast<void *>(RngState + 1);
-  void* devPtrMNKOverride = reinterpret_cast<void *>(Seqlens);
+  void* devPtrQKVRaggedOffset = (void *)(seqlen_list[0]);
+  void* devPtrORaggedOffset = (void *)(seqlen_list[1]);
+  void* devPtrMNKOverride = (void *)(seqlen_list[2]);
+
+  void* devPtrDropoutSeed = (void *)RngState;
+  void* devPtrDropoutOffset = (void *)(RngState + 1);
 
   const DType QKV_type = input_QKV->data.dtype;
   MHA_Layout layout = get_mha_layout(qkv_layout);
   uint64_t workspace_size = 0;
 
-  if (((QKV_type == DType::kFloat8E4M3) || (QKV_type == DType::kFloat8E5M2))
-                  && (max_seq_len <= 512)) {
+//  void* devPtrQKV = input_QKV->data.dptr;
+//  void* devPtrDescaleQ = input_QKV->scale_inv.dptr;
+//  void* devPtrDescaleK = input_QKV->scale_inv.dptr;
+//  void* devPtrDescaleV = input_QKV->scale_inv.dptr;
+//
+//  void* devPtrM = input_M->data.dptr;
+//  void* devPtrZInv = input_ZInv->data.dptr;
+//
+//  void* devPtrAmaxS = input_S->amax.dptr;
+//  void* devPtrScaleS = input_S->scale.dptr;
+//  void* devPtrDescaleS = input_S->scale_inv.dptr;
+//
+//  void* devPtrO = input_O->data.dptr;
+//  void* devPtrAmaxO = input_O->amax.dptr;
+//  void* devPtrScaleO = input_O->scale.dptr;
+//
+//  void* devPtrQKVRaggedOffset = reinterpret_cast<void *>(QKVRaggedOffset);
+//  void* devPtrORaggedOffset = reinterpret_cast<void *>(ORaggedOffset);
+//  void* devPtrDropoutSeed = reinterpret_cast<void *>(RngState);
+//  void* devPtrDropoutOffset = reinterpret_cast<void *>(RngState + 1);
+//  void* devPtrMNKOverride = reinterpret_cast<void *>(Seqlens);
+//
+//  const DType QKV_type = input_QKV->data.dtype;
+//  MHA_Layout layout = get_mha_layout(qkv_layout);
+//  uint64_t workspace_size = 0;
+
+//  if (((QKV_type == DType::kFloat8E4M3) || (QKV_type == DType::kFloat8E5M2))
+//                  && (max_seq_len <= 512)) {
 #if (CUDNN_VERSION >= 8900)
     fused_attn::fa_fp8_fprop(
                     b, h, max_seq_len, max_seq_len, d,
@@ -2168,14 +2208,14 @@ void fused_attn_fwd(
 #else
     printf("Error: CUDNN_VERSION must be >= 8900! \n");
 #endif
-  } else if (((QKV_type == DType::kFloat16) || (QKV_type == DType::kBFloat16))
-                  && (max_seq_len <= 512)) {
-    NVTE_ERROR("TBD: No support for BF16/FP16 fused attention currently. \n");
-  } else if (max_seq_len > 512) {
-    NVTE_ERROR("TBD: No support for fused attention with >512 seqlence length currently. \n");
-  } else {
-    NVTE_ERROR("Invalid combination of data type and sequence length! \n");
-  }
+//  } else if (((QKV_type == DType::kFloat16) || (QKV_type == DType::kBFloat16))
+//                  && (max_seq_len <= 512)) {
+//    NVTE_ERROR("TBD: No support for BF16/FP16 fused attention currently. \n");
+//  } else if (max_seq_len > 512) {
+//    NVTE_ERROR("TBD: No support for fused attention with >512 seqlence length currently. \n");
+//  } else {
+//    NVTE_ERROR("Invalid combination of data type and sequence length! \n");
+//  }
 }
 
 void fused_attn_bwd(
@@ -2272,31 +2312,124 @@ void fused_attn_bwd(
 }  // namespace transformer_engine
 
 void nvte_fused_attn_fwd(
-            int64_t b, int64_t max_seq_len, int64_t h, int64_t d,
-            float attn_scale, float p_dropout,
-            int qkv_layout, bool is_training,
-            const NVTETensor QKV,
-            NVTETensor M, NVTETensor ZInv,
-            NVTETensor S, NVTETensor O,
-            int32_t *QKVRaggedOffset, int32_t *ORaggedOffset,
-            int32_t *Seqlens, uint64_t *RngState,
+            int64_t b, int64_t max_seq_len, int64_t total_seqs, int64_t h, int64_t d,
+            bool is_training, float attn_scale,
+            float p_dropout, int qkv_layout, 
+            size_t num_input_tensors,
+            const NVTETensor* input_list,
+            transformer_engine::DType qkv_tex_dtype,
+            std::vector<float*> fp8_amax_dptr_list,
+            std::vector<float*> fp8_scale_dptr_list,
+            std::vector<float*> fp8_scale_inv_dptr_list,
+            OutputTensorPack* output_pack,
+            std::vector<int32_t*> seqlen_list,
+            uint64_t *rng_state,
             NVTETensor workspace,
             cudaStream_t stream) {
   NVTE_API_CALL(nvte_flash_attn_fwd);
   using namespace transformer_engine;
-  const Tensor *input_QKV = reinterpret_cast<const Tensor*>(QKV);
-  Tensor *output_M = reinterpret_cast<Tensor*>(M);
-  Tensor *output_ZInv = reinterpret_cast<Tensor*>(ZInv);
-  Tensor *output_S = reinterpret_cast<Tensor*>(S);
-  Tensor *output_O = reinterpret_cast<Tensor*>(O);
-  Tensor *wkspace = reinterpret_cast<Tensor*>(workspace);
 
-  auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
-  fused_attn_fwd(b, max_seq_len, h, d,
-                  attn_scale, p_dropout, qkv_layout, is_training,
-                  input_QKV, output_M, output_ZInv, output_S, output_O,
-                  QKVRaggedOffset, ORaggedOffset, Seqlens,
-                  RngState, wkspace, stream, handle);
+  std::vector<Tensor*> input_list_, output_list_;
+  for (size_t i = 0; i < num_input_tensors; ++i) {
+    input_list_.push_back(reinterpret_cast<Tensor*>(const_cast<NVTETensor&>(input_list[i])));
+  }
+//  for (size_t i = 0; i < output_pack->size; ++i) {
+//    output_list_.push_back(reinterpret_cast<Tensor*>(output_pack->tensors[i].data()));
+//  }
+
+  Tensor *wkspace = reinterpret_cast<Tensor*>(workspace);
+  printf("----- qkv_tex_dtype %d ---- \n", (int)qkv_tex_dtype);
+
+  if (((qkv_tex_dtype == DType::kFloat8E4M3) || (qkv_tex_dtype == DType::kFloat8E5M2))
+                  && (max_seq_len <= 512)) {
+    if (output_pack->size == 0) {
+      std::vector<size_t> O_shape{static_cast<size_t>(total_seqs), static_cast<size_t>(h), static_cast<size_t>(d)};
+      std::vector<size_t> M_ZInv_shape{static_cast<size_t>(b), static_cast<size_t>(h), static_cast<size_t>(max_seq_len), 1};
+      if (is_training) {
+        output_pack->size = 3;  // {O, M, ZInv}
+        Tensor O, M, ZInv;
+	O.data.dptr = nullptr;
+	O.data.shape = O_shape;
+	O.data.dtype = qkv_tex_dtype;
+	M.data.dptr = nullptr;
+	M.data.shape = M_ZInv_shape;
+	M.data.dtype = transformer_engine::DType::kFloat32;
+	ZInv.data.dptr = nullptr;
+	ZInv.data.shape = M_ZInv_shape;
+	ZInv.data.dtype = transformer_engine::DType::kFloat32;
+        //NVTETensor O = Tensor(nullptr, O_shape, qkv_tex_dtype);
+        output_pack->tensors.push_back(reinterpret_cast<NVTETensor>(&O)); // [0]->data.shape = O_shape;
+        //TensorWrapper M = makeTransformerEngineTensor(nullptr, M_ZInv_shape, transformer_engine::DType::kFloat32);
+        //TensorWrapper ZInv = makeTransformerEngineTensor(nullptr, M_ZInv_shape, transformer_engine::DType::kFloat32);
+        output_pack->tensors.push_back(reinterpret_cast<NVTETensor>(&M)); // [0]->data.shape = O_shape;
+        output_pack->tensors.push_back(reinterpret_cast<NVTETensor>(&ZInv)); // [0]->data.shape = O_shape;
+	output_pack->set_zero.push_back(true);
+	output_pack->set_zero.push_back(false);
+	output_pack->set_zero.push_back(false);
+        printf("--- changing size %d, dtype %d \n", output_pack->size, (int)qkv_tex_dtype);
+	for (int j: O_shape)
+		std::cout << j << ' ' << std::endl;
+	for (int j: M_ZInv_shape)
+		std::cout << j << ' ' << std::endl;
+
+        //output_list_[0]->data.shape = O_shape;
+        //output_list_[0]->data.dtype = qkv_tex_dtype; 
+        //output_list_[1]->data.shape = M_ZInv_shape;
+        //output_list_[1]->data.dtype = transformer_engine::DType::kFloat32;
+        //output_list_[2]->data.shape = M_ZInv_shape;
+        //output_list_[2]->data.dtype = transformer_engine::DType::kFloat32;
+      } else {
+        output_pack->size = 1;  // {O}
+        Tensor O;
+	O.data.dptr = nullptr;
+	O.data.shape = O_shape;
+	O.data.dtype = qkv_tex_dtype;
+        //TensorWrapper O = makeTransformerEngineTensor(nullptr, O_shape, qkv_tex_dtype);
+        output_pack->tensors.push_back(reinterpret_cast<NVTETensor>(&O)); // [0]->data.shape = O_shape;
+	output_pack->set_zero.push_back(true);
+        //output_list_[0]->data.shape = O_shape;
+        //output_list_[0]->data.dtype = qkv_tex_dtype; 
+        printf("--- changing size %d, dtype %d \n", output_pack->size, (int)qkv_tex_dtype);
+	for (int j: O_shape)
+		std::cout << j << ' ' << std::endl;
+      }
+      printf("--- changing size \n");
+      return;
+    }
+
+    printf("--- executing \n");
+    auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
+    fused_attn_fwd_fp8(
+            b, max_seq_len, h, d,
+            is_training, attn_scale, p_dropout, qkv_layout,
+            input_list_,
+            fp8_amax_dptr_list,
+            fp8_scale_dptr_list,
+            fp8_scale_inv_dptr_list,
+            output_list_,
+            seqlen_list,
+            rng_state, wkspace, stream, handle);
+  } else if (((qkv_tex_dtype == DType::kFloat16) || (qkv_tex_dtype == DType::kBFloat16))
+                  && (max_seq_len <= 512)) {
+    NVTE_ERROR("TBD: No support for BF16/FP16 fused attention currently. \n");
+  } else if (max_seq_len > 512) {
+    NVTE_ERROR("TBD: No support for fused attention with >512 seqlence length currently. \n");
+  } else {
+    NVTE_ERROR("Invalid combination of data type and sequence length! \n");
+  }
+//  const Tensor *input_QKV = reinterpret_cast<const Tensor*>(QKV);
+//  Tensor *output_M = reinterpret_cast<Tensor*>(M);
+//  Tensor *output_ZInv = reinterpret_cast<Tensor*>(ZInv);
+//  Tensor *output_S = reinterpret_cast<Tensor*>(S);
+//  Tensor *output_O = reinterpret_cast<Tensor*>(O);
+//  Tensor *wkspace = reinterpret_cast<Tensor*>(workspace);
+//
+//  auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
+//  fused_attn_fwd(b, max_seq_len, h, d,
+//                  attn_scale, p_dropout, qkv_layout, is_training,
+//                  input_QKV, output_M, output_ZInv, output_S, output_O,
+//                  QKVRaggedOffset, ORaggedOffset, Seqlens,
+//                  RngState, wkspace, stream, handle);
 }
 
 void nvte_fused_attn_bwd(

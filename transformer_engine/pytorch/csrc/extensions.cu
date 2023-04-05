@@ -10,6 +10,7 @@
 #include <string>
 #include <ATen/native/DispatchStub.h>
 #include <c10/macros/Macros.h>
+#include "../common.h"
 
 constexpr int block_size = 512;
 constexpr int ctas_per_sm = 4;
@@ -77,45 +78,129 @@ at::PhiloxCudaState init_philox_state(
 std::vector<at::Tensor> fused_attn_fwd(
                 int64_t b, int64_t max_seq_len,
                 int64_t total_seqs, int64_t h, int64_t d,
-                float attn_scale, float p_dropout,
-                int qkv_layout, bool is_training, bool set_zero,
-                const at::Tensor &QKV,
-                transformer_engine::DType QKV_type,
-                const at::Tensor &descaleQKV,
-                const at::Tensor &scaleS,
-                const at::Tensor &scaleO,
-                at::Tensor amaxS,
-                at::Tensor amaxO,
-                const at::Tensor &QKVRaggedOffset,
-                const at::Tensor &ORaggedOffset,
-                const at::Tensor &Seqlens,
+                bool is_training, float attn_scale, float p_dropout,
+                bool set_zero, int qkv_layout,
+                std::vector<at::Tensor> input_tensor_list,
+                transformer_engine::DType qkv_tex_dtype,
+                std::vector<at::Tensor> fp8_amax_list,
+                std::vector<at::Tensor> fp8_scale_list,
+                std::vector<at::Tensor> fp8_scale_inv_list,
+                std::vector<at::Tensor> seqlen_list,
                 const c10::optional<at::Generator> rng_gen) {
   using namespace transformer_engine;
-  auto te_QKV = makeTransformerEngineTensor(QKV.data_ptr(),
-                  {static_cast<size_t>(total_seqs),
-                  3, static_cast<size_t>(h), static_cast<size_t>(d)},
-                  QKV_type, nullptr, nullptr, descaleQKV.data_ptr());
 
-  auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
-  auto M = torch::zeros({b, h, max_seq_len, 1}, options);
-  auto ZInv = torch::zeros({b, h, max_seq_len, 1}, options);
-  auto te_M = makeTransformerEngineTensor(M);
-  auto te_ZInv = makeTransformerEngineTensor(ZInv);
+  // Extract properties from PyTorch tensors
+  std::vector<void*> input_dptr_list;
+  std::vector<std::vector<size_t>> input_shape_list;
+  std::vector<transformer_engine::DType> input_type_list;
 
-  // ghost tensor, not returned upstream
-  at::Tensor descaleS = torch::empty_like(scaleS);
-  auto te_S = makeTransformerEngineTensor(nullptr, {0}, QKV_type,
-                  amaxS.data_ptr(), scaleS.data_ptr(), descaleS.data_ptr());
+  auto extract_tensor_props = [](at::Tensor& tensor,
+		  std::vector<void*>& dptr_list,
+		  std::vector<std::vector<size_t>>& shape_list,
+		  std::vector<transformer_engine::DType>& type_list) {
+    dptr_list.push_back(tensor.data_ptr());
+    shape_list.push_back({});
+    for (int d = 0; d < tensor.dim(); ++d) {
+      shape_list.back().push_back(tensor.size(d));
+    }
+    type_list.push_back(GetTransformerEngineDType(tensor.scalar_type()));
+  };
 
-  auto O = torch::empty({total_seqs, h, d}, options.dtype(torch::kByte));
-  if (set_zero) {
-    mha_fill(O, at::cumsum(Seqlens, 0)
-                    .index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  for (size_t tensor_id = 0; tensor_id < input_tensor_list.size(); ++tensor_id) {
+    extract_tensor_props(input_tensor_list[tensor_id],
+            input_dptr_list,
+            input_shape_list,
+	    input_type_list);
   }
-  auto te_O = makeTransformerEngineTensor(O.data_ptr(),
-                  {static_cast<size_t>(total_seqs),
-                  static_cast<size_t>(h), static_cast<size_t>(d)}, QKV_type,
-                  amaxO.data_ptr(), scaleO.data_ptr(), nullptr);
+
+  std::vector<float*> fp8_amax_dptr_list, fp8_scale_dptr_list, fp8_scale_inv_dptr_list;
+  if ((fp8_amax_list.size() > 0) || (fp8_scale_list.size() > 0)
+          || (fp8_scale_inv_list.size() > 0) ) {
+    auto extract_tensor_props_dptr_only = [](at::Tensor& tensor,
+                  std::vector<float*>& dptr_list) {
+      dptr_list.push_back(reinterpret_cast<float*>(tensor.data_ptr()));
+    };
+
+    for (size_t tensor_id = 0; tensor_id < input_tensor_list.size(); ++tensor_id) {
+      extract_tensor_props_dptr_only(fp8_amax_list[tensor_id],
+                    fp8_amax_dptr_list);
+      extract_tensor_props_dptr_only(fp8_scale_list[tensor_id],
+                    fp8_scale_dptr_list);
+      extract_tensor_props_dptr_only(fp8_scale_inv_list[tensor_id],
+                    fp8_scale_inv_dptr_list);
+    }
+//    std::vector<void*> input_amax_dptr_list, input_scale_dptr_list, input_scale_inv_dptr_list;
+//    input_amax_dptr_list.push_back(nullptr);
+//    input_scale_dptr_list.push_back(nullptr);
+//    input_scale_inv_dptr_list.push_back(fp8_scale_inv_list[0].data_ptr());
+  }
+
+  // Construct TE tensors
+  std::vector<NVTETensor> nvte_input_list;
+  std::vector<transformer_engine::TensorWrapper> tensor_wrappers;
+  auto make_tensor = [&tensor_wrappers](void* dptr,
+                                        const std::vector<size_t>& shape,
+                                        transformer_engine::DType dtype,
+                                        void* amax_dptr,
+                                        void* scale_dptr,
+                                        void* scale_inv_dptr)
+    -> NVTETensor {
+    tensor_wrappers.emplace_back(makeTransformerEngineTensor(dptr, shape, dtype, amax_dptr,
+                                                             scale_dptr, scale_inv_dptr));
+    return tensor_wrappers.back().data();
+  };
+
+//  if ((fp8_amax_list.size() > 0) || (fp8_scale_list.size() > 0)
+//          || (fp8_scale_inv_list.size() > 0) ) {
+//    for (size_t i = 0; i < input_dptr_list.size(); ++i) {
+//        nvte_input_list.emplace_back(make_tensor(input_dptr_list[i],
+//                            input_shape_list[i],
+//                            input_type_list[i],
+//                            input_amax_dptr_list[i],
+//                            input_scale_dptr_list[i],
+//                            input_scale_inv_dptr_list[i]));
+//    }
+//  } else {
+//    for (size_t i = 0; i < input_dptr_list.size(); ++i) {
+//        nvte_input_list.emplace_back(make_tensor(input_dptr_list[i],
+//                            input_shape_list[i],
+//                            input_type_list[i],
+//                            nullptr, nullptr, nullptr));
+//    }
+//  }
+  for (size_t i = 0; i < input_dptr_list.size(); ++i) {
+    nvte_input_list.emplace_back(make_tensor(input_dptr_list[i],
+                        input_shape_list[i],
+                        input_type_list[i],
+                        nullptr, nullptr, nullptr));
+  }
+
+
+//  auto te_QKV = makeTransformerEngineTensor(QKV.data_ptr(),
+//                  {static_cast<size_t>(total_seqs),
+//                  3, static_cast<size_t>(h), static_cast<size_t>(d)},
+//                  QKV_type, nullptr, nullptr, descaleQKV.data_ptr());
+//
+  auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA);
+//  auto M = torch::zeros({b, h, max_seq_len, 1}, options);
+//  auto ZInv = torch::zeros({b, h, max_seq_len, 1}, options);
+//  auto te_M = makeTransformerEngineTensor(M);
+//  auto te_ZInv = makeTransformerEngineTensor(ZInv);
+//
+//  // ghost tensor, not returned upstream
+//  at::Tensor descaleS = torch::empty_like(scaleS);
+//  auto te_S = makeTransformerEngineTensor(nullptr, {0}, QKV_type,
+//                  amaxS.data_ptr(), scaleS.data_ptr(), descaleS.data_ptr());
+//
+//  auto O = torch::empty({total_seqs, h, d}, options.dtype(torch::kByte));
+//  if (set_zero) {
+//    mha_fill(O, at::cumsum(Seqlens, 0)
+//                    .index({torch::indexing::Slice(-1, torch::indexing::None)}));
+//  }
+//  auto te_O = makeTransformerEngineTensor(O.data_ptr(),
+//                  {static_cast<size_t>(total_seqs),
+//                  static_cast<size_t>(h), static_cast<size_t>(d)}, QKV_type,
+//                  amaxO.data_ptr(), scaleO.data_ptr(), nullptr);
 
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
@@ -125,48 +210,93 @@ std::vector<at::Tensor> fused_attn_fwd(
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
 
+  // Convert seqlen or ragged_offset lists to int32* dptrs
+  std::vector<int32_t*> nvte_seqlen_list;
+  auto convert_tensor_to_int32_dptrs = [](at::Tensor& tensor,
+                  std::vector<int32_t*>& dptr_list) {
+    dptr_list.push_back(reinterpret_cast<int32_t*>(tensor.data_ptr()));
+  };
+  for (size_t seqlist_id = 0; seqlist_id < seqlen_list.size(); ++seqlist_id) {
+    convert_tensor_to_int32_dptrs(seqlen_list[seqlist_id],
+                    nvte_seqlen_list);
+  }
+
   TensorWrapper workspace;
+  //NVTETensorPack nvte_output_pack;
+  OutputTensorPack nvte_output_pack;
 
   // This call populates workspace tensors with the required config
   nvte_fused_attn_fwd(
-                  b, max_seq_len, h, d,
-                  attn_scale, p_dropout,
-                  qkv_layout, is_training,
-                  te_QKV.data(),
-                  te_M.data(),
-                  te_ZInv.data(),
-                  te_S.data(),
-                  te_O.data(),
-                  reinterpret_cast<int32_t*>(QKVRaggedOffset.data_ptr()),
-                  reinterpret_cast<int32_t*>(ORaggedOffset.data_ptr()),
-                  reinterpret_cast<int32_t*>(Seqlens.data_ptr()),
+                  b, max_seq_len, total_seqs, h, d,
+                  is_training, attn_scale,
+                  p_dropout, qkv_layout,
+                  nvte_input_list.size(),
+                  nvte_input_list.data(),
+                  qkv_tex_dtype,
+                  fp8_amax_dptr_list,
+                  fp8_scale_dptr_list,
+                  fp8_scale_inv_dptr_list,
+                  &nvte_output_pack,
+                  nvte_seqlen_list,
                   reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
   // Fill workspace
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
-  workspace = makeTransformerEngineTensor(workspace_data.data_ptr(),
+  workspace = makeTransformerEngineTensor(
+                  workspace_data.data_ptr(),
                   workspace.shape(), workspace.dtype());
+
+  printf("---- after first call: pack size %d \n", nvte_output_pack.size);
+  // Allocate output tensors 
+  std::vector<at::Tensor> nvte_output_list(nvte_output_pack.size);
+  for (size_t i = 0; i < nvte_output_pack.size; ++i) {
+    std::vector<size_t> shape = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i])->data.shape;
+    printf("---- tensor %d: \n", (int)i, nvte_output_pack.size);
+    for (int j: shape)
+      std::cout << j << ' ';
+    std::cout << std::endl;
+    nvte_output_list[i] = allocateSpace(
+                    //nvte_output_pack.tensors[i].shape(),
+                    //nvte_output_pack.tensors[i].dtype(),
+                    NVTEShape{shape.data(), shape.size()},
+                    reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i])->data.dtype,
+                    nvte_output_pack.set_zero[i]);
+    Tensor output;
+    output.data.dptr = nvte_output_list[i].data_ptr();
+    output.data.shape = shape; //NVTEShape{shape.data(), shape.size()};
+    output.data.dtype = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i])->data.dtype;
+    nvte_output_pack.tensors[i] = reinterpret_cast<NVTETensor>(&output);
+	    //makeTransformerEngineTensor(
+            //        nvte_output_list[i].data_ptr(),
+            //        //nvte_output_pack.tensors[i].shape(),
+            //        //nvte_output_pack.tensors[i].dtype());
+            //        //reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i])->data.shape,
+            //        NVTEShape{shape.data(), shape.size()},
+            //        reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i])->data.dtype);
+  }
+  //nvte_output_pack.is_allocated = true;
 
   // Actual call to kernel
   nvte_fused_attn_fwd(
-                  b, max_seq_len, h, d,
-                  attn_scale, p_dropout,
-                  qkv_layout, is_training,
-                  te_QKV.data(),
-                  te_M.data(),
-                  te_ZInv.data(),
-                  te_S.data(),
-                  te_O.data(),
-                  reinterpret_cast<int32_t*>(QKVRaggedOffset.data_ptr()),
-                  reinterpret_cast<int32_t*>(ORaggedOffset.data_ptr()),
-                  reinterpret_cast<int32_t*>(Seqlens.data_ptr()),
+                  b, max_seq_len, total_seqs, h, d,
+                  is_training, attn_scale,
+                  p_dropout, qkv_layout,
+                  nvte_input_list.size(),
+                  nvte_input_list.data(),
+                  qkv_tex_dtype,
+                  fp8_amax_dptr_list,
+                  fp8_scale_dptr_list,
+                  fp8_scale_inv_dptr_list,
+                  &nvte_output_pack,
+                  nvte_seqlen_list,
                   reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  return {O, M, ZInv, rng_state};
+  nvte_output_list.push_back(rng_state);
+  return nvte_output_list;
 }
 
 at::Tensor fused_attn_bwd(
