@@ -65,7 +65,7 @@ class cudnnExecutionPlanManager {
 struct OutputTensorPack {
   static const int MAX_SIZE = 10;
   NVTETensor tensors[MAX_SIZE];
-  bool set_zero[MAX_SIZE];
+  //bool set_zero[MAX_SIZE];
   //std::vector<transformer_engine::TensorWrapper> tensors;  // [MAX_SIZE];
   //std::vector<NVTETensor> tensors;  // [MAX_SIZE];
   //bool set_zero[MAX_SIZE];

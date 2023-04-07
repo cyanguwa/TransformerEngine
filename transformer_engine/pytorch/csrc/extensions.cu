@@ -230,13 +230,16 @@ std::vector<at::Tensor> fused_attn_fwd(
     std::cout << (int)(tensor->data.dtype) << std::endl;
 
     //auto output_tensor_data = allocateSpace(tensor_shape, tensor->data.dtype,
-    output_tensors[i] = allocateSpace(tensor->data.shape, tensor->data.dtype,
-                    nvte_output_pack.set_zero[i]);
+    output_tensors[i] = allocateSpace(tensor->data.shape, tensor->data.dtype, false);//,
+                    //nvte_output_pack.set_zero[i]);
     printf("---- end tensor %d: \n", (int)i);
     tensor->data.dptr = output_tensors[i].data_ptr();
     //TensorWrapper output_tensor = makeTransformerEngineTensor(
     //    	    output_tensor_data.data_ptr(), tensor_shape, tensor->data.dtype);
     //nvte_output_pack.tensors[i] = output_tensor.data();
+    if ((i == 0) && (set_zero)) {
+      mha_fill(output_tensors[i], cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+    }
     printf("---- end tensor again %d: \n", (int)i);
   }
 
