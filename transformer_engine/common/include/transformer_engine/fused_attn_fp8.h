@@ -63,31 +63,58 @@ class cudnnExecutionPlanManager {
 //  bool is_allocated = false;
 //};
 struct OutputTensorPack {
-  //static const int MAX_SIZE = 10;
+  static const int MAX_SIZE = 10;
+  NVTETensor tensors[MAX_SIZE];
+  bool set_zero[MAX_SIZE];
   //std::vector<transformer_engine::TensorWrapper> tensors;  // [MAX_SIZE];
-  std::vector<NVTETensor> tensors;  // [MAX_SIZE];
+  //std::vector<NVTETensor> tensors;  // [MAX_SIZE];
   //bool set_zero[MAX_SIZE];
-  std::vector<bool> set_zero;
+  //std::vector<bool> set_zero;
   //size_t size = MAX_SIZE;
   size_t size = 0; // = MAX_SIZE;
   //bool is_allocated = false;
 };
 
+void OutputTensorPack_create(OutputTensorPack* pack);// {
+//  for (int i=0; i<pack.MAX_SIZE; i++) {
+//     pack->tensors[i] = reinterpret_cast<NVTETensor>(new transformer_engine::Tensor);
+//  }
+//}
+
+void OutputTensorPack_destroy(OutputTensorPack* pack);// {
+//  for (int i=0; i<pack.MAX_SIZE; i++) {
+//     auto *t = reinterpret_cast<transformer_engine::Tensor*>(pack->tensors[i]);
+//     delete t;
+//  }
+//}
+
 void nvte_fused_attn_fwd(
-            int64_t b, int64_t max_seq_len, int64_t total_seqs, int64_t h, int64_t d,
+            size_t b, size_t max_seq_len, size_t total_seqs, size_t h, size_t d,
             bool is_training, float attn_scale,
-            float p_dropout, int qkv_layout,
-            size_t num_input_tensors,
-            const NVTETensor* input_list,
-            transformer_engine::DType qkv_tex_dtype,
-            std::vector<float*> fp8_amax_dptr_list,
-            std::vector<float*> fp8_scale_dptr_list,
-            std::vector<float*> fp8_scale_inv_dptr_list,
-            OutputTensorPack* output_pack,
-            std::vector<int32_t*> seqlen_list,
+            float p_dropout, std::string qkv_layout,
+            const NVTETensor QKV,
+            const NVTETensor Bias,
+            NVTETensor S,
+            OutputTensorPack* OuputPack,
+            int32_t *cu_seqlens,
             uint64_t *rng_state,
             NVTETensor workspace,
             cudaStream_t stream);
+//void nvte_fused_attn_fwd(
+//            int64_t b, int64_t max_seq_len, int64_t total_seqs, int64_t h, int64_t d,
+//            bool is_training, float attn_scale,
+//            float p_dropout, int qkv_layout,
+//            size_t num_input_tensors,
+//            const NVTETensor* input_list,
+//            transformer_engine::DType qkv_tex_dtype,
+//            std::vector<float*> fp8_amax_dptr_list,
+//            std::vector<float*> fp8_scale_dptr_list,
+//            std::vector<float*> fp8_scale_inv_dptr_list,
+//            OutputTensorPack* output_pack,
+//            std::vector<int32_t*> seqlen_list,
+//            uint64_t *rng_state,
+//            NVTETensor workspace,
+//            cudaStream_t stream);
 
 //void nvte_fused_attn_fwd(
 //                int64_t b, int64_t max_seq_len,
@@ -107,9 +134,9 @@ void nvte_fused_attn_fwd(
 //                cudaStream_t stream);
 
 void nvte_fused_attn_bwd(
-                int64_t b, int64_t max_seq_len,
-                int64_t h, int64_t d,
-                float attn_scale, float p_dropout, int qkv_layout,
+                size_t b, size_t max_seq_len,
+                size_t h, size_t d,
+                float attn_scale, float p_dropout, std::string qkv_layout,
                 const NVTETensor QKV,
                 NVTETensor dQKV,
                 const NVTETensor M,

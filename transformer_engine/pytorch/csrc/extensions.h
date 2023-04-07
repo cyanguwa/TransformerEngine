@@ -14,17 +14,33 @@
 //};
 
 std::vector<at::Tensor> fused_attn_fwd(
-                int64_t b, int64_t max_seq_len,
-                int64_t total_seqs, int64_t h, int64_t d,
+                size_t b, size_t max_seq_len,
+                size_t total_seqs, size_t h, size_t d,
                 bool is_training, float attn_scale, float p_dropout,
-                bool set_zero, int qkv_layout,
-                std::vector<at::Tensor> input_tensor_list,
-                transformer_engine::DType qkv_tex_dtype,
-                std::vector<at::Tensor> fp8_amax_list,
-                std::vector<at::Tensor> fp8_scale_list,
-                std::vector<at::Tensor> fp8_scale_inv_list,
-                std::vector<at::Tensor> seqlen_list,
+                bool set_zero, std::string qkv_layout,
+                const at::Tensor cu_seqlens,
+                const at::Tensor QKV,
+                const transformer_engine::DType QKV_type,
+                const at::Tensor descaleQKV,
+                const at::Tensor scaleS,
+                const at::Tensor scaleO,
+                at::Tensor amaxS,
+                at::Tensor amaxO,
+                const c10::optional<at::Tensor> Bias,
+                const c10::optional<std::string> Bias_type,
                 const c10::optional<at::Generator> rng_gen);
+//std::vector<at::Tensor> fused_attn_fwd(
+//                int64_t b, int64_t max_seq_len,
+//                int64_t total_seqs, int64_t h, int64_t d,
+//                bool is_training, float attn_scale, float p_dropout,
+//                bool set_zero, int qkv_layout,
+//                std::vector<at::Tensor> input_tensor_list,
+//                transformer_engine::DType qkv_tex_dtype,
+//                std::vector<at::Tensor> fp8_amax_list,
+//                std::vector<at::Tensor> fp8_scale_list,
+//                std::vector<at::Tensor> fp8_scale_inv_list,
+//                std::vector<at::Tensor> seqlen_list,
+//                const c10::optional<at::Generator> rng_gen);
 
 //std::vector<at::Tensor> fused_attn_fwd(
 //                int64_t b, int64_t max_seq_len,
@@ -44,10 +60,10 @@ std::vector<at::Tensor> fused_attn_fwd(
 //                const c10::optional<at::Generator> rng_gen);
 
 at::Tensor fused_attn_bwd(
-                int64_t b, int64_t max_seq_len,
-                int64_t total_seqs, int64_t h, int64_t d,
+                size_t b, size_t max_seq_len,
+                size_t total_seqs, size_t h, size_t d,
                 float attn_scale, float p_dropout,
-                int qkv_layout, bool set_zero,
+                std::string qkv_layout, bool set_zero,
                 const at::Tensor &QKV,
                 const at::Tensor &O,
                 const at::Tensor &dO,
