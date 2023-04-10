@@ -95,7 +95,7 @@ void nvte_fused_attn_fwd(
             const NVTETensor QKV,
             const NVTETensor Bias,
             NVTETensor S,
-            OutputTensorPack* OuputPack,
+            OutputTensorPack* OutputPack,
             int32_t *cu_seqlens,
             uint64_t *rng_state,
             NVTETensor workspace,
@@ -134,23 +134,35 @@ void nvte_fused_attn_fwd(
 //                cudaStream_t stream);
 
 void nvte_fused_attn_bwd(
-                size_t b, size_t max_seq_len,
-                size_t h, size_t d,
-                float attn_scale, float p_dropout, std::string qkv_layout,
-                const NVTETensor QKV,
-                NVTETensor dQKV,
-                const NVTETensor M,
-                const NVTETensor ZInv,
-                const NVTETensor S,
-                NVTETensor dS,
-                const NVTETensor O,
-                const NVTETensor dO,
-                int32_t *QKVRaggedOffset,
-                int32_t *ORaggedOffset,
-                int32_t *Seqlens,
-                uint64_t *RngState,
-                NVTETensor workspace,
-                cudaStream_t stream);
+            size_t b, size_t max_seq_len, size_t total_seqs, size_t h, size_t d,
+            float attn_scale, float p_dropout, std::string qkv_layout,
+            const NVTETensor QKV, const NVTETensor O, const NVTETensor dO,
+            const NVTETensor M, const NVTETensor ZInv,
+            const NVTETensor S, NVTETensor dS,
+            const NVTETensor Bias,
+            OutputTensorPack* OutputPack,
+            int32_t *cu_seqlens,
+            uint64_t *rng_state,
+            NVTETensor workspace,
+            cudaStream_t stream);
+//void nvte_fused_attn_bwd(
+//                size_t b, size_t max_seq_len,
+//                size_t h, size_t d,
+//                float attn_scale, float p_dropout, std::string qkv_layout,
+//                const NVTETensor QKV,
+//                NVTETensor dQKV,
+//                const NVTETensor M,
+//                const NVTETensor ZInv,
+//                const NVTETensor S,
+//                NVTETensor dS,
+//                const NVTETensor O,
+//                const NVTETensor dO,
+//                int32_t *QKVRaggedOffset,
+//                int32_t *ORaggedOffset,
+//                int32_t *Seqlens,
+//                uint64_t *RngState,
+//                NVTETensor workspace,
+//                cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"

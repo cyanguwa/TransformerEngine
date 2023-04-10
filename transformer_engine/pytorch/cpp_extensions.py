@@ -87,26 +87,76 @@ def get_mha_layout(qkv_layout: str):
     return qkv_layout_dict[qkv_layout]
 
 def fused_attn_fwd(
-    is_training: bool,                  # training or inference
-    max_seq_len: int,                   # max seq len used for compute, not always =max(cu_seqlens)
-    cu_seqlens: torch.Tensor,           # accumulative seqlens, [batch_size + 1]
-    qkv: torch.Tensor,                  # input, [total_seqs, 3, num_heads, head_dim]
-    qkv_dtype: tex.DType,               # tex.DType, not torch.dtype
-    bias: torch.Tensor = None,          # input
-    d_scale_qkv: torch.Tensor = None,   # input, required if qkv is FP8 
-    q_scale_s: torch.Tensor = None,     # input, required if qkv is FP8
-    q_scale_o: torch.Tensor = None,     # input, required if qkv is FP8
-    amax_s: torch.Tensor = None,        # output, required if qkv is FP8
-    amax_o: torch.Tensor = None,        # output, required if qkv is FP8
-    attn_scale: float = None,           # use 1.0/sqrt(d) if None
+    is_training: bool,
+    max_seq_len: int,
+    cu_seqlens: torch.Tensor,
+    QKV: torch.Tensor,
+    QKV_dtype: tex.DType,
+    Bias: torch.Tensor = None,
+    d_scale_QKV: torch.Tensor = None,
+    q_scale_S: torch.Tensor = None,
+    q_scale_O: torch.Tensor = None,
+    amax_S: torch.Tensor = None,
+    amax_O: torch.Tensor = None,
+    attn_scale: float = None,
     p_dropout: float = 0.0,
-    set_zero: bool = True,              # initialize O tensor to zero or not 
-    qkv_layout: str = "qkv_interleaved",# "qkv_interleaved", "kv_interleaved", "not_interleaved"
-    bias_type: str = "no_bias",         # "no_bias", ...
-    masking: str = "padding",           # "padding", "causal", "none"
+    set_zero: bool = True,
+    QKV_layout: str = "qkv_interleaved",
+    Bias_type: str = "no_bias",
+    masking: str = "padding",
     rng_gen: torch.Generator = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
-    """Fused Attention FWD."""
+    """Fused Attention FWD.
+
+    Parameters
+    ----------
+    is_training: bool
+                if True, produce auxilary tensors such as M and ZInv for the backward;
+                otherwise, not (inference doesn't need those tensors)
+    max_seq_len: int
+                the max seq len used for compute; it may not always be equal to max(cu_seqlens)
+    cu_seqlens: torch.Tensor
+                accumulative seqlens, [batch_size + 1]
+    QKV: torch.Tensor
+                input tensor, [total_seqs, 3, num_heads, head_dim]
+    QKV_dtype: tex.DType
+                QKV's data type in tex.DType, not torch.dtype
+    Bias: torch.Tensor, default = None
+                input tensor, [total_seqs, num_heads, head_dim]
+    d_scale_QKV: torch.Tensor, default = None
+                input tensor, for the dequantization of QKV in FP8 calculations 
+    q_scale_S: torch.Tensor, default = None
+                input tensor, for the quantization of S in FP8 calculations
+    q_scale_O: torch.Tensor, default = None
+                input tensor, for the quantization of O in FP8 calculations
+    amax_S: torch.Tensor, default = None
+                output tensor for the next iteration, amax of S in FP8 calculations
+    amax_O: torch.Tensor, default = None
+                output tensor for the next iteration, amax of O in FP8 calculations
+    attn_scale: float, default = None
+                if set, use attn_scale; otherwise, use 1.0/sqrt(head_dim)
+    p_dropout: float, default = 0.1
+                dropout probability
+    set_zero: bool, default = True
+                whether to initialize tensor O to zero, initialization uses mha_fill method 
+    QKV_layout: str, default = `qkv_interleaved`
+                matrix layout of QKV, {`qkv_interleaved`, `kv_interleaved`, `not_interleaved`}
+    Bias_type: str, default = `no_bias`
+                bias type, {`no_bias`, ...}
+    masking: str, default = `padding`
+                masking type, {`padding`, `causal`, `none`}
+    rng_gen: torch.Generator, default = None
+                random number generator; if not set, use default CUDA generator
+
+    Returns 
+    ----------
+    O: torch.Tensor
+                output tensor of the fused attention, same dtype as QKV
+    aux_fwd_tensors: List[torch.Tensor]
+                auxilary output tensors if is_training is True, e.g. [M, ZInv]
+    rng_state: torch.Tensor
+                random number generator state, [seed, offset] in uint64
+    """
 
     check_cu_seqlens(cu_seqlens)
     ## sequence lengths, non accumulative
@@ -114,32 +164,32 @@ def fused_attn_fwd(
     # batch size
     b = cu_seqlens.numel() - 1
     # torch.dtype
-    qkv_type = TORCH_DType[qkv_dtype]
+    QKV_type = TORCH_DType[QKV_dtype]
     # check properties
-    check_qkv(qkv, qkv_type)
+    check_qkv(QKV, QKV_type)
 
-    assert b <= qkv.size(0), f"b must be <= qkv.size(0)."
-    total_seqs = qkv.size(0)
-    h = qkv.size(2)
-    d = qkv.size(3)
+    assert b <= QKV.size(0), f"b must be <= QKV.size(0)."
+    total_seqs = QKV.size(0)
+    h = QKV.size(2)
+    d = QKV.size(3)
 
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
     #qkv_layout = get_mha_layout(qkv_layout)
 
     ############### FP8 fused attention API ################
-    if qkv_type is torch.uint8 and max_seq_len <=512 and d == 64:
-        assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
-        assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
-        assert (q_scale_o is not None), "q_scale_o is required for the FP8 API."
-        assert (amax_s is not None), "amax_s is required for the FP8 API."
-        assert (amax_o is not None), "amax_o is required for the FP8 API."
+    if QKV_type is torch.uint8 and max_seq_len <=512 and d == 64:
+        assert (d_scale_QKV is not None), "d_scale_QKV is required for the FP8 API."
+        assert (q_scale_S is not None), "q_scale_S is required for the FP8 API."
+        assert (q_scale_O is not None), "q_scale_O is required for the FP8 API."
+        assert (amax_S is not None), "amax_S is required for the FP8 API."
+        assert (amax_O is not None), "amax_O is required for the FP8 API."
         assert (masking == "padding"), "Currently the FP8 API only supports padding masking."
-        check_scalar(d_scale_qkv)
-        check_scalar(q_scale_s)
-        check_scalar(q_scale_o)
-        check_scalar(amax_s)
-        check_scalar(amax_o)
+        check_scalar(d_scale_QKV)
+        check_scalar(q_scale_S)
+        check_scalar(q_scale_O)
+        check_scalar(amax_S)
+        check_scalar(amax_O)
 
         #qkv_ragged_offset = cu_seqlens * 3 * h * d
         #o_ragged_offset = cu_seqlens * h * d
@@ -147,126 +197,236 @@ def fused_attn_fwd(
 
         output_tensors = tex.fused_attn_fwd(
                 b, max_seq_len, total_seqs, h, d,
-                is_training, attn_scale, p_dropout, set_zero, qkv_layout,
+                is_training, attn_scale, p_dropout, set_zero, QKV_layout,
                 cu_seqlens,
-                qkv,
-                qkv_dtype,
-                d_scale_qkv,
-                q_scale_s,
-                q_scale_o,
-                amax_s,
-                amax_o,
-                bias, # None
-                bias_type, # not used
+                QKV,
+                QKV_dtype,
+                d_scale_QKV,
+                q_scale_S,
+                q_scale_O,
+                amax_S,
+                amax_O,
+                Bias, # None
+                Bias_type, # not used
                 rng_gen,
         )
 
         return output_tensors
 
     ############### BF16/FP16 fused attention API from fmha_v2 ################
-    elif qkv_type is torch.bfloat16 or qkv_type is torch.float16:
+    elif QKV_type is torch.bfloat16 or QKV_type is torch.float16:
         #TODO add BF/FP16 support for >512 sequence length
-        if bias_type == "no_bias":
-            assert len(input_tensor_list) == 1, f"Input tensor list should be [QKV]."
-        else:
-            assert len(input_tensor_list) == 2, f"Input tensor list should be [QKV, B]."
+        if Bias_type is not "no_bias":
+            assert (Bias is not None), "Bias is required if bias_type is `no_bias`."
         output_tensors = tex.fused_attn_fwd(
                 b, max_seq_len, total_seqs, h, d,
                 is_training, attn_scale, p_dropout, set_zero, qkv_layout,
                 cu_seqlens,
-                qkv,
-                qkv_dtype,
+                QKV,
+                QKV_dtype,
                 None,
                 None,
                 None,
                 None,
                 None,
-                bias,
-                bias_type, 
+                Bias,
+                Bias_type, 
                 rng_gen,
         )
         return output_tensors
 
     ############### BF16/FP16 fused attention API from fmha_v1 apex ################
-    elif (qkv_type is torch.bfloat16 or qkv_type is torch.float16) and (max_seq_len <=512):
+    elif (QKV_type is torch.bfloat16 or QKV_type is torch.float16) and (max_seq_len <=512):
         #TODO add BF/FP16 support for <=512 sequence length
         pass
 
     else:
-        assert False, f"No support for this dtype and max_seq_len combination."
+        assert False, "No support for this dtype and max_seq_len combination."
         return
 
 def fused_attn_bwd(
+    max_seq_len: int,
+    cu_seqlens: torch.Tensor,
     QKV: torch.Tensor,
     O: torch.Tensor,
     dO: torch.Tensor,
-    M: torch.Tensor,
-    ZInv: torch.Tensor,
-    qkv_dtype: tex.DType,
-    cu_seqlens: torch.Tensor,
-    d_scale_qkv: torch.Tensor,
-    d_scale_s: torch.Tensor,
-    d_scale_o: torch.Tensor,
-    d_scale_do: torch.Tensor,
-    q_scale_s: torch.Tensor,
-    q_scale_ds: torch.Tensor,
-    q_scale_dqkv: torch.Tensor,
-    amax_ds: torch.Tensor,
-    amax_dqkv: torch.Tensor,
-    p_dropout: float,
-    max_seq_len: int,
-    set_zero: bool,
+    QKV_dtype: tex.DType,
     rng_state: torch.Tensor,
-    qkv_layout: str = "qkv_interleaved",
+    aux_fwd_tensors: List[torch.Tensor] = None,
+    Bias: torch.Tensor = None,
+    d_scale_QKV: torch.Tensor = None,
+    d_scale_S: torch.Tensor = None,
+    d_scale_O: torch.Tensor = None,
+    d_scale_dO: torch.Tensor = None,
+    q_scale_S: torch.Tensor = None,
+    q_scale_dS: torch.Tensor = None,
+    q_scale_dQKV: torch.Tensor = None,
+    amax_dS: torch.Tensor = None,
+    amax_dQKV: torch.Tensor = None,
+    attn_scale: float = None,
+    p_dropout: float = 0.0,
+    set_zero: bool = True,
+    QKV_layout: str = "qkv_interleaved",
+    Bias_type: str = "no_bias",
+    masking: str = "padding",
 ) -> Tuple[Union[torch.Tensor, None], ...]:
-    """Fused Attention BWD."""
+    """Fused Attention BWD.
 
-    check_o(dO)
-    check_qkv(QKV)
-    check_o(O)
+    Parameters
+    ----------
+    max_seq_len: int
+                the max seq len used for compute; it may not always be equal to max(cu_seqlens)
+    cu_seqlens: torch.Tensor
+                accumulative seqlens, [batch_size + 1]
+    QKV: torch.Tensor
+                input tensor, [total_seqs, 3, num_heads, head_dim]
+    O: torch.Tensor
+                input tensor, [total_seqs, num_heads, head_dim]
+    dO: torch.Tensor
+                input tensor, [total_seqs, num_heads, head_dim]
+    QKV_dtype: tex.DType
+                QKV's data type in tex.DType, not torch.dtype
+    rng_state: torch.Tensor
+                random number generator state, in [seed, offset] format and uint64
+    aux_fwd_tensors: List[torch.Tensor], default = None
+                auxilary output tensors of fwd, e.g. [M, ZInv]
+    Bias: torch.Tensor, default = None
+                input tensor, [total_seqs, num_heads, head_dim]
+    d_scale_QKV: torch.Tensor, default = None
+                input tensor, for the dequantization of QKV in FP8 calculations 
+    d_scale_S: torch.Tensor, default = None
+                input tensor, for the dequantization of S in FP8 calculations 
+    d_scale_O: torch.Tensor, default = None
+                input tensor, for the dequantization of O in FP8 calculations 
+    d_scale_dO: torch.Tensor, default = None
+                input tensor, for the dequantization of dO in FP8 calculations 
+    q_scale_S: torch.Tensor, default = None
+                input tensor, for the quantization of S in FP8 calculations
+    q_scale_dS: torch.Tensor, default = None
+                input tensor, for the quantization of dS in FP8 calculations
+    q_scale_dQKV: torch.Tensor, default = None
+                input tensor, for the quantization of dQKV in FP8 calculations
+    amax_dS: torch.Tensor, default = None
+                output tensor for the next iteration, amax of dS in FP8 calculations
+    amax_dQKV: torch.Tensor, default = None
+                output tensor for the next iteration, amax of dQKV in FP8 calculations
+    attn_scale: float, default = None
+                if set, use attn_scale; otherwise, use 1.0/sqrt(head_dim)
+    p_dropout: float, default = 0.1
+                dropout probability
+    set_zero: bool, default = True
+                whether to initialize tensor O to zero, initialization uses mha_fill method 
+    QKV_layout: str, default = `qkv_interleaved`
+                matrix layout of QKV, {`qkv_interleaved`, `kv_interleaved`, `not_interleaved`}
+    Bias_type: str, default = `no_bias`
+                bias type, {`no_bias`, ...}
+    masking: str, default = `padding`
+                masking type, {`padding`, `causal`, `none`}
+
+    Returns 
+    ----------
+    dQKV: torch.Tensor
+                the gradient tensor of QKV, same dtype as QKV
+    """
+
     check_cu_seqlens(cu_seqlens)
-
-    seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
+    ## sequence lengths, non accumulative
+    #seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
+    # batch size
     b = cu_seqlens.numel() - 1
-    assert b <= QKV.size(0), "b must be <= QKV.size(0)."
+    # torch.dtype
+    QKV_type = TORCH_DType[QKV_dtype]
+    # check properties
+    check_qkv(QKV, QKV_type)
+    check_o(O, QKV_type)
+    check_o(dO, QKV_type)
+
+    assert b <= QKV.size(0), f"b must be <= QKV.size(0)."
     total_seqs = QKV.size(0)
     h = QKV.size(2)
     d = QKV.size(3)
-    attn_scale = 1.0 / math.sqrt(d)
-    qkv_ragged_offset = cu_seqlens * 3 * h * d
-    o_ragged_offset = cu_seqlens * h * d
 
-    check_stats(M, b, h, max_seq_len)
-    check_stats(ZInv, b, h, max_seq_len)
-
-    check_scalar(d_scale_qkv)
-    check_scalar(d_scale_s)
-    check_scalar(d_scale_o)
-    check_scalar(d_scale_do)
-    check_scalar(q_scale_s)
-    check_scalar(q_scale_ds)
-    check_scalar(q_scale_dqkv)
-    check_scalar(amax_ds)
-    check_scalar(amax_dqkv)
+    if attn_scale is None:
+        attn_scale = 1.0 / math.sqrt(d)
+    #qkv_ragged_offset = cu_seqlens * 3 * h * d
+    #o_ragged_offset = cu_seqlens * h * d
 
     check_rng_state(rng_state)
-    #qkv_layout = get_mha_layout(qkv_layout)
 
-    dQKV = tex.fused_attn_bwd(
-            b, max_seq_len, total_seqs, h, d,
-            attn_scale, p_dropout,
-            qkv_layout, set_zero,
-            QKV, O, dO, M, ZInv,
-            qkv_dtype,
-            d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-            q_scale_s, q_scale_ds, q_scale_dqkv,
-            amax_ds, amax_dqkv,
-            qkv_ragged_offset, o_ragged_offset,
-            seqlens,
-            rng_state,
-    )
+    if QKV_type is torch.uint8 and max_seq_len <=512 and d == 64:
+        assert (d_scale_QKV is not None), "d_scale_QKV is required for the FP8 API."
+        assert (d_scale_S is not None), "d_scale_S is required for the FP8 API."
+        assert (d_scale_O is not None), "d_scale_O is required for the FP8 API."
+        assert (d_scale_dO is not None), "d_scale_dO is required for the FP8 API."
+        assert (q_scale_S is not None), "q_scale_S is required for the FP8 API."
+        assert (q_scale_dS is not None), "q_scale_dS is required for the FP8 API."
+        assert (q_scale_dQKV is not None), "q_scale_dQKV is required for the FP8 API."
+        assert (amax_dS is not None), "amax_dS is required for the FP8 API."
+        assert (amax_dQKV is not None), "amax_dQKV is required for the FP8 API."
+        assert (len(aux_fwd_tensors) == 2
+                ), "aux_fwd_tensors is required for the FP8 API, e.g. [M, ZInv]"
+        assert (masking == "padding"), "Currently the FP8 API only supports padding masking."
+        check_scalar(d_scale_QKV)
+        check_scalar(d_scale_S)
+        check_scalar(d_scale_O)
+        check_scalar(d_scale_dO)
+        check_scalar(q_scale_S)
+        check_scalar(q_scale_dS)
+        check_scalar(q_scale_dQKV)
+        check_scalar(amax_dS)
+        check_scalar(amax_dQKV)
+        M, ZInv = aux_fwd_tensors
+        check_stats(M, b, h, max_seq_len)
+        check_stats(ZInv, b, h, max_seq_len)
 
-    return dQKV
+        #qkv_layout = get_mha_layout(qkv_layout)
+
+        dQKV = tex.fused_attn_bwd(
+                b, max_seq_len, total_seqs, h, d,
+                attn_scale, p_dropout, set_zero, QKV_layout,
+                cu_seqlens,
+                QKV, O, dO,
+                QKV_dtype,
+                M, ZInv,
+                d_scale_QKV, d_scale_S, d_scale_O, d_scale_dO,
+                q_scale_S, q_scale_dS, q_scale_dQKV,
+                amax_dS, amax_dQKV,
+                Bias, # None
+                Bias_type, # not used
+                rng_state,
+        )
+
+        return dQKV
+
+    ############### BF16/FP16 fused attention API from fmha_v2 ################
+    elif QKV_type is torch.bfloat16 or QKV_type is torch.float16:
+        #TODO add BF/FP16 support for >512 sequence length
+        if Bias_type is not "no_bias":
+            assert (Bias is not None), "Bias is required if bias_type is `no_bias`."
+        dQKV = tex.fused_attn_bwd(
+                b, max_seq_len, total_seqs, h, d,
+                attn_scale, p_dropout, set_zero, QKV_layout,
+                cu_seqlens,
+                QKV, O, dO,
+                QKV_dtype,
+                M, ZInv, # does BF16 use M/ZInv or S?
+                None, None, None, None,
+                None, None, None, 
+                None, None, 
+                Bias,
+                Bias_type,
+                rng_state,
+        )
+        return dQKV 
+
+    ############### BF16/FP16 fused attention API from fmha_v1 apex ################
+    elif (QKV_type is torch.bfloat16 or QKV_type is torch.float16) and (max_seq_len <=512):
+        #TODO add BF/FP16 support for <=512 sequence length
+        pass
+
+    else:
+        assert False, "No support for this dtype and max_seq_len combination."
+        return
 
 def fp8_gemm(
     A: torch.Tensor,
