@@ -91,14 +91,11 @@ size_t product(const std::vector<size_t> &shape) {
 at::Tensor allocateSpace(const std::vector<size_t>& shape,
                          const transformer_engine::DType type,
                          bool init_to_zeros) {
-    printf("--- new allocate Space\n");
     std::vector<int64_t> shape_int64(shape.begin(), shape.end());
     c10::IntArrayRef ar_shape(shape_int64);
     if (init_to_zeros) {
-    printf("--- new allocate Space zeros\n");
         return at::zeros(ar_shape, at::CUDA(GetATenDType(type)));
     } else {
-    printf("--- new allocate Space empty\n");
         return at::empty(ar_shape, at::CUDA(GetATenDType(type)));
     }
 }
@@ -107,7 +104,6 @@ at::Tensor allocateSpace(const std::vector<size_t>& shape,
 at::Tensor allocateSpace(const NVTEShape &shape,
                          const transformer_engine::DType type,
                          bool init_to_zeros) {
-    printf("--- old allocate Space\n");
     auto size = shape.ndim;
     if (size == 2 && init_to_zeros) {
         return at::zeros({static_cast<int64_t>(shape.data[0]),

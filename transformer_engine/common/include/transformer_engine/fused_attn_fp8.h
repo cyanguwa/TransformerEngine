@@ -55,38 +55,15 @@ class cudnnExecutionPlanManager {
     cudnnHandle_t handle_;
 };
 
-//struct NVTETensorPack {
-//  static const int MAX_SIZE = 10;
-//  NVTETensor tensors[MAX_SIZE];
-//  bool set_zero[MAX_SIZE];
-//  size_t size = MAX_SIZE;
-//  bool is_allocated = false;
-//};
 struct OutputTensorPack {
   static const int MAX_SIZE = 10;
   NVTETensor tensors[MAX_SIZE];
-  //bool set_zero[MAX_SIZE];
-  //std::vector<transformer_engine::TensorWrapper> tensors;  // [MAX_SIZE];
-  //std::vector<NVTETensor> tensors;  // [MAX_SIZE];
-  //bool set_zero[MAX_SIZE];
-  //std::vector<bool> set_zero;
-  //size_t size = MAX_SIZE;
-  size_t size = 0; // = MAX_SIZE;
-  //bool is_allocated = false;
+  size_t size = 0;
 };
 
-void OutputTensorPack_create(OutputTensorPack* pack);// {
-//  for (int i=0; i<pack.MAX_SIZE; i++) {
-//     pack->tensors[i] = reinterpret_cast<NVTETensor>(new transformer_engine::Tensor);
-//  }
-//}
+void OutputTensorPack_create(OutputTensorPack* pack);
 
-void OutputTensorPack_destroy(OutputTensorPack* pack);// {
-//  for (int i=0; i<pack.MAX_SIZE; i++) {
-//     auto *t = reinterpret_cast<transformer_engine::Tensor*>(pack->tensors[i]);
-//     delete t;
-//  }
-//}
+void OutputTensorPack_destroy(OutputTensorPack* pack);
 
 void nvte_fused_attn_fwd(
             size_t b, size_t max_seq_len, size_t total_seqs, size_t h, size_t d,
@@ -100,38 +77,6 @@ void nvte_fused_attn_fwd(
             uint64_t *rng_state,
             NVTETensor workspace,
             cudaStream_t stream);
-//void nvte_fused_attn_fwd(
-//            int64_t b, int64_t max_seq_len, int64_t total_seqs, int64_t h, int64_t d,
-//            bool is_training, float attn_scale,
-//            float p_dropout, int qkv_layout,
-//            size_t num_input_tensors,
-//            const NVTETensor* input_list,
-//            transformer_engine::DType qkv_tex_dtype,
-//            std::vector<float*> fp8_amax_dptr_list,
-//            std::vector<float*> fp8_scale_dptr_list,
-//            std::vector<float*> fp8_scale_inv_dptr_list,
-//            OutputTensorPack* output_pack,
-//            std::vector<int32_t*> seqlen_list,
-//            uint64_t *rng_state,
-//            NVTETensor workspace,
-//            cudaStream_t stream);
-
-//void nvte_fused_attn_fwd(
-//                int64_t b, int64_t max_seq_len,
-//                int64_t h, int64_t d,
-//                float attn_scale, float p_dropout,
-//                int qkv_layout, bool is_training,
-//                const NVTETensor QKV,
-//                NVTETensor M,
-//                NVTETensor ZInv,
-//                NVTETensor S,
-//                NVTETensor O,
-//                int32_t *QKVRaggedOffset,
-//                int32_t *ORaggedOffset,
-//                int32_t *Seqlens,
-//                uint64_t *RngState,
-//                NVTETensor workspace,
-//                cudaStream_t stream);
 
 void nvte_fused_attn_bwd(
             size_t b, size_t max_seq_len, size_t total_seqs, size_t h, size_t d,
@@ -145,24 +90,6 @@ void nvte_fused_attn_bwd(
             uint64_t *rng_state,
             NVTETensor workspace,
             cudaStream_t stream);
-//void nvte_fused_attn_bwd(
-//                size_t b, size_t max_seq_len,
-//                size_t h, size_t d,
-//                float attn_scale, float p_dropout, std::string qkv_layout,
-//                const NVTETensor QKV,
-//                NVTETensor dQKV,
-//                const NVTETensor M,
-//                const NVTETensor ZInv,
-//                const NVTETensor S,
-//                NVTETensor dS,
-//                const NVTETensor O,
-//                const NVTETensor dO,
-//                int32_t *QKVRaggedOffset,
-//                int32_t *ORaggedOffset,
-//                int32_t *Seqlens,
-//                uint64_t *RngState,
-//                NVTETensor workspace,
-//                cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"
