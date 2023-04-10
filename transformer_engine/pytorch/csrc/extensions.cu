@@ -1231,6 +1231,11 @@ at::Tensor scaled_upper_triang_masked_softmax_backward(at::Tensor output_grads_,
 }
 
 
+size_t get_cublasLt_version() {
+    return cublasLtGetVersion();
+}
+
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   // Softmax functions
   m.def("scaled_softmax_forward", &scaled_softmax_forward, "Scaled Softmax FWD");
@@ -1266,6 +1271,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("fused_attn_bwd", &fused_attn_bwd, "Fused Attention FP8/BF16/FP16 BWD");
   m.def("fp8_transpose", &fp8_transpose, "Transpose with FP8 I/O");
   m.def("fp8_gelu", &fp8_gelu, "GeLU with FP8 output");
+
+  // Misc
+  m.def("get_cublasLt_version", &get_cublasLt_version, "Get cublasLt version");
 
   // Data structures
   py::class_<transformer_engine::FP8TensorMeta>(m, "FP8TensorMeta")
