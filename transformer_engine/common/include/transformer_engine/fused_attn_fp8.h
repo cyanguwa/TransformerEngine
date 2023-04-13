@@ -137,7 +137,6 @@ Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type);
 //            NVTETensor workspace,
 //            cudaStream_t stream);
 
-
 void nvte_fused_attn_fwd_qkvpacked(
             size_t max_seqlen,
             bool is_training, float attn_scale, float p_dropout,
@@ -150,8 +149,6 @@ void nvte_fused_attn_fwd_qkvpacked(
             NVTETensor S,
             NVTETensor O,
             NVTETensorPack* Aux_Output_Tensors,
-	    //int32_t* cucu,
-            //uint64_t* rngrng,
             NVTETensor workspace,
             cudaStream_t stream);
 
@@ -163,10 +160,49 @@ void nvte_fused_attn_bwd_qkvpacked(
             const NVTETensor cu_seqlens,
             const NVTETensor QKV,
             const NVTETensor Bias,
-            const NVTETensor O, const NVTETensor dO,
-            const NVTETensor S, NVTETensor dS,
+            const NVTETensor O,
+            const NVTETensor dO,
+            const NVTETensor S,
+            NVTETensor dS,
             const NVTETensorPack* Aux_CTX_Tensors,
             NVTETensor dQKV,
+            NVTETensor workspace,
+            cudaStream_t stream);
+
+void nvte_fused_attn_fwd_kvpacked(
+            size_t max_seqlen_q, size_t max_seqlen_kv,
+            bool is_training, float attn_scale, float p_dropout,
+            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
+            Attn_Mask_Type attn_mask_type,
+            const NVTETensor cu_seqlens_q,
+            const NVTETensor cu_seqlens_kv,
+            const NVTETensor rng_state,
+            const NVTETensor Q,
+            const NVTETensor KV,
+            const NVTETensor Bias,
+            NVTETensor S,
+            NVTETensor O,
+            NVTETensorPack* Aux_Output_Tensors,
+            NVTETensor workspace,
+            cudaStream_t stream);
+
+void nvte_fused_attn_bwd_kvpacked(
+            size_t max_seqlen_q, size_t max_seqlen_kv,
+            float attn_scale, float p_dropout,
+            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
+            Attn_Mask_Type attn_mask_type,
+            const NVTETensor cu_seqlens_q,
+            const NVTETensor cu_seqlens_kv,
+            const NVTETensor Q,
+            const NVTETensor KV,
+            const NVTETensor Bias,
+            const NVTETensor O,
+            const NVTETensor dO,
+            const NVTETensor S,
+            NVTETensor dS,
+            const NVTETensorPack* Aux_CTX_Tensors,
+            NVTETensor dQ,
+            NVTETensor dKV,
             NVTETensor workspace,
             cudaStream_t stream);
 #ifdef __cplusplus
