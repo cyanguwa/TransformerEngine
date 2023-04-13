@@ -528,16 +528,17 @@ def fused_attn_fwd_kvpacked(
     # FP8 fused attention API
     if (qkv_type is torch.uint8) and (max_seqlen_q <= 512) and (max_seqlen_kv <= 512) \
             and (d == 64):
-        assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
-        assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
-        assert (q_scale_o is not None), "q_scale_o is required for the FP8 API."
-        assert (amax_s is not None), "amax_s is required for the FP8 API."
-        assert (amax_o is not None), "amax_o is required for the FP8 API."
-        check_scalar(d_scale_qkv)
-        check_scalar(q_scale_s)
-        check_scalar(q_scale_o)
-        check_scalar(amax_s)
-        check_scalar(amax_o)
+        #assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
+        #assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
+        #assert (q_scale_o is not None), "q_scale_o is required for the FP8 API."
+        #assert (amax_s is not None), "amax_s is required for the FP8 API."
+        #assert (amax_o is not None), "amax_o is required for the FP8 API."
+        #check_scalar(d_scale_qkv)
+        #check_scalar(q_scale_s)
+        #check_scalar(q_scale_o)
+        #check_scalar(amax_s)
+        #check_scalar(amax_o)
+        assert False, "The FP8 fused attention API currently only supports packed QKV input."
 
     # BF16/FP16 fused attention API from fmha_v2
     elif (qkv_type is torch.bfloat16) or (qkv_type is torch.float16):
@@ -709,29 +710,30 @@ def fused_attn_bwd_kvpacked(
     # FP8 fused attention API
     if (qkv_type is torch.uint8) and (max_seqlen_q <= 512) and (max_seqlen_kv <= 512) \
             and d == 64:
-        assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
-        assert (d_scale_s is not None), "d_scale_s is required for the FP8 API."
-        assert (d_scale_o is not None), "d_scale_o is required for the FP8 API."
-        assert (d_scale_do is not None), "d_scale_do is required for the FP8 API."
-        assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
-        assert (q_scale_ds is not None), "q_scale_ds is required for the FP8 API."
-        assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
-        assert (amax_ds is not None), "amax_ds is required for the FP8 API."
-        assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
-        assert (len(aux_ctx_tensors) == 3
-                ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
-        check_scalar(d_scale_qkv)
-        check_scalar(d_scale_s)
-        check_scalar(d_scale_o)
-        check_scalar(d_scale_do)
-        check_scalar(q_scale_s)
-        check_scalar(q_scale_ds)
-        check_scalar(q_scale_dqkv)
-        check_scalar(amax_ds)
-        check_scalar(amax_dqkv)
-        m, z_inv = aux_ctx_tensors[:2]
-        check_stats(m, b, h, max_seqlen_q)
-        check_stats(z_inv, b, h, max_seqlen_q)
+        #assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
+        #assert (d_scale_s is not None), "d_scale_s is required for the FP8 API."
+        #assert (d_scale_o is not None), "d_scale_o is required for the FP8 API."
+        #assert (d_scale_do is not None), "d_scale_do is required for the FP8 API."
+        #assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
+        #assert (q_scale_ds is not None), "q_scale_ds is required for the FP8 API."
+        #assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
+        #assert (amax_ds is not None), "amax_ds is required for the FP8 API."
+        #assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
+        #assert (len(aux_ctx_tensors) == 3
+        #        ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
+        #check_scalar(d_scale_qkv)
+        #check_scalar(d_scale_s)
+        #check_scalar(d_scale_o)
+        #check_scalar(d_scale_do)
+        #check_scalar(q_scale_s)
+        #check_scalar(q_scale_ds)
+        #check_scalar(q_scale_dqkv)
+        #check_scalar(amax_ds)
+        #check_scalar(amax_dqkv)
+        #m, z_inv = aux_ctx_tensors[:2]
+        #check_stats(m, b, h, max_seqlen_q)
+        #check_stats(z_inv, b, h, max_seqlen_q)
+        assert False, "The FP8 fused attention API currently only supports packed QKV input."
 
     ############### BF16/FP16 fused attention API from fmha_v2 ################
     elif (qkv_type is torch.bfloat16) or (qkv_type is torch.float16):
