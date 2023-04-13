@@ -10,6 +10,8 @@
 #include "transformer_engine.h"
 #include <cudnn_frontend.h>
 #include <cstdint>
+//#include <string>
+//#include "utils.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,15 +31,15 @@ enum MHA_Bias_Type {
     POST_SCALE_BIAS = 2
 };
 
-enum MHA_Matrix {
-    Q_Matrix            = 0,  // queries
-    K_Matrix            = 1,  // keys
-    K_Matrix_Transpose  = 2,  // keys transposed
-    V_Matrix            = 3,  // values
-    V_Matrix_Transpose  = 4,  // value matrix transposed
-    S_Matrix            = 5,  // output of GEMM1
-    O_Matrix            = 6,  // final output
-};
+//enum MHA_Matrix {
+//    Q_Matrix            = 0,  // queries
+//    K_Matrix            = 1,  // keys
+//    K_Matrix_Transpose  = 2,  // keys transposed
+//    V_Matrix            = 3,  // values
+//    V_Matrix_Transpose  = 4,  // value matrix transposed
+//    S_Matrix            = 5,  // output of GEMM1
+//    O_Matrix            = 6,  // final output
+//};
 
 enum Attn_Mask_Type {
     PADDING = 0,
@@ -45,27 +47,33 @@ enum Attn_Mask_Type {
     NO_MASK = 2
 };
 
-class cudnnExecutionPlanManager {
- public:
-    static cudnnExecutionPlanManager &Instance() {
-        static thread_local cudnnExecutionPlanManager instance;
-        return instance;
-    }
+//class cudnnExecutionPlanManager {
+// public:
+//    static cudnnExecutionPlanManager &Instance() {
+//        static thread_local cudnnExecutionPlanManager instance;
+//        return instance;
+//    }
+//
+//    cudnnHandle_t GetCudnnHandle() {
+//        static thread_local std::once_flag flag;
+//        std::call_once(flag, [&] { cudnnCreate(&handle_); });
+//        return handle_;
+//    }
+//
+//    ~cudnnExecutionPlanManager() {
+//        static thread_local std::once_flag flag;
+//        std::call_once(flag, [&] { cudnnDestroy(handle_); });
+//    }
+//
+// private:
+//    cudnnHandle_t handle_;
+//};
 
-    cudnnHandle_t GetCudnnHandle() {
-        static thread_local std::once_flag flag;
-        std::call_once(flag, [&] { cudnnCreate(&handle_); });
-        return handle_;
-    }
+MHA_Layout get_mha_layout(const std::string layout);
 
-    ~cudnnExecutionPlanManager() {
-        static thread_local std::once_flag flag;
-        std::call_once(flag, [&] { cudnnDestroy(handle_); });
-    }
+MHA_Bias_Type get_mha_bias_type(const std::string bias_type);
 
- private:
-    cudnnHandle_t handle_;
-};
+Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type);
 
 struct NVTETensorPack {
   static const int MAX_SIZE = 10;
@@ -76,12 +84,6 @@ struct NVTETensorPack {
 void nvte_tensor_pack_create(NVTETensorPack* pack);
 
 void nvte_tensor_pack_destroy(NVTETensorPack* pack);
-
-MHA_Layout get_mha_layout(const std::string layout);
-
-MHA_Bias_Type get_mha_bias_type(const std::string bias_type);
-
-Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type);
 
 void nvte_fused_attn_fwd_qkvpacked(
             size_t max_seqlen,

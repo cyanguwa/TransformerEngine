@@ -1,0 +1,245 @@
+/*************************************************************************
+ * Copyright (c) 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ *
+ * See LICENSE for license information.
+ ************************************************************************/
+
+#include "transformer_engine/fused_attn.h"
+#include "../common.h"
+#include "utils.h"
+
+// get QKV layout in enums
+MHA_Layout get_mha_layout(const std::string layout) {
+  if (layout == "not_interleaved") {
+      return MHA_Layout::NOT_INTERLEAVED;
+  } else if (layout == "qkv_interleaved") {
+      return MHA_Layout::QKV_INTERLEAVED;
+  } else if (layout == "kv_interleaved") {
+      return MHA_Layout::KV_INTERLEAVED;
+  } else {
+      NVTE_ERROR("Invalid QKV layout. \n");
+  }
+}
+
+// get bias type in enums
+MHA_Bias_Type get_mha_bias_type(const std::string bias_type) {
+  if (bias_type == "no_bias") {
+      return MHA_Bias_Type::NO_BIAS;
+  } else if (bias_type == "pre_scale_bias") {
+      return MHA_Bias_Type::PRE_SCALE_BIAS;
+  } else if (bias_type == "post_scale_bias") {
+      return MHA_Bias_Type::POST_SCALE_BIAS;
+  } else {
+      NVTE_ERROR("Invalid bias type. \n");
+  }
+}
+
+// get attn mask type in enums
+Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type) {
+  if (attn_mask_type == "padding") {
+      return Attn_Mask_Type::PADDING;
+  } else if (attn_mask_type == "causal") {
+      return Attn_Mask_Type::CAUSAL;
+  } else if (attn_mask_type == "no_mask") {
+      return Attn_Mask_Type::NO_MASK;
+  } else {
+      NVTE_ERROR("Invalid attention mask type. \n");
+  }
+}
+
+// create NVTETensorPack
+void nvte_tensor_pack_create(NVTETensorPack* pack) {
+  for (int i = 0; i < pack->MAX_SIZE; i++) {
+     pack->tensors[i] = reinterpret_cast<NVTETensor>(new transformer_engine::Tensor);
+  }
+}
+
+// destroy NVTETensorPack
+void nvte_tensor_pack_destroy(NVTETensorPack* pack) {
+  for (int i = 0; i < pack->MAX_SIZE; i++) {
+     auto *t = reinterpret_cast<transformer_engine::Tensor*>(pack->tensors[i]);
+     delete t;
+  }
+}
+
+// get cuDNN data type
+cudnnDataType_t get_cudnn_dtype(const transformer_engine::DType t) {
+  using namespace transformer_engine;
+  switch (t) {
+    case DType::kFloat16:
+      return CUDNN_DATA_HALF;
+    case DType::kFloat32:
+      return CUDNN_DATA_FLOAT;
+    case DType::kBFloat16:
+      return CUDNN_DATA_BFLOAT16;
+    case DType::kFloat8E4M3:
+      return CUDNN_DATA_FP8_E4M3;
+    case DType::kFloat8E5M2:
+      return CUDNN_DATA_FP8_E5M2;
+    default:
+      NVTE_ERROR("Invalid cuDNN data type. \n");
+  }
+}
+
+// convert cu_seqlens_q to qkv/o_ragged_offset and actual_seqlens_q
+__global__ void cu_seqlens_to_offsets(size_t b, size_t h, size_t d,
+                int32_t *cu_seqlens_q, int32_t *actual_seqlens_q,
+                int32_t *qkv_ragged_offset, int32_t *o_ragged_offset) {
+  size_t tid = threadIdx.x;
+  if (tid < b) {
+    actual_seqlens_q[tid] = cu_seqlens_q[tid + 1] - cu_seqlens_q[tid];
+  }
+  if (tid < b + 1) {
+    qkv_ragged_offset[tid] = cu_seqlens_q[tid] * 3 * h * d;
+    o_ragged_offset[tid] = cu_seqlens_q[tid] * h * d;
+  }
+}
+
+
+namespace transformer_engine {
+namespace fused_attn {
+
+using namespace transformer_engine;
+
+// get matrix strides based on matrix type
+void generateMHAStrides(
+            int64_t b, int64_t h,
+            int64_t s_q, int64_t s_kv,
+            int64_t d, int64_t* strideA,
+            MHA_Layout layout, MHA_Matrix matrix) {
+    CUDNN_FRONTEND_UNUSED(b);
+    constexpr int batch_dim_idx   = 0;
+    constexpr int head_dim_idx    = 1;
+    constexpr int seqlen_dim_idx  = 2;
+    constexpr int hidden_dim_idx  = 3;
+
+    constexpr int seqlen_transpose_dim_idx = 3;
+    constexpr int hidden_transpose_dim_idx = 2;
+
+    constexpr int seqlen_q_dim_idx = 2;
+    constexpr int seqlen_kv_dim_idx = 3;
+
+    switch (matrix) {
+        case MHA_Matrix::Q_Matrix:
+            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+                strideA[hidden_dim_idx] = 1;
+                strideA[seqlen_dim_idx] = 3 * h * d;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_q * 3 * h * d;
+            } else {
+                strideA[hidden_dim_idx] = 1;
+                strideA[seqlen_dim_idx] = h * d;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_q * h * d;
+            }
+            break;
+        case MHA_Matrix::K_Matrix:
+            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+                strideA[seqlen_dim_idx] = 3 * h * d;
+                strideA[hidden_dim_idx] = 1;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * 3 * h * d;
+            } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+                strideA[seqlen_transpose_dim_idx] = 2 * h * d;
+                strideA[hidden_transpose_dim_idx] = 1;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * 2 * h * d;
+            } else {
+                strideA[seqlen_transpose_dim_idx] = h * d;
+                strideA[hidden_transpose_dim_idx] = 1;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * h * d;
+            }
+            break;
+        case MHA_Matrix::K_Matrix_Transpose:
+            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+                strideA[seqlen_transpose_dim_idx] = 3 * h * d;
+                strideA[hidden_transpose_dim_idx] = 1;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * 3 * h * d;
+            } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+                strideA[seqlen_transpose_dim_idx] = 2 * h * d;
+                strideA[hidden_transpose_dim_idx] = 1;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * 2 * h * d;
+            } else {
+                strideA[seqlen_transpose_dim_idx] = h * d;
+                strideA[hidden_transpose_dim_idx] = 1;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * h * d;
+            }
+            break;
+        case MHA_Matrix::V_Matrix:
+            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+                strideA[hidden_dim_idx] = 1;
+                strideA[seqlen_dim_idx] = 3 * h * d;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * 3 * h * d;
+            } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+                strideA[hidden_dim_idx] = 1;
+                strideA[seqlen_dim_idx] = 2* h * d;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * 2 * h * d;
+            } else {
+                strideA[hidden_dim_idx] = 1;
+                strideA[seqlen_dim_idx] = h * d;
+                strideA[head_dim_idx] = d;
+                strideA[batch_dim_idx] = s_kv * h * d;
+            }
+            break;
+        case MHA_Matrix::V_Matrix_Transpose:
+            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+                    strideA[hidden_transpose_dim_idx] = 1;
+                    strideA[seqlen_transpose_dim_idx] = 3 * h * d;
+                    strideA[head_dim_idx] = d;
+                    strideA[batch_dim_idx] = s_kv * 3 * h * d;
+                } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+                    strideA[hidden_transpose_dim_idx] = 1;
+                    strideA[seqlen_transpose_dim_idx] = 2* h * d;
+                    strideA[head_dim_idx] = d;
+                    strideA[batch_dim_idx] = s_kv * 2 * h * d;
+                } else {
+                    strideA[hidden_transpose_dim_idx] = 1;
+                    strideA[seqlen_transpose_dim_idx] = h * d;
+                    strideA[head_dim_idx] = d;
+                    strideA[batch_dim_idx] = s_kv * h * d;
+                }
+            break;
+        case MHA_Matrix::S_Matrix:
+            strideA[seqlen_kv_dim_idx] = 1;
+            strideA[seqlen_q_dim_idx] = s_kv;
+            strideA[head_dim_idx] = s_q * s_kv;
+            strideA[batch_dim_idx] = h * s_q * s_kv;
+            break;
+        case MHA_Matrix::O_Matrix:
+            strideA[seqlen_kv_dim_idx] = 1;
+            strideA[seqlen_q_dim_idx] = h * d;
+            strideA[head_dim_idx] = d;
+            strideA[batch_dim_idx] = s_q * h * d;
+            break;
+    }
+}
+
+//struct FADescriptor {
+//  std::int64_t b;
+//  std::int64_t h;
+//  std::int64_t s_q;
+//  std::int64_t s_kv;
+//  std::int64_t d;
+//  float attnScale;
+//  bool isTraining;
+//  float dropoutProbability;
+//  MHA_Layout layout;
+//  cudnnDataType_t tensor_type;
+//
+//  bool operator<(const FADescriptor &rhs) const {
+//    return std::tie(b, h, s_q, s_kv, d,
+//                    attnScale, isTraining, dropoutProbability,
+//                    layout, tensor_type) < std::tie(
+//                            rhs.b, rhs.h, rhs.s_q, rhs.s_kv, rhs.d,
+//                            rhs.attnScale, rhs.isTraining,
+//                            rhs.dropoutProbability, rhs.layout, rhs.tensor_type);
+//  }
+//};
+}  // namespace fused_attn 
+}  // namespace transformer_engine
