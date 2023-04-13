@@ -85,7 +85,7 @@ cudnnDataType_t get_cudnn_dtype(const transformer_engine::DType t) {
 __global__ void cu_seqlens_to_offsets(size_t b, size_t h, size_t d,
                 int32_t *cu_seqlens_q, int32_t *actual_seqlens_q,
                 int32_t *qkv_ragged_offset, int32_t *o_ragged_offset) {
-  size_t tid = threadIdx.x;
+  size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid < b) {
     actual_seqlens_q[tid] = cu_seqlens_q[tid + 1] - cu_seqlens_q[tid];
   }

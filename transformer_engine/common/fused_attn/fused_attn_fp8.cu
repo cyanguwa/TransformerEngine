@@ -1296,30 +1296,26 @@ void fa_fwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
       };  // end of get_plan
 
       auto plan = get_plan(fa_fprop_cache, descriptor);
-      *workspace_size = static_cast<size_t>(plan.getWorkspaceSize());
+      size_t wkspace_size = static_cast<size_t>(plan.getWorkspaceSize());
 
       // Exit to request upper level API to allocate memory if needed
       if (workspace_ptr == nullptr) {
+	  *workspace_size = wkspace_size + ((b + 1) * 2 + b) * sizeof(int32_t);
           return;
       }
 
-      uint64_t tensor_sizes[3];
-      // qkv_ragged_offset
-      tensor_sizes[0] = (b + 1) * sizeof(int32_t);
-      // o_ragged_offset
-      tensor_sizes[1] = (b + 1) * sizeof(int32_t);
-      // mnk_override or actual_seqlens
-      tensor_sizes[2] = b * sizeof(int32_t);
       int32_t* qkv_ragged_offset = reinterpret_cast<int32_t*>(
-                  reinterpret_cast<int8_t*>(workspace_ptr) + static_cast<size_t>(*workspace_size));
+                  reinterpret_cast<int8_t*>(workspace_ptr) + wkspace_size);
       int32_t* o_ragged_offset = reinterpret_cast<int32_t*>(
                   reinterpret_cast<int8_t*>(workspace_ptr)
-                  + static_cast<size_t>(*workspace_size) + tensor_sizes[0]);
+                  + wkspace_size + (b + 1) * sizeof(int32_t));
       int32_t* actual_seqlens_q = reinterpret_cast<int32_t*>(
                   reinterpret_cast<int8_t*>(workspace_ptr)
-                  + static_cast<size_t>(*workspace_size) + tensor_sizes[0] + tensor_sizes[1]);
+                  + wkspace_size + (b + 1) * 2 * sizeof(int32_t));
       // FP8 currently only supports self-attention, so doesn't use devPtrcuSeqlensKV
-      cu_seqlens_to_offsets<<<1, b+1, 0, stream>>>(
+      dim3 blockDims(128);
+      dim3 gridDims((b + blockDims.x)/blockDims.x);
+      cu_seqlens_to_offsets<<<gridDims, blockDims, 0, stream>>>(
                       b, h, d, reinterpret_cast<int32_t*>(devPtrcuSeqlensQ),
                       actual_seqlens_q, qkv_ragged_offset, o_ragged_offset);
       void* devPtrQKVRaggedOffset = reinterpret_cast<void *>(qkv_ragged_offset);
@@ -1826,30 +1822,26 @@ void fa_bwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
       };
 
       auto plan = get_plan(fa_bprop_cache, descriptor);
-      *workspace_size = static_cast<size_t>(plan.getWorkspaceSize());
+      size_t wkspace_size = static_cast<size_t>(plan.getWorkspaceSize());
 
       // Exit to request upper level API to allocate memory if needed
       if (workspace_ptr == nullptr) {
+	  *workspace_size = wkspace_size + ((b + 1) * 2 + b) * sizeof(int32_t);
           return;
       }
 
-      uint64_t tensor_sizes[3];
-      // qkv_ragged_offset
-      tensor_sizes[0] = (b + 1) * sizeof(int32_t);
-      // o_ragged_offset
-      tensor_sizes[1] = (b + 1) * sizeof(int32_t);
-      // mnk_override or actual_seqlens
-      tensor_sizes[2] = b * sizeof(int32_t);
       int32_t* qkv_ragged_offset = reinterpret_cast<int32_t*>(
-                  reinterpret_cast<int8_t*>(workspace_ptr) + static_cast<size_t>(*workspace_size));
+                  reinterpret_cast<int8_t*>(workspace_ptr) + wkspace_size);
       int32_t* o_ragged_offset = reinterpret_cast<int32_t*>(
                   reinterpret_cast<int8_t*>(workspace_ptr)
-                  + static_cast<size_t>(*workspace_size) + tensor_sizes[0]);
+                  + wkspace_size + (b + 1) * sizeof(int32_t));
       int32_t* actual_seqlens_q = reinterpret_cast<int32_t*>(
                   reinterpret_cast<int8_t*>(workspace_ptr)
-                  + static_cast<size_t>(*workspace_size) + tensor_sizes[0] + tensor_sizes[1]);
+                  + wkspace_size + (b + 1) * 2 * sizeof(int32_t));
       // FP8 currently only supports self-attention, so doesn't use devPtrcuSeqlensKV
-      cu_seqlens_to_offsets<<<1, b+1, 0, stream>>>(
+      dim3 blockDims(128);
+      dim3 gridDims((b + blockDims.x)/blockDims.x);
+      cu_seqlens_to_offsets<<<gridDims, blockDims, 0, stream>>>(
                       b, h, d, reinterpret_cast<int32_t*>(devPtrcuSeqlensQ),
                       actual_seqlens_q, qkv_ragged_offset, o_ragged_offset);
       void* devPtrQKVRaggedOffset = reinterpret_cast<void *>(qkv_ragged_offset);
@@ -2031,16 +2023,14 @@ void fused_attn_fwd_fp8_qkvpacked(
                   get_cudnn_dtype(QKV_type),
                   workspace->data.dptr, &workspace_size, stream, handle);
 
-  // miscellaneous tensors: qkv_ragged_offset (b+1), o_ragged_offset (b+1), mnk_override (b)
-  uint64_t misc_tensors_size = ((b + 1) * 2 + b) * sizeof(int32_t);
   if (workspace_size > 0) {
     if (workspace->data.dptr == nullptr) {
-      workspace->data.shape = { workspace_size + misc_tensors_size };
+      workspace->data.shape = { workspace_size };
       workspace->data.dtype = DType::kByte;
       return;
     }
   } else if (workspace_size == 0) {
-    workspace->data.shape = { misc_tensors_size };
+    workspace->data.shape = { 1 };
     workspace->data.dtype = DType::kByte;
     return;
   }
@@ -2128,16 +2118,14 @@ void fused_attn_bwd_fp8_qkvpacked(
                   get_cudnn_dtype(QKV_type),
                   workspace->data.dptr, &workspace_size, stream, handle);
 
-  // miscellaneous tensors: qkv_ragged_offset (b+1), o_ragged_offset (b+1), mnk_override (b)
-  uint64_t misc_tensors_size = ((b + 1) * 2 + b) * sizeof(int32_t);
   if (workspace_size > 0) {
     if (workspace->data.dptr == nullptr) {
-      workspace->data.shape = { workspace_size + misc_tensors_size };
+      workspace->data.shape = { workspace_size };
       workspace->data.dtype = DType::kByte;
       return;
     }
   } else if (workspace_size == 0) {
-    workspace->data.shape = { misc_tensors_size };
+    workspace->data.shape = { 1 };
     workspace->data.dtype = DType::kByte;
     return;
   }
@@ -2225,16 +2213,14 @@ void fused_attn_fwd_fp8_kvpacked(
                   get_cudnn_dtype(QKV_type),
                   workspace->data.dptr, &workspace_size, stream, handle);
 
-  // miscellaneous tensors: qkv_ragged_offset (b+1), o_ragged_offset (b+1), mnk_override (b)
-  uint64_t misc_tensors_size = ((b + 1) * 2 + b) * sizeof(int32_t);
   if (workspace_size > 0) {
     if (workspace->data.dptr == nullptr) {
-      workspace->data.shape = { workspace_size + misc_tensors_size };
+      workspace->data.shape = { workspace_size };
       workspace->data.dtype = DType::kByte;
       return;
     }
   } else if (workspace_size == 0) {
-    workspace->data.shape = { misc_tensors_size };
+    workspace->data.shape = { 1 };
     workspace->data.dtype = DType::kByte;
     return;
   }
@@ -2329,16 +2315,14 @@ void fused_attn_bwd_fp8_kvpacked(
                   get_cudnn_dtype(QKV_type),
                   workspace->data.dptr, &workspace_size, stream, handle);
 
-  // miscellaneous tensors: qkv_ragged_offset (b+1), o_ragged_offset (b+1), mnk_override (b)
-  uint64_t misc_tensors_size = ((b + 1) * 2 + b) * sizeof(int32_t);
   if (workspace_size > 0) {
     if (workspace->data.dptr == nullptr) {
-      workspace->data.shape = { workspace_size + misc_tensors_size };
+      workspace->data.shape = { workspace_size };
       workspace->data.dtype = DType::kByte;
       return;
     }
   } else if (workspace_size == 0) {
-    workspace->data.shape = { misc_tensors_size };
+    workspace->data.shape = { 1 };
     workspace->data.dtype = DType::kByte;
     return;
   }
