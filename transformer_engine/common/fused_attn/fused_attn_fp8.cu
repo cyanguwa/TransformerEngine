@@ -1300,7 +1300,7 @@ void fa_fwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
 
       // Exit to request upper level API to allocate memory if needed
       if (workspace_ptr == nullptr) {
-	  *workspace_size = wkspace_size + ((b + 1) * 2 + b) * sizeof(int32_t);
+          *workspace_size = wkspace_size + ((b + 1) * 2 + b) * sizeof(int32_t);
           return;
       }
 
@@ -1826,7 +1826,7 @@ void fa_bwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
 
       // Exit to request upper level API to allocate memory if needed
       if (workspace_ptr == nullptr) {
-	  *workspace_size = wkspace_size + ((b + 1) * 2 + b) * sizeof(int32_t);
+          *workspace_size = wkspace_size + ((b + 1) * 2 + b) * sizeof(int32_t);
           return;
       }
 
