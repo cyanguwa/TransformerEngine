@@ -75,46 +75,65 @@ at::PhiloxCudaState init_philox_state(
   return philox_args;
 }
 
-std::vector<at::Tensor> fused_attn_fwd(
-                size_t b, size_t max_seq_len,
-                size_t total_seqs, size_t h, size_t d,
+std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
+                size_t b, size_t max_seqlen, size_t total_seqs,
+		size_t h, size_t d,
                 bool is_training, float attn_scale, float p_dropout,
-                bool set_zero, std::string QKV_layout,
+                bool set_zero, std::string qkv_layout, std::string attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,
-                const transformer_engine::DType QKV_type,
+                const transformer_engine::DType qkv_type,
                 const c10::optional<at::Tensor> descale_QKV,
                 const c10::optional<at::Tensor> scale_S,
                 const c10::optional<at::Tensor> scale_O,
                 c10::optional<at::Tensor> amax_S,
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
-                const c10::optional<std::string> Bias_type,
+                const c10::optional<std::string> bias_type,
                 const c10::optional<at::Generator> rng_gen) {
   using namespace transformer_engine;
 
-  // construct NVTE tensors
-  TensorWrapper te_QKV, te_S;
+  // create output tensor O
+  printf("----- qkv_type %d\n", (int)qkv_type);
+  auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
+  auto O = torch::empty({static_cast<int64_t>(total_seqs),
+		  static_cast<int64_t>(h), static_cast<int64_t>(d)}, options);
+  if (set_zero) {
+    mha_fill(O, cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  }
 
-  if (QKV_type == DType::kFloat8E4M3 || QKV_type == DType::kFloat8E5M2) {
+  printf("----- enter nvte fwd\n");
+  // construct NVTE tensors
+  TensorWrapper te_QKV, te_S, te_O, te_cu_seqlens;
+
+  te_cu_seqlens = makeTransformerEngineTensor(cu_seqlens.data_ptr(), {b+1},
+		    DType::kInt32, nullptr, nullptr, nullptr); 
+  if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
     if ((!descale_QKV.has_value()) || (!scale_S.has_value()) || (!scale_O.has_value())
                     || (!amax_S.has_value()) || (!amax_O.has_value())) {
       std::string err_tensors = "descale_QKV, scale_S, scale_O, amax_S and amax_O";
       NVTE_ERROR(err_tensors + std::string("are required for FP8 operation. \n"));
     }
     te_QKV = makeTransformerEngineTensor(QKV.data_ptr(), {total_seqs, 3, h, d},
-                    QKV_type, nullptr, nullptr, descale_QKV.value().data_ptr());
+                    qkv_type, nullptr, nullptr, descale_QKV.value().data_ptr());
     at::Tensor descale_S = torch::empty_like(scale_S.value());  // ghost tensor for now
-    te_S = makeTransformerEngineTensor(nullptr, {0}, QKV_type,
-                    amax_S.value().data_ptr(), scale_S.value().data_ptr(), descale_S.data_ptr());
-  } else if (QKV_type == DType::kBFloat16 || QKV_type == DType::kFloat16) {
+    te_S = makeTransformerEngineTensor(nullptr, {0},
+		    DType::kFloat32, amax_S.value().data_ptr(),
+		    scale_S.value().data_ptr(), descale_S.data_ptr());
+    te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs, h, d},
+		    qkv_type, amax_O.value().data_ptr(), scale_O.value().data_ptr(), nullptr);
+  } else if (qkv_type == DType::kBFloat16 || qkv_type == DType::kFloat16) {
     te_QKV = makeTransformerEngineTensor(QKV.data_ptr(), {total_seqs, 3, h, d},
-                    QKV_type, nullptr, nullptr, nullptr);
-    te_S = makeTransformerEngineTensor(nullptr, {0}, QKV_type, nullptr, nullptr, nullptr);
+                    qkv_type, nullptr, nullptr, nullptr);
+    te_S = makeTransformerEngineTensor(nullptr, {0},
+		    DType::kFloat32, nullptr, nullptr, nullptr);
+    te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs, h, d},
+                    qkv_type, nullptr, nullptr, nullptr);
   } else {
     NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
   }
 
+  printf("----- after constructing te's \n");
   TensorWrapper te_Bias;
   if (Bias.has_value()) {
     auto bias_shape = Bias.value().sizes().vec();
@@ -122,101 +141,113 @@ std::vector<at::Tensor> fused_attn_fwd(
     te_Bias = makeTransformerEngineTensor(Bias.value().data_ptr(), shape,
                     DType::kFloat32, nullptr, nullptr, nullptr);
   }
-  if (Bias_type.has_value()) {
-    std::string bias_type = Bias_type.value().data();
-  }
+//  if (bias_type.has_value()) {
+//    std::string bias_type = bias_type.value().data();
+//  }
 
-  // create output tensor pack
-  // first tensor element is O; if training, second and third elements are M and ZInv
-  OutputTensorPack nvte_output_pack;
-  OutputTensorPack_create(&nvte_output_pack);
-  nvte_output_pack.size = 1;
-  Tensor *output_O = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[0]);
-  output_O->data.dptr = nullptr;
-  output_O->data.shape = {total_seqs, h, d};
-  output_O->data.dtype = QKV_type;
-  output_O->amax.dptr = nullptr;
-  output_O->scale.dptr = nullptr;
-  output_O->scale_inv.dptr = nullptr;
-  if (QKV_type == DType::kFloat8E4M3 || QKV_type == DType::kFloat8E5M2) {
-    output_O->amax.dptr = amax_O.value().data_ptr();
-    output_O->scale.dptr = scale_O.value().data_ptr();
-  }
+  // convert strings to enums
+  MHA_Layout qkv_layout_enum = get_mha_layout(qkv_layout);
+  MHA_Bias_Type bias_type_enum = get_mha_bias_type(bias_type.value().data());
+  Attn_Mask_Type attn_mask_type_enum = get_attn_mask_type(attn_mask_type);
 
-  // extract rng seed and offset
-  auto options = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
+  printf("----- after enums %d, %d, %d \n", (int)qkv_layout_enum, (int)bias_type_enum, (int)attn_mask_type_enum);
+  // extract random number generator seed and offset
+//  auto options = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
   size_t threads_per_cta = 128;
-  at::PhiloxCudaState philox_args = init_philox_state(gen, max_seq_len, threads_per_cta);
-  auto rng_state = torch::empty({2}, options);
+  at::PhiloxCudaState philox_args = init_philox_state(gen, max_seqlen, threads_per_cta);
+  auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
+  auto te_rng_state = makeTransformerEngineTensor(rng_state);
+
+  printf("----- after rng\n");
+  // create auxilary output tensor pack
+  // if training, this tensor pack includes [M, ZInv] but not rng_state
+  NVTETensorPack nvte_aux_tensor_pack;
+  nvte_tensor_pack_create(&nvte_aux_tensor_pack);
 
   // create workspace
   TensorWrapper workspace;
 
+  printf("----- first call\n");
   // populate tensors with appropriate shapes and dtypes
-  nvte_fused_attn_fwd(
-                  b, max_seq_len, total_seqs, h, d,
-                  is_training, attn_scale,
-                  p_dropout, QKV_layout,
+  nvte_fused_attn_fwd_qkvpacked(
+                  max_seqlen,
+                  is_training, attn_scale, p_dropout,
+		  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
+		  te_cu_seqlens.data(),
+		  te_rng_state.data(),
                   te_QKV.data(),
                   te_Bias.data(),
                   te_S.data(),
-                  &nvte_output_pack,
-                  reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
-                  reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+		  te_O.data(),
+                  &nvte_aux_tensor_pack,
+		  //reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
+                  //reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  // allocate memory for workspace and output_pack tensors
+  // allocate memory for workspace and output pack tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
   workspace = makeTransformerEngineTensor(
                   workspace_data.data_ptr(),
                   workspace.shape(), workspace.dtype());
-  std::vector<at::Tensor> output_tensors(nvte_output_pack.size);
-  for (size_t i = 0; i < nvte_output_pack.size; ++i) {
-    auto tensor = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i]);
-    output_tensors[i] = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
-    tensor->data.dptr = output_tensors[i].data_ptr();
-    if ((i == 0) && (set_zero)) {
-      mha_fill(output_tensors[i],
-                      cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
-    }
+
+  printf("----- second call %ld \n", workspace.shape().data[0]);
+  // aux_ctx_tensors includes nvte_aux_tensor_pack and rng_state
+  // allocate memory for nvte_aux_tensor_pack first
+  std::vector<at::Tensor> output_tensors;//(nvte_aux_tensor_pack.size + 2);
+  output_tensors.push_back(O);
+  for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
+    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+    //output_tensors[i+1] 
+    auto output_tensor = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
+    output_tensors.push_back(output_tensor);
+    //tensor->data.dptr = output_tensors[i+1].data_ptr();
+    tensor->data.dptr = output_tensor.data_ptr();
   }
 
-  // actual call to kernel
-  nvte_fused_attn_fwd(
-                  b, max_seq_len, total_seqs, h, d,
-                  is_training, attn_scale,
-                  p_dropout, QKV_layout,
+  // second call to actually execute the kernel
+  nvte_fused_attn_fwd_qkvpacked(
+                  max_seqlen,
+                  is_training, attn_scale, p_dropout,
+		  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
+		  te_cu_seqlens.data(),
+		  te_rng_state.data(),
                   te_QKV.data(),
                   te_Bias.data(),
                   te_S.data(),
-                  &nvte_output_pack,
-                  reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
-                  reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+		  te_O.data(),
+                  &nvte_aux_tensor_pack,
+		  //reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
+                  //reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  OutputTensorPack_destroy(&nvte_output_pack);
+  // destroy tensor wrappers, but not the allocated memory
+  nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
+
+  // append rng_state to aux_ctx_tensors before return
   output_tensors.push_back(rng_state);
+
+  printf("----- end of call\n");
+  // [O, M, ZInv, rng_state] if training; [O, rng_state] if inference
   return output_tensors;
 }
 
-at::Tensor fused_attn_bwd(
-                size_t b, size_t max_seq_len,
-                size_t total_seqs, size_t h, size_t d,
+std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
+                size_t b, size_t max_seqlen, size_t total_seqs,
+		size_t h, size_t d,
                 float attn_scale, float p_dropout,
-                bool set_zero, std::string QKV_layout,
+                bool set_zero, std::string qkv_layout, std::string attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,
                 const at::Tensor O,
                 const at::Tensor dO,
-                const transformer_engine::DType QKV_type,
-                const c10::optional<at::Tensor> M,
-                const c10::optional<at::Tensor> ZInv,
+                const transformer_engine::DType qkv_type,
+                const std::vector<at::Tensor> Aux_CTX_Tensors,
                 const c10::optional<at::Tensor> descale_QKV,
                 const c10::optional<at::Tensor> descale_S,
                 const c10::optional<at::Tensor> descale_O,
@@ -227,14 +258,19 @@ at::Tensor fused_attn_bwd(
                 c10::optional<at::Tensor> amax_dS,
                 c10::optional<at::Tensor> amax_dQKV,
                 const c10::optional<at::Tensor> Bias,
-                const c10::optional<std::string> Bias_type,
-                const at::Tensor rng_state) {
+                const c10::optional<std::string> bias_type) {
   using namespace transformer_engine;
 
-  // construct NVTE tensors
-  TensorWrapper te_QKV, te_dQKV, te_O, te_dO, te_S, te_dS, te_M, te_ZInv;
+  // create output tensor dQKV
+  at::Tensor dQKV = torch::empty_like(QKV);
+  if (set_zero) {
+    mha_fill(dQKV, cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  }
 
-  if (QKV_type == DType::kFloat8E4M3 || QKV_type == DType::kFloat8E5M2) {
+  // construct NVTE tensors
+  TensorWrapper te_QKV, te_O, te_dO, te_S, te_dS, te_dQKV;
+
+  if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
     if ((!descale_QKV.has_value()) || (!descale_S.has_value())
                     || (!descale_O.has_value()) || (!descale_dO.has_value())
                     || (!scale_S.has_value()) || (!scale_dS.has_value())
@@ -245,34 +281,34 @@ at::Tensor fused_attn_bwd(
       NVTE_ERROR(err_tensors + std::string("are required for FP8 operation. \n"));
     }
     te_QKV = makeTransformerEngineTensor(QKV.data_ptr(), {total_seqs, 3, h, d},
-                    QKV_type, nullptr, nullptr, descale_QKV.value().data_ptr());
-    if (!M.has_value() || !ZInv.has_value()) {
-      NVTE_ERROR("M and ZInv tensors are required for FP8 fused attention backward. \n");
-    }
-    te_M = makeTransformerEngineTensor(M.value());
-    te_ZInv = makeTransformerEngineTensor(ZInv.value());
+                    qkv_type, nullptr, nullptr, descale_QKV.value().data_ptr());
     te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs, h, d},
-                    QKV_type, nullptr, nullptr, descale_O.value().data_ptr());
+                    qkv_type, nullptr, nullptr, descale_O.value().data_ptr());
     te_dO = makeTransformerEngineTensor(dO.data_ptr(), {total_seqs, h, d},
-                    QKV_type, nullptr, nullptr, descale_dO.value().data_ptr());
+                    qkv_type, nullptr, nullptr, descale_dO.value().data_ptr());
     te_S = makeTransformerEngineTensor(nullptr, {0},
-                    QKV_type, nullptr, scale_S.value().data_ptr(), descale_S.value().data_ptr());
+                    DType::kFloat32, nullptr, scale_S.value().data_ptr(), descale_S.value().data_ptr());
     at::Tensor descale_dS = torch::empty_like(scale_dS.value());  // ghost tensor for now
     te_dS = makeTransformerEngineTensor(nullptr, {0},
-                    QKV_type, amax_dS.value().data_ptr(), scale_dS.value().data_ptr(),
+                    DType::kFloat32, amax_dS.value().data_ptr(), scale_dS.value().data_ptr(),
                     descale_dS.data_ptr());
-  } else if (QKV_type == DType::kBFloat16 || QKV_type == DType::kFloat16) {
+    te_dQKV = makeTransformerEngineTensor(dQKV.data_ptr(), {total_seqs, 3, h, d},
+                    qkv_type,
+		    amax_dQKV.value().data_ptr(), scale_dQKV.value().data_ptr(), nullptr);
+  } else if (qkv_type == DType::kBFloat16 || qkv_type == DType::kFloat16) {
     te_QKV = makeTransformerEngineTensor(QKV.data_ptr(), {total_seqs, 3, h, d},
-                    QKV_type, nullptr, nullptr, nullptr);
+                    qkv_type, nullptr, nullptr, nullptr);
     // do we need any softmax tensor for BF16 API?
     te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs, h, d},
-                    QKV_type, nullptr, nullptr, nullptr);
+                    qkv_type, nullptr, nullptr, nullptr);
     te_dO = makeTransformerEngineTensor(dO.data_ptr(), {total_seqs, h, d},
-                    QKV_type, nullptr, nullptr, nullptr);
+                    qkv_type, nullptr, nullptr, nullptr);
     te_S = makeTransformerEngineTensor(nullptr, {0},
-                    QKV_type, nullptr, nullptr, nullptr);
+                    DType::kFloat32, nullptr, nullptr, nullptr);
     te_dS = makeTransformerEngineTensor(nullptr, {0},
-                    QKV_type, nullptr, nullptr, nullptr);
+                    DType::kFloat32, nullptr, nullptr, nullptr);
+    te_dQKV = makeTransformerEngineTensor(dQKV.data_ptr(), {total_seqs, 3, h, d},
+                    qkv_type, nullptr, nullptr, nullptr);
   } else {
     NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
   }
@@ -285,85 +321,482 @@ at::Tensor fused_attn_bwd(
                     Bias.value().data_ptr(), shape, DType::kFloat32,
                     nullptr, nullptr, nullptr);
   }
-  if (Bias_type.has_value()) {
-    std::string bias_type = Bias_type.value().data();
+//  if (bias_type.has_value()) {
+//    std::string bias_type = bias_type.value().data();
+//  }
+  // convert strings to enums
+  MHA_Layout qkv_layout_enum = get_mha_layout(qkv_layout);
+  MHA_Bias_Type bias_type_enum = get_mha_bias_type(bias_type.value().data());
+  Attn_Mask_Type attn_mask_type_enum = get_attn_mask_type(attn_mask_type);
+
+  // convert auxilary tensor pack from fwd/ctx to NVTETensorPack
+  // if training, tensor pack contains [M, ZInv, rng_state]
+  NVTETensorPack nvte_aux_tensor_pack;
+  nvte_tensor_pack_create(&nvte_aux_tensor_pack);
+  nvte_aux_tensor_pack.size = Aux_CTX_Tensors.size();
+  for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
+    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+    tensor->data.dptr = Aux_CTX_Tensors[i].data_ptr();
+    std::vector<int64_t> tmp(Aux_CTX_Tensors[i].sizes().vec());
+    tensor->data.shape = std::vector<size_t>(tmp.begin(), tmp.end());
+    tensor->data.dtype = GetTransformerEngineDType(Aux_CTX_Tensors[i].scalar_type());
   }
 
-  // create output tensor pack
-  // only has one tensor element, dQKV
-  OutputTensorPack nvte_output_pack;
-  OutputTensorPack_create(&nvte_output_pack);
-  nvte_output_pack.size = 1;
-  Tensor *output_dQKV = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[0]);
-  output_dQKV->data.dptr = nullptr;
-  output_dQKV->data.shape = {total_seqs, 3, h, d};
-  output_dQKV->data.dtype = QKV_type;
-  output_dQKV->amax.dptr = nullptr;
-  output_dQKV->scale.dptr = nullptr;
-  output_dQKV->scale_inv.dptr = nullptr;
-  if (QKV_type == DType::kFloat8E4M3 || QKV_type == DType::kFloat8E5M2) {
-    output_dQKV->amax.dptr = amax_dQKV.value().data_ptr();
-    output_dQKV->scale.dptr = scale_dQKV.value().data_ptr();
-  }
+  // create tensors for cu_seqlens
+  TensorWrapper te_cu_seqlens;
+  te_cu_seqlens = makeTransformerEngineTensor(cu_seqlens.data_ptr(), {b+1},
+		    DType::kInt32, nullptr, nullptr, nullptr); 
 
   // create workspace
   TensorWrapper workspace;
 
   // populate tensors with appropriate shapes and dtypes
-  nvte_fused_attn_bwd(
-                  b, max_seq_len, total_seqs, h, d,
-                  attn_scale, p_dropout, QKV_layout,
+  nvte_fused_attn_bwd_qkvpacked(
+                  max_seqlen,
+                  attn_scale, p_dropout,
+		  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
+		  te_cu_seqlens.data(),
                   te_QKV.data(),
+                  te_Bias.data(),
                   te_O.data(),
                   te_dO.data(),
-                  te_M.data(),
-                  te_ZInv.data(),
                   te_S.data(),
                   te_dS.data(),
-                  te_Bias.data(),
-                  &nvte_output_pack,
-                  reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
-                  reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+		  &nvte_aux_tensor_pack,
+		  te_dQKV.data(),
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  // allocate memory for workspace and output_pack tensors
+  // allocate memory for workspace
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
   workspace = makeTransformerEngineTensor(
                   workspace_data.data_ptr(),
                   workspace.shape(), workspace.dtype());
-  std::vector<at::Tensor> output_tensors(nvte_output_pack.size);
-  for (size_t i = 0; i < nvte_output_pack.size; ++i) {
-    auto tensor = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i]);
-    output_tensors[i] = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
-    tensor->data.dptr = output_tensors[i].data_ptr();
-    if ((i == 0) && (set_zero)) {
-      mha_fill(output_tensors[i],
-                      cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
-    }
-  }
 
-  // actual call to kernel
-  nvte_fused_attn_bwd(
-                  b, max_seq_len, total_seqs, h, d,
-                  attn_scale, p_dropout, QKV_layout,
+  // second call to execute the kernel
+  nvte_fused_attn_bwd_qkvpacked(
+                  max_seqlen,
+                  attn_scale, p_dropout,
+		  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
+		  te_cu_seqlens.data(),
                   te_QKV.data(),
+                  te_Bias.data(),
                   te_O.data(),
                   te_dO.data(),
-                  te_M.data(),
-                  te_ZInv.data(),
                   te_S.data(),
                   te_dS.data(),
-                  te_Bias.data(),
-                  &nvte_output_pack,
-                  reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
-                  reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+		  &nvte_aux_tensor_pack,
+		  te_dQKV.data(),
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  OutputTensorPack_destroy(&nvte_output_pack);
-  return output_tensors[0];
+  // destroy the tensor wrappers
+  nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
+
+  return {dQKV};
 }
+//std::vector<at::Tensor> fused_attn_fwd_kvpacked(
+//                size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
+//                size_t total_seqs_q, size_t total_seqs_kv,
+//		size_t h, size_t d,
+//                bool is_training, float attn_scale, float p_dropout,
+//                bool set_zero, std::string qkv_layout, std::string attn_mask_type,
+//                const at::Tensor cu_seqlens_q,
+//		const at::Tensor cu_seqlens_kv,
+//                const at::Tensor Q,
+//		const at::Tensor KV,
+//                const transformer_engine::DType qkv_type,
+//                const c10::optional<at::Tensor> descale_QKV,
+//                const c10::optional<at::Tensor> scale_S,
+//                const c10::optional<at::Tensor> scale_O,
+//                c10::optional<at::Tensor> amax_S,
+//                c10::optional<at::Tensor> amax_O,
+//                const c10::optional<at::Tensor> Bias,
+//                const c10::optional<std::string> bias_type,
+//                const c10::optional<at::Generator> rng_gen) {
+//  using namespace transformer_engine;
+//
+//  // create output tensor O
+//  auto options = torch::TensorOptions().dtype(torch::kByte).device(torch::kCUDA);
+//  auto O = torch::empty({total_seqs_q, h, d}, options);
+//  if (set_zero) {
+//    mha_fill(O, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+//  }
+//
+//  // construct NVTE tensors
+//  TensorWrapper te_Q, te_KV, te_S, te_O, te_cu_seqlens_q, te_cu_seqlens_kv;
+//
+//  te_cu_seqlens_q = makeTransformerEngineTensor(cu_seqlens_q, {b+1},
+//		    DType::kInt32, nullptr, nullptr, nullptr); 
+//  te_cu_seqlens_kv = makeTransformerEngineTensor(cu_seqlens_kv, {b+1},
+//		    DType::kInt32, nullptr, nullptr, nullptr); 
+//  if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
+//    if ((!descale_QKV.has_value()) || (!scale_S.has_value()) || (!scale_O.has_value())
+//                    || (!amax_S.has_value()) || (!amax_O.has_value())) {
+//      std::string err_tensors = "descale_QKV, scale_S, scale_O, amax_S and amax_O";
+//      NVTE_ERROR(err_tensors + std::string("are required for FP8 operation. \n"));
+//    }
+//    te_Q = makeTransformerEngineTensor(Q.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type, nullptr, nullptr, descale_QKV.value().data_ptr());
+//    te_KV = makeTransformerEngineTensor(KV.data_ptr(), {total_seqs_kv, 2, h, d},
+//                    qkv_type, nullptr, nullptr, descale_QKV.value().data_ptr());
+//    at::Tensor descale_S = torch::empty_like(scale_S.value());  // ghost tensor for now
+//    te_S = makeTransformerEngineTensor(nullptr, {0},
+//		    DType::kFloat32, amax_S.value().data_ptr(),
+//		    scale_S.value().data_ptr(), descale_S.data_ptr());
+//    te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs_q, h, d},
+//		    qkv_type, amax_O.value().data_ptr(), scale_O.value().data_ptr(), nullptr);
+//  } else if (qkv_type == DType::kBFloat16 || qkv_type == DType::kFloat16) {
+//    te_Q = makeTransformerEngineTensor(Q.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_KV = makeTransformerEngineTensor(KV.data_ptr(), {total_seqs_kv, 2, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_S = makeTransformerEngineTensor(nullptr, {0},
+//		    DType::kFloat32, nullptr, nullptr, nullptr);
+//    te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//  } else {
+//    NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
+//  }
+//
+//  TensorWrapper te_Bias;
+//  if (Bias.has_value()) {
+//    auto bias_shape = Bias.value().sizes().vec();
+//    std::vector<size_t> shape{bias_shape.begin(), bias_shape.end()};
+//    te_Bias = makeTransformerEngineTensor(Bias.value().data_ptr(), shape,
+//                    DType::kFloat32, nullptr, nullptr, nullptr);
+//  }
+//// convert to enum bias type
+////  if (bias_type.has_value()) {
+////    std::string bias_type = bias_type.value().data();
+////  }
+//// convert to enum mha layout type
+//// attn_mask_type enum?
+//
+//  //// if training, create auxilary output tensor pack [M, ZInv]
+//  //// if inference, no auxilary output pack, i.e. None
+//  //if (is_training) {
+//  NVTETensorPack nvte_aux_tensor_pack;
+//  nvte_tensor_pack_create(&nvte_aux_tensor_pack);
+//  //} else {
+//  //  auto nvte_output_pack = torch::indexing::None;
+//  //}
+////  // set properties for O since O is always an output
+////  // and some of its properties are known at this stage
+////  nvte_output_pack.size = 1;
+////  Tensor *output_O = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[0]);
+////  output_O->data.dptr = nullptr;
+////  output_O->data.shape = {total_seqs_q, h, d};
+////  output_O->data.dtype = qkv_type;
+////  output_O->amax.dptr = nullptr;
+////  output_O->scale.dptr = nullptr;
+////  output_O->scale_inv.dptr = nullptr;
+////  if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
+////    output_O->amax.dptr = amax_O.value().data_ptr();
+////    output_O->scale.dptr = scale_O.value().data_ptr();
+////  }
+//
+//  // extract rng seed and offset
+//  auto options = torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA);
+//  auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
+//                  rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
+//  size_t threads_per_cta = 128;
+//  at::PhiloxCudaState philox_args = init_philox_state(gen, max_seq_len, threads_per_cta);
+//  auto rng_state = torch::empty({2}, options);
+//  unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
+//                  philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
+//  auto te_rng_state = makeTransformerEngineTensor(rng_state);
+//
+//  // create workspace
+//  TensorWrapper workspace;
+//
+//  // populate tensors with appropriate shapes and dtypes
+//  nvte_fused_attn_fwd_kvpacked(
+//                  max_seqlen_q, max_seqlen_kv,
+//		  //total_seqs_q, total_seqs_kv,
+//                  is_training, attn_scale, p_dropout,
+//		  qkv_layout, bias_type, attn_mask_type,
+//		  te_cu_seqlens_q.data(),
+//		  te_cu_seqlens_kv.data(),
+//		  te_rng_state.data(),
+//                  te_Q.data(),
+//                  te_KV.data(),
+//                  te_Bias.data(),
+//                  te_S.data(),
+//		  te_O.data(),
+//                  &nvte_aux_tensor_pack,
+//                  //reinterpret_cast<int32_t*>(cu_seqlens_q.data_ptr()),
+//                  //reinterpret_cast<int32_t*>(cu_seqlens_kv.data_ptr()),
+//                  //reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+//                  workspace.data(),
+//                  at::cuda::getCurrentCUDAStream());
+//
+//  // allocate memory for workspace and output_pack tensors
+//  auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
+//  workspace = makeTransformerEngineTensor(
+//                  workspace_data.data_ptr(),
+//                  workspace.shape(), workspace.dtype());
+//
+//  std::vector<at::Tensor> aux_ctx_tensors(nvte_aux_tensor_pack.size);
+//  for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
+//    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+//    aux_ctx_tensors[i] = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
+//    tensor->data.dptr = aux_ctx_tensors[i].data_ptr();
+//  }
+//
+//  // actual call to kernel
+//  nvte_fused_attn_fwd_kvpacked(
+//                  max_seqlen_q, max_seqlen_kv,
+//		  //total_seqs_q, total_seqs_kv,
+//                  is_training, attn_scale, p_dropout,
+//		  qkv_layout, bias_type, attn_mask_type,
+//		  te_cu_seqlens_q.data(),
+//		  te_cu_seqlens_kv.data(),
+//		  te_rng_state.data(),
+//                  te_Q.data(),
+//                  te_KV.data(),
+//                  te_Bias.data(),
+//                  te_S.data(),
+//		  te_O.data(),
+//                  &nvte_aux_tensor_pack,
+//                  //reinterpret_cast<int32_t*>(cu_seqlens_q.data_ptr()),
+//                  //reinterpret_cast<int32_t*>(cu_seqlens_kv.data_ptr()),
+//                  //reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+//                  workspace.data(),
+//                  at::cuda::getCurrentCUDAStream());
+//
+//  nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
+//
+//  // add rng_state to aux_ctx_tensors
+//  aux_ctx_tensors.push_back(rng_state);
+//
+//  return aux_ctx_tensors;
+//}
+//
+//std::vector<at::Tensor> fused_attn_bwd_kvpacked(
+//                size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
+//                size_t total_seqs_q, size_t total_seqs_kv,
+//		size_t h, size_t d,
+//                float attn_scale, float p_dropout,
+//                bool set_zero, std::string qkv_layout, std::string attn_mask_type,
+//                const at::Tensor cu_seqlens_q,
+//                const at::Tensor cu_seqlens_kv,
+//                const at::Tensor Q,
+//                const at::Tensor KV,
+//                const at::Tensor O,
+//                const at::Tensor dO,
+//                const transformer_engine::DType qkv_type,
+//                const std::vector<at::Tensor> Aux_CTX_Tensors,
+//                const c10::optional<at::Tensor> descale_QKV,
+//                const c10::optional<at::Tensor> descale_S,
+//                const c10::optional<at::Tensor> descale_O,
+//                const c10::optional<at::Tensor> descale_dO,
+//                const c10::optional<at::Tensor> scale_S,
+//                const c10::optional<at::Tensor> scale_dS,
+//                const c10::optional<at::Tensor> scale_dQKV,
+//                c10::optional<at::Tensor> amax_dS,
+//                c10::optional<at::Tensor> amax_dQKV,
+//                const c10::optional<at::Tensor> Bias,
+//                const c10::optional<std::string> bias_type) {
+//  using namespace transformer_engine;
+//
+//  // create output tensor dQ, dKV
+//  at::Tensor dQ = torch::empty_like(Q);
+//  at::Tensor dKV = torch::empty_like(KV);
+//  if (set_zero) {
+//    mha_fill(dQ, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+//    mha_fill(dKV, cu_seqlens_kv.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+//  }
+//
+//  // construct NVTE tensors
+//  TensorWrapper te_Q, te_KV, te_O, te_dO, te_S, te_dS, te_dQ, te_dKV;//, te_M, te_ZInv;
+//
+//  if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
+//    if ((!descale_QKV.has_value()) || (!descale_S.has_value())
+//                    || (!descale_O.has_value()) || (!descale_dO.has_value())
+//                    || (!scale_S.has_value()) || (!scale_dS.has_value())
+//                    || (!scale_dQKV.has_value())
+//                    || (!amax_dS.has_value()) || (!amax_dQKV.has_value())) {
+//      std::string err_tensors = "descale_QKV, descale_S, descale_O, scale_S, scale_dS, ";
+//      err_tensors = err_tensors + std::string("scale_dQKV, amax_dS and amax_dQKV");
+//      NVTE_ERROR(err_tensors + std::string("are required for FP8 operation. \n"));
+//    }
+//    te_Q = makeTransformerEngineTensor(Q.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type, nullptr, nullptr, descale_QKV.value().data_ptr());
+//    te_KV = makeTransformerEngineTensor(KV.data_ptr(), {total_seqs_kv, 2, h, d},
+//                    qkv_type, nullptr, nullptr, descale_QKV.value().data_ptr());
+//
+//    // use output pack instead?
+//    //if (!M.has_value() || !ZInv.has_value()) {
+//    //  NVTE_ERROR("M and ZInv tensors are required for FP8 fused attention backward. \n");
+//    //}
+//    //te_M = makeTransformerEngineTensor(M.value());
+//    //te_ZInv = makeTransformerEngineTensor(ZInv.value());
+//    auto te_M = makeTransformerEngineTensor(Aux_CTX_Tensors[0].data_ptr());
+//    auto te_ZInv = makeTransformerEngineTensor(Aux_CTX_Tensors[1].data_ptr());
+//    te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs, h, d},
+//                    qkv_type, nullptr, nullptr, descale_O.value().data_ptr());
+//    te_dO = makeTransformerEngineTensor(dO.data_ptr(), {total_seqs, h, d},
+//                    qkv_type, nullptr, nullptr, descale_dO.value().data_ptr());
+//    te_S = makeTransformerEngineTensor(nullptr, {0},
+//                    qkv_type, nullptr, scale_S.value().data_ptr(), descale_S.value().data_ptr());
+//    at::Tensor descale_dS = torch::empty_like(scale_dS.value());  // ghost tensor for now
+//    te_dS = makeTransformerEngineTensor(nullptr, {0},
+//                    qkv_type, amax_dS.value().data_ptr(), scale_dS.value().data_ptr(),
+//                    descale_dS.data_ptr());
+//    te_dQ = makeTransformerEngineTensor(dQ.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type,
+//		    amax_dQKV.value().data_ptr(), scale_dQKV.value().data_ptr(), nullptr);
+//    te_dKV = makeTransformerEngineTensor(dKV.data_ptr(), {total_seqs_kv, 2, h, d},
+//                    qkv_type,
+//		    amax_dQKV.value().data_ptr(), scale_dQKV.value().data_ptr(), nullptr);
+//  } else if (qkv_type == DType::kBFloat16 || qkv_type == DType::kFloat16) {
+//    te_Q = makeTransformerEngineTensor(Q.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_KV = makeTransformerEngineTensor(KV.data_ptr(), {total_seqs_kv, 2, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    // do we need any softmax tensor for BF16 API?
+//    te_O = makeTransformerEngineTensor(O.data_ptr(), {total_seqs, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_dO = makeTransformerEngineTensor(dO.data_ptr(), {total_seqs, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_S = makeTransformerEngineTensor(nullptr, {0},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_dS = makeTransformerEngineTensor(nullptr, {0},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_dQ = makeTransformerEngineTensor(dQ.data_ptr(), {total_seqs_q, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//    te_dKV = makeTransformerEngineTensor(dKV.data_ptr(), {total_seqs_kv, 2, h, d},
+//                    qkv_type, nullptr, nullptr, nullptr);
+//  } else {
+//    NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
+//  }
+//
+//  TensorWrapper te_Bias;
+//  if (Bias.has_value()) {
+//    auto bias_shape = Bias.value().sizes().vec();
+//    std::vector<size_t> shape{bias_shape.begin(), bias_shape.end()};
+//    te_Bias = makeTransformerEngineTensor(
+//                    Bias.value().data_ptr(), shape, DType::kFloat32,
+//                    nullptr, nullptr, nullptr);
+//  }
+////  if (bias_type.has_value()) {
+////    std::string bias_type = bias_type.value().data();
+////  }
+//// converts?
+//
+//  // create output tensor pack
+//  // tensor elements are [dQ, dKV]
+//  NVTETensorPack nvte_aux_ctx_pack;
+//  nvte_tensor_pack_create(&nvte_aux_ctx_pack);
+//  nvte_aux_ctx_pack.size = Aux_CTX_Tensors.size();
+//  for (size_t i = 0; i < nvte_aux_ctx_pack.size; ++i) {
+//    auto tensor = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i]);
+//    tensor->data.dptr = Aux_CTX_Tensors[i].data_ptr();
+//    tensor->data.shape = Aux_CTX_Tensors[i].sizes().data_ptr();
+//    tensor->data.dtype = GetTransformerEngineDType(Aux_CTX_Tensors[i].scalar_type());
+//  }
+//  //// set properties for O since O is always an output
+//  //// and some of its properties are known at this stage
+//  //nvte_output_pack.size = 2;
+//  //Tensor *output_dQ = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[0]);
+//  //Tensor *output_dKV = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[1]);
+//  //output_dQ->data.dptr = nullptr;
+//  //output_dQ->data.shape = {total_seqs_q, h, d};
+//  //output_dQ->data.dtype = qkv_type;
+//  //output_dQ->amax.dptr = nullptr;
+//  //output_dQ->scale.dptr = nullptr;
+//  //output_dQ->scale_inv.dptr = nullptr;
+//  //output_dKV->data.dptr = nullptr;
+//  //output_dKV->data.shape = {total_seqs_kv, 2, h, d};
+//  //output_dKV->data.dtype = qkv_type;
+//  //output_dKV->amax.dptr = nullptr;
+//  //output_dKV->scale.dptr = nullptr;
+//  //output_dKV->scale_inv.dptr = nullptr;
+//  //if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
+//  //  output_dQ->amax.dptr = amax_dQKV.value().data_ptr();
+//  //  output_dQ->scale.dptr = scale_dQKV.value().data_ptr();
+//  //  output_dKV->amax.dptr = amax_dQKV.value().data_ptr();
+//  //  output_dKV->scale.dptr = scale_dQKV.value().data_ptr();
+//  //}
+//
+//  TensorWrapper te_cu_seqlens_q, te_cu_seqlens_kv;
+//
+//  te_cu_seqlens_q = makeTransformerEngineTensor(cu_seqlens_q, {b+1},
+//		    DType::kInt32, nullptr, nullptr, nullptr); 
+//  te_cu_seqlens_kv = makeTransformerEngineTensor(cu_seqlens_kv, {b+1},
+//		    DType::kInt32, nullptr, nullptr, nullptr); 
+//
+//  // create workspace
+//  TensorWrapper workspace;
+//
+//  // populate tensors with appropriate shapes and dtypes
+//  nvte_fused_attn_bwd_kvpacked(
+//                  max_seqlen_q, max_seqlen_kv,
+//		  //total_seqs_q, total_seqs_kv, 
+//                  attn_scale, p_dropout,
+//		  qkv_layout, bias_type, attn_mask_type,
+//		  te_cu_seqlens_q.data(),
+//		  te_cu_seqlens_kv.data(),
+//                  te_Q.data(),
+//                  te_KV.data(),
+//                  te_Bias.data(),
+//                  te_O.data(),
+//                  te_dO.data(),
+//                  te_S.data(),
+//                  te_dS.data(),
+//		  &nvte_aux_ctx_pack,
+//		  te_dQ.data(),
+//		  te_dKV.data(),
+//                  //reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
+//                  //reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+//                  workspace.data(),
+//                  at::cuda::getCurrentCUDAStream());
+//
+//  // allocate memory for workspace and output_pack tensors
+//  auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
+//  workspace = makeTransformerEngineTensor(
+//                  workspace_data.data_ptr(),
+//                  workspace.shape(), workspace.dtype());
+//
+//  //std::vector<at::Tensor> output_tensors(nvte_output_pack.size);
+//  //for (size_t i = 0; i < nvte_output_pack.size; ++i) {
+//  //  auto tensor = reinterpret_cast<Tensor*>(nvte_output_pack.tensors[i]);
+//  //  output_tensors[i] = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
+//  //  tensor->data.dptr = output_tensors[i].data_ptr();
+//  //  if ((i == 0) && (set_zero)) {
+//  //    mha_fill(output_tensors[i],
+//  //                    cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+//  //  }
+//  //}
+//
+//  // actual call to kernel
+//  nvte_fused_attn_bwd(
+//                  max_seqlen_q, max_seqlen_kv,
+//		  //total_seqs_q, total_seqs_kv, 
+//                  attn_scale, p_dropout,
+//		  qkv_layout, bias_type, attn_mask_type,
+//		  te_cu_seqlens_q.data(),
+//		  te_cu_seqlens_kv.data(),
+//                  te_Q.data(),
+//                  te_KV.data(),
+//                  te_Bias.data(),
+//                  te_O.data(),
+//                  te_dO.data(),
+//                  te_S.data(),
+//                  te_dS.data(),
+//		  &nvte_aux_ctx_pack,
+//		  te_dQ.data(),
+//		  te_dKV.data(),
+//                  //reinterpret_cast<int32_t*>(cu_seqlens.data_ptr()),
+//                  //reinterpret_cast<uint64_t*>(rng_state.data_ptr()),
+//                  workspace.data(),
+//                  at::cuda::getCurrentCUDAStream());
+//
+//  nvte_tensor_pack_destroy(&nvte_aux_ctx_pack);
+//
+//  return {dQ, dKV}
+//}
 
 void te_gemm(at::Tensor A,
              at::Tensor A_scale_inverse,
@@ -1267,8 +1700,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("cast_to_fp8", &cast_to_fp8, "Cast to FP8");
   m.def("cast_from_fp8", &cast_from_fp8, "Cast from FP8");
   m.def("te_gemm", &te_gemm, "CublasLt GEMM");
-  m.def("fused_attn_fwd", &fused_attn_fwd, "Fused Attention FP8/BF16/FP16 FWD");
-  m.def("fused_attn_bwd", &fused_attn_bwd, "Fused Attention FP8/BF16/FP16 BWD");
+  m.def("fused_attn_fwd_qkvpacked", &fused_attn_fwd_qkvpacked, "Fused Attention FP8/BF16/FP16 FWD");
+  m.def("fused_attn_bwd_qkvpacked", &fused_attn_bwd_qkvpacked, "Fused Attention FP8/BF16/FP16 BWD");
+//  m.def("fused_attn_fwd_kvpacked", &fused_attn_fwd_kvpacked, "Fused Attention FP8/BF16/FP16 FWD");
+//  m.def("fused_attn_bwd_kvpacked", &fused_attn_bwd_kvpacked, "Fused Attention FP8/BF16/FP16 BWD");
   m.def("fp8_transpose", &fp8_transpose, "Transpose with FP8 I/O");
   m.def("fp8_gelu", &fp8_gelu, "GeLU with FP8 output");
 

@@ -106,6 +106,10 @@ inline transformer_engine::DType GetTransformerEngineDType(at::ScalarType t) {
             return transformer_engine::DType::kByte;
         case torch::kByte:
             return transformer_engine::DType::kByte;
+        case torch::kInt32:
+            return transformer_engine::DType::kInt32;
+        case torch::kInt64:
+            return transformer_engine::DType::kInt64;
         default:
             NVTE_ERROR("Invalid type");
     }
