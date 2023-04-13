@@ -58,7 +58,6 @@ namespace fused_attn {
 
 using namespace transformer_engine;
 
-// get matrix strides based on matrix type
 void generateMHAStrides(
             int64_t b, int64_t h,
             int64_t s_q, int64_t s_kv,
@@ -86,7 +85,7 @@ struct FADescriptor {
                             rhs.dropoutProbability, rhs.layout, rhs.tensor_type);
   }
 };
-}  // namespace fused_attn 
+}  // namespace fused_attn
 }  // namespace transformer_engine
 
 #ifdef __cplusplus

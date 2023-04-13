@@ -219,27 +219,5 @@ void generateMHAStrides(
             break;
     }
 }
-
-//struct FADescriptor {
-//  std::int64_t b;
-//  std::int64_t h;
-//  std::int64_t s_q;
-//  std::int64_t s_kv;
-//  std::int64_t d;
-//  float attnScale;
-//  bool isTraining;
-//  float dropoutProbability;
-//  MHA_Layout layout;
-//  cudnnDataType_t tensor_type;
-//
-//  bool operator<(const FADescriptor &rhs) const {
-//    return std::tie(b, h, s_q, s_kv, d,
-//                    attnScale, isTraining, dropoutProbability,
-//                    layout, tensor_type) < std::tie(
-//                            rhs.b, rhs.h, rhs.s_q, rhs.s_kv, rhs.d,
-//                            rhs.attnScale, rhs.isTraining,
-//                            rhs.dropoutProbability, rhs.layout, rhs.tensor_type);
-//  }
-//};
-}  // namespace fused_attn 
+}  // namespace fused_attn
 }  // namespace transformer_engine

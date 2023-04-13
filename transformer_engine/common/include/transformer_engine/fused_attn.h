@@ -10,8 +10,6 @@
 #include "transformer_engine.h"
 #include <cudnn_frontend.h>
 #include <cstdint>
-//#include <string>
-//#include "utils.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,43 +29,11 @@ enum MHA_Bias_Type {
     POST_SCALE_BIAS = 2
 };
 
-//enum MHA_Matrix {
-//    Q_Matrix            = 0,  // queries
-//    K_Matrix            = 1,  // keys
-//    K_Matrix_Transpose  = 2,  // keys transposed
-//    V_Matrix            = 3,  // values
-//    V_Matrix_Transpose  = 4,  // value matrix transposed
-//    S_Matrix            = 5,  // output of GEMM1
-//    O_Matrix            = 6,  // final output
-//};
-
 enum Attn_Mask_Type {
     PADDING = 0,
     CAUSAL = 1,
     NO_MASK = 2
 };
-
-//class cudnnExecutionPlanManager {
-// public:
-//    static cudnnExecutionPlanManager &Instance() {
-//        static thread_local cudnnExecutionPlanManager instance;
-//        return instance;
-//    }
-//
-//    cudnnHandle_t GetCudnnHandle() {
-//        static thread_local std::once_flag flag;
-//        std::call_once(flag, [&] { cudnnCreate(&handle_); });
-//        return handle_;
-//    }
-//
-//    ~cudnnExecutionPlanManager() {
-//        static thread_local std::once_flag flag;
-//        std::call_once(flag, [&] { cudnnDestroy(handle_); });
-//    }
-//
-// private:
-//    cudnnHandle_t handle_;
-//};
 
 MHA_Layout get_mha_layout(const std::string layout);
 
