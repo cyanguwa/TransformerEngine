@@ -82,60 +82,6 @@ MHA_Layout get_mha_layout(const std::string layout);
 MHA_Bias_Type get_mha_bias_type(const std::string bias_type);
 
 Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type);
-//void nvte_fused_attn_fwd_kvpacked(
-//            size_t max_seqlen_q, size_t max_seqlen_kv,
-//            bool is_training, float attn_scale, float p_dropout,
-//            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-//            Attn_Mask_Type attn_mask_type,
-//            const NVTETensor cu_seqlens_q, const NVTETensor cu_seqlens_kv,
-//            const NVTETensor rng_state,
-//            const NVTETensor Q, const NVTETensor KV,
-//            const NVTETensor Bias,
-//            NVTETensor S,
-//            NVTETensor O,
-//            NVTETensorPack* Aux_Output_Tensors,
-//            NVTETensor workspace,
-//            cudaStream_t stream);
-//void nvte_fused_attn_fwd(
-//            size_t b, size_t max_seq_len, size_t total_seqs, size_t h, size_t d,
-//            bool is_training, float attn_scale,
-//            float p_dropout, std::string qkv_layout,
-//            const NVTETensor QKV,
-//            const NVTETensor Bias,
-//            NVTETensor S,
-//            OutputTensorPack* OutputPack,
-//            int32_t *cu_seqlens,
-//            uint64_t *rng_state,
-//            NVTETensor workspace,
-//            cudaStream_t stream);
-
-//void nvte_fused_attn_bwd(
-//            size_t b, size_t max_seq_len, size_t total_seqs, size_t h, size_t d,
-//            float attn_scale, float p_dropout, std::string qkv_layout,
-//            const NVTETensor QKV, const NVTETensor O, const NVTETensor dO,
-//            const NVTETensor M, const NVTETensor ZInv,
-//            const NVTETensor S, NVTETensor dS,
-//            const NVTETensor Bias,
-//            OutputTensorPack* OutputPack,
-//            int32_t *cu_seqlens,
-//            uint64_t *rng_state,
-//            NVTETensor workspace,
-//            cudaStream_t stream);
-//void nvte_fused_attn_bwd_kvpacked(
-//            size_t max_seqlen_q, size_t max_seqlen_kv,
-//            //size_t total_seqs_q, size_t total_seqs_kv,
-//            float attn_scale, float p_dropout,
-//            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-//            Attn_Mask_Type attn_mask_type,
-//            const NVTETensor cu_seqlens_q, const NVTETensor cu_seqlens_kv,
-//            const NVTETensor Q, const NVTETensor KV,
-//            const NVTETensor Bias,
-//            const NVTETensor O, const NVTETensor dO,
-//            const NVTETensor S, NVTETensor dS,
-//            const NVTETensorPack* Aux_CTX_Tensors,
-//            NVTETensor dQ, NVTETensor dKV,
-//            NVTETensor workspace,
-//            cudaStream_t stream);
 
 void nvte_fused_attn_fwd_qkvpacked(
             size_t max_seqlen,
@@ -205,6 +151,7 @@ void nvte_fused_attn_bwd_kvpacked(
             NVTETensor dKV,
             NVTETensor workspace,
             cudaStream_t stream);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

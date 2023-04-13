@@ -32,11 +32,6 @@ enum NVTEDType {
     kNVTEFloat8E5M2 = 7,  /*!< 8-bit float (E5M2) */
     kNVTENumTypes         /*!< Number of supported types */
 };
-    //kNVTEFloat32    = 2,  /*!< 32-bit float */
-    //kNVTEFloat16    = 3,  /*!< 16-bit float (E5M10) */
-    //kNVTEBFloat16   = 4,  /*!< 16-bit bfloat (E8M7) */
-    //kNVTEFloat8E4M3 = 5,  /*!< 8-bit float (E4M3) */
-    //kNVTEFloat8E5M2 = 6,  /*!< 8-bit float (E5M2) */
 
 /*! \struct NVTEShape
  *  \brief Shape of the tensor.
@@ -160,11 +155,6 @@ enum class DType {
   kFloat8E5M2 = 7,
   kNumTypes
 };
-  //kFloat32    = 2,
-  //kFloat16    = 3,
-  //kBFloat16   = 4,
-  //kFloat8E4M3 = 5,
-  //kFloat8E5M2 = 6,
 
 /*! \struct TensorWrapper
  *  \brief C++ wrapper for the NVTETensor class.

@@ -20,15 +20,13 @@ TORCH_DType = {
 
 def check_tensor(x: torch.Tensor):
     """Check tensor properties."""
-    assert (
-            x.is_cuda and x.is_contiguous()
+    assert (x.is_cuda and x.is_contiguous()
             ), "Tensor should be a GPU tensor and contiguous."
 
 def check_qkv(qkv: torch.Tensor, dtype: torch.dtype):
     """Check tensor properties."""
     check_tensor(qkv)
-    assert (
-            qkv.dtype is dtype
+    assert (qkv.dtype is dtype
             and qkv.dim() == 4
             and qkv.shape[1] == 3
             ), """QKV should be in [total_seqs, 3, num_heads, head_dim] shape
@@ -37,8 +35,7 @@ def check_qkv(qkv: torch.Tensor, dtype: torch.dtype):
 def check_q(q: torch.Tensor, dtype: torch.dtype):
     """Check tensor properties."""
     check_tensor(q)
-    assert (
-            q.dtype is dtype
+    assert (q.dtype is dtype
             and q.dim() == 3
             ), """Q should be in [total_seqs, num_heads, head_dim] shape
     and {dtype} dtype."""
@@ -46,8 +43,7 @@ def check_q(q: torch.Tensor, dtype: torch.dtype):
 def check_kv(kv: torch.Tensor, dtype: torch.dtype):
     """Check tensor properties."""
     check_tensor(kv)
-    assert (
-            kv.dtype is dtype
+    assert (kv.dtype is dtype
             and kv.dim() == 4
             and kv.shape[1] == 2
             ), """KV should be in [total_seqs, 2, num_heads, head_dim] shape
@@ -56,8 +52,7 @@ def check_kv(kv: torch.Tensor, dtype: torch.dtype):
 def check_o(o: torch.Tensor, dtype: torch.dtype):
     """Check tensor properties."""
     check_tensor(o)
-    assert (
-            o.dtype is dtype
+    assert (o.dtype is dtype
             and o.dim() == 3
             ), """O and dO should be in [total_seqs, num_heads, head_dim] shape
     and {dtype} dtype."""
@@ -65,8 +60,7 @@ def check_o(o: torch.Tensor, dtype: torch.dtype):
 def check_stats(stats: torch.Tensor, b: int, h: int, s: int):
     """Check tensor properties."""
     check_tensor(stats)
-    assert (
-            stats.dtype is torch.float32
+    assert (stats.dtype is torch.float32
             and stats.dim() == 4
             and stats.shape == torch.Size([b, h, s, 1])
             ), """M and ZInv should be in [batch_size, num_heads, max_seqlen_q, 1]
@@ -75,16 +69,14 @@ def check_stats(stats: torch.Tensor, b: int, h: int, s: int):
 def check_cu_seqlens(cu_seqlens: torch.Tensor):
     """Check tensor properties."""
     check_tensor(cu_seqlens)
-    assert (
-            cu_seqlens.dtype is torch.int32
+    assert (cu_seqlens.dtype is torch.int32
             and cu_seqlens.dim() == 1
             ), """cu_seqlens should be in [batch_size +1] shape and int32 dtype."""
 
 def check_scalar(scalar: torch.Tensor):
     """Check tensor properties."""
     check_tensor(scalar)
-    assert (
-            scalar.dtype is torch.float32
+    assert (scalar.dtype is torch.float32
             and scalar.dim() <= 1
             and scalar.numel() == 1
             ), "amax/scale/descale tensors should be scalars in float32 dtype."
@@ -92,8 +84,7 @@ def check_scalar(scalar: torch.Tensor):
 def check_rng_state(rng_state: torch.Tensor):
     """Check tensor properties."""
     check_tensor(rng_state)
-    assert (
-            rng_state.dtype is torch.int64
+    assert (rng_state.dtype is torch.int64
             and rng_state.numel() == 2
             ), "rng_state should be [seed, offset] and in int64 dtype."
 
@@ -158,7 +149,7 @@ def fused_attn_fwd_qkvpacked(
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"} 
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
     rng_gen: torch.Generator, default = None
@@ -173,7 +164,7 @@ def fused_attn_fwd_qkvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxilary output tensors used for the backward;
                 if is_training is True, aux_ctx_tensors = [M, ZInv, rng_state]
-                if is_training is False, aux_ctx_tensors = [rng_state] 
+                if is_training is False, aux_ctx_tensors = [rng_state]
                 M: torch.Tensor
                     max(Q*K.T)
                     shape [batch_size, num_heads, max_seqlen, 1], dtype float32
@@ -190,9 +181,8 @@ def fused_attn_fwd_qkvpacked(
     qkv_type = TORCH_DType[qkv_dtype]
     check_qkv(qkv, qkv_type)
 
-    assert (
-            qkv.size(0) == cu_seqlens[-1]
-            ), "QKV's first dimension must be equal to cu_seqlens[-1]." 
+    assert (qkv.size(0) == cu_seqlens[-1]
+            ), "QKV's first dimension must be equal to cu_seqlens[-1]."
     total_seqs = qkv.size(0)
     h = qkv.size(2)
     d = qkv.size(3)
@@ -200,7 +190,7 @@ def fused_attn_fwd_qkvpacked(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    ############### FP8 fused attention API ################
+    # FP8 fused attention API
     if (qkv_type is torch.uint8) and (max_seqlen <= 512) and (d == 64):
         assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
         assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
@@ -213,51 +203,34 @@ def fused_attn_fwd_qkvpacked(
         check_scalar(amax_s)
         check_scalar(amax_o)
 
-        output_tensors = tex.fused_attn_fwd_qkvpacked(
-                b, max_seqlen, total_seqs, h, d,
-                is_training, attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens,
-                qkv,
-                qkv_dtype,
-                d_scale_qkv,
-                q_scale_s,
-                q_scale_o,
-                amax_s,
-                amax_o,
-                bias,
-                bias_type,
-                rng_gen,
-        )
-
-    ############### BF16/FP16 fused attention API from fmha_v2 ################
+    # BF16/FP16 fused attention API from fmha_v2
     elif (qkv_type is torch.bfloat16) or (qkv_type is torch.float16):
         # add BF/FP16 support for >512 sequence length
-        if bias_type != "no_bias":
-            assert (bias is not None), "Bias is required if bias_type is not `no_bias`."
+        pass
 
-        output_tensors = tex.fused_attn_fwd_qkvpacked(
-                b, max_seqlen, total_seqs, h, d,
-                is_training, attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens,
-                qkv,
-                qkv_dtype,
-                None,
-                None,
-                None,
-                None,
-                None,
-                bias,
-                bias_type,
-                rng_gen,
-        )
-
-    ############### BF16/FP16 fused attention API from fmha_v1 apex ################
+    # BF16/FP16 fused attention API from fmha_v1 apex
     elif (qkv_type is torch.bfloat16 or qkv_type is torch.float16) and (max_seqlen <= 512):
         # add BF/FP16 support for <=512 sequence length
         pass
 
     else:
         assert False, "No support for this dtype and max_seqlen combination."
+
+    # execute kernel
+    output_tensors = tex.fused_attn_fwd_qkvpacked(
+            b, max_seqlen, total_seqs, h, d,
+            is_training, attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            cu_seqlens,
+            qkv,
+            qkv_dtype,
+            d_scale_qkv,
+            q_scale_s,
+            q_scale_o,
+            amax_s,
+            amax_o,
+            bias,
+            rng_gen,
+    )
 
     return output_tensors[0], output_tensors[1:]
 
@@ -342,7 +315,7 @@ def fused_attn_bwd_qkvpacked(
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"} 
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
 
@@ -359,9 +332,8 @@ def fused_attn_bwd_qkvpacked(
     check_o(o, qkv_type)
     check_o(d_o, qkv_type)
 
-    assert (
-            qkv.size(0) == cu_seqlens[-1]
-            ), "QKV's first dimension must be equal to cu_seqlens[-1]." 
+    assert (qkv.size(0) == cu_seqlens[-1]
+            ), "QKV's first dimension must be equal to cu_seqlens[-1]."
     total_seqs = qkv.size(0)
     h = qkv.size(2)
     d = qkv.size(3)
@@ -369,12 +341,12 @@ def fused_attn_bwd_qkvpacked(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    assert (
-            len(aux_ctx_tensors) >= 1
+    assert (len(aux_ctx_tensors) >= 1
             ), "aux_ctx_tensors must contain rng_state as its last element."
     rng_state = aux_ctx_tensors[-1]
     check_rng_state(rng_state)
 
+    # FP8 fused attention API
     if (qkv_type is torch.uint8) and (max_seqlen <= 512) and d == 64:
         assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
         assert (d_scale_s is not None), "d_scale_s is required for the FP8 API."
@@ -385,8 +357,7 @@ def fused_attn_bwd_qkvpacked(
         assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
         assert (amax_ds is not None), "amax_ds is required for the FP8 API."
         assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
-        assert (
-                len(aux_ctx_tensors) == 3
+        assert (len(aux_ctx_tensors) == 3
                 ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
         check_scalar(d_scale_qkv)
         check_scalar(d_scale_s)
@@ -401,47 +372,32 @@ def fused_attn_bwd_qkvpacked(
         check_stats(m, b, h, max_seqlen)
         check_stats(z_inv, b, h, max_seqlen)
 
-        output_tensors = tex.fused_attn_bwd_qkvpacked(
-                b, max_seqlen, total_seqs, h, d,
-                attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens,
-                qkv, o, d_o,
-                qkv_dtype,
-                aux_ctx_tensors,
-                d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-                q_scale_s, q_scale_ds, q_scale_dqkv,
-                amax_ds, amax_dqkv,
-                bias,
-                bias_type,
-        )
-
-    ############### BF16/FP16 fused attention API from fmha_v2 ################
+    # BF16/FP16 fused attention API from fmha_v2
     elif (qkv_type is torch.bfloat16) or (qkv_type is torch.float16):
         # add BF/FP16 support for >512 sequence length
-        if bias_type != "no_bias":
-            assert (bias is not None), "Bias is required if bias_type is not `no_bias`."
+        pass
 
-        output_tensors = tex.fused_attn_bwd_qkvpacked(
-                b, max_seqlen, total_seqs, h, d,
-                attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens,
-                qkv, o, d_o,
-                qkv_dtype,
-                aux_ctx_tensors,
-                None, None, None, None,
-                None, None, None,
-                None, None,
-                bias,
-                bias_type,
-        )
-
-    ############### BF16/FP16 fused attention API from fmha_v1 apex ################
+    # BF16/FP16 fused attention API from fmha_v1 apex
     elif (qkv_type is torch.bfloat16 or qkv_type is torch.float16) and (max_seqlen <= 512):
         # add BF/FP16 support for <=512 sequence length
         pass
 
     else:
         assert False, "No support for this dtype and max_seqlen combination."
+
+    # execute kernel
+    output_tensors = tex.fused_attn_bwd_qkvpacked(
+            b, max_seqlen, total_seqs, h, d,
+            attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            cu_seqlens,
+            qkv, o, d_o,
+            qkv_dtype,
+            aux_ctx_tensors,
+            d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
+            q_scale_s, q_scale_ds, q_scale_dqkv,
+            amax_ds, amax_dqkv,
+            bias,
+    )
 
     return output_tensors[0]
 
@@ -489,7 +445,8 @@ def fused_attn_fwd_kvpacked(
                 shape [total_seqs_q, num_heads, head_dim], where total_seqs_q = cu_seqlens_q[-1]
     kv: torch.Tensor
                 packed input tensor KV;
-                shape [total_seqs_kv, 2, num_heads, head_dim], where total_seqs_kv = cu_seqlens_kv[-1]
+                shape [total_seqs_kv, 2, num_heads, head_dim],
+                where total_seqs_kv = cu_seqlens_kv[-1]
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
     bias: torch.Tensor, default = None
@@ -517,7 +474,7 @@ def fused_attn_fwd_kvpacked(
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"} 
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
     rng_gen: torch.Generator, default = None
@@ -532,7 +489,7 @@ def fused_attn_fwd_kvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxilary output tensors used for the backward;
                 if is_training is True, aux_ctx_tensors = [M, ZInv, rng_state]
-                if is_training is False, aux_ctx_tensors = [rng_state] 
+                if is_training is False, aux_ctx_tensors = [rng_state]
                 M: torch.Tensor
                     max(Q*K.T)
                     shape [batch_size, num_heads, max_seqlen, 1], dtype float32
@@ -546,21 +503,18 @@ def fused_attn_fwd_kvpacked(
 
     check_cu_seqlens(cu_seqlens_q)
     check_cu_seqlens(cu_seqlens_kv)
-    assert (
-            cu_seqlens_q.numel() == cu_seqlens_kv.numel()
+    assert (cu_seqlens_q.numel() == cu_seqlens_kv.numel()
             ), "cu_seqlens_q and cu_seqlens_kv must have the same length."
     b = cu_seqlens_q.numel() - 1
     qkv_type = TORCH_DType[qkv_dtype]
     check_q(q, qkv_type)
     check_kv(kv, qkv_type)
 
-    assert (
-            q.size(0) == cu_seqlens_q[-1]
+    assert (q.size(0) == cu_seqlens_q[-1]
             and kv.size(0) == cu_seqlens_kv[-1]
             ), """Q's first dimension must be equal to cu_seqlens_q[-1],
             and KV's first dimension must be equal to cu_seqlens_kv[-1]."""
-    assert (
-            q.size(1) == kv.size(2)
+    assert (q.size(1) == kv.size(2)
             and q.size(2) == kv.size(3)
             ), "Q and KV must have the same num_heads and head_dim."
     total_seqs_q = q.size(0)
@@ -571,7 +525,7 @@ def fused_attn_fwd_kvpacked(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    ############### FP8 fused attention API ################
+    # FP8 fused attention API
     if (qkv_type is torch.uint8) and (max_seqlen_q <= 512) and (max_seqlen_kv <= 512) \
             and (d == 64):
         assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
@@ -585,45 +539,12 @@ def fused_attn_fwd_kvpacked(
         check_scalar(amax_s)
         check_scalar(amax_o)
 
-        output_tensors = tex.fused_attn_fwd_kvpacked(
-                b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-                is_training, attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens_q, cu_seqlens_kv,
-                q, kv,
-                qkv_dtype,
-                d_scale_qkv,
-                q_scale_s,
-                q_scale_o,
-                amax_s,
-                amax_o,
-                bias,
-                bias_type,
-                rng_gen,
-        )
-
-    ############### BF16/FP16 fused attention API from fmha_v2 ################
+    # BF16/FP16 fused attention API from fmha_v2
     elif (qkv_type is torch.bfloat16) or (qkv_type is torch.float16):
         # add BF/FP16 support for >512 sequence length
-        if bias_type != "no_bias":
-            assert (bias is not None), "Bias is required if bias_type is not `no_bias`."
+        pass
 
-        output_tensors = tex.fused_attn_fwd_kvpacked(
-                b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-                is_training, attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens_q, cu_seqlens_kv,
-                q, kv,
-                qkv_dtype,
-                None,
-                None,
-                None,
-                None,
-                None,
-                bias,
-                bias_type,
-                rng_gen,
-        )
-
-    ############### BF16/FP16 fused attention API from fmha_v1 apex ################
+    # BF16/FP16 fused attention API from fmha_v1 apex
     elif (qkv_type is torch.bfloat16 or qkv_type is torch.float16) \
             and (max_seqlen_q <= 512) and (max_seqlen_kv <= 512):
         # add BF/FP16 support for <=512 sequence length
@@ -631,6 +552,22 @@ def fused_attn_fwd_kvpacked(
 
     else:
         assert False, "No support for this dtype and max_seqlen combination."
+
+    # execute kernel
+    output_tensors = tex.fused_attn_fwd_kvpacked(
+            b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
+            is_training, attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            cu_seqlens_q, cu_seqlens_kv,
+            q, kv,
+            qkv_dtype,
+            d_scale_qkv,
+            q_scale_s,
+            q_scale_o,
+            amax_s,
+            amax_o,
+            bias,
+            rng_gen,
+    )
 
     return output_tensors[0], output_tensors[1:]
 
@@ -680,7 +617,8 @@ def fused_attn_bwd_kvpacked(
                 shape [total_seqs_q, num_heads, head_dim], where total_seqs_q = cu_seqlens_q[-1]
     kv: torch.Tensor
                 packed input tensor KV;
-                shape [total_seqs_kv, 2, num_heads, head_dim], where total_seqs_kv = cu_seqlens_kv[-1]
+                shape [total_seqs_kv, 2, num_heads, head_dim],
+                where total_seqs_kv = cu_seqlens_kv[-1]
     o: torch.Tensor
                 input tensor O (output of forward);
                 shape [total_seqs_q, num_heads, head_dim], where total_seqs_q = cu_seqlens_q[-1]
@@ -725,7 +663,7 @@ def fused_attn_bwd_kvpacked(
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"} 
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
 
@@ -739,8 +677,7 @@ def fused_attn_bwd_kvpacked(
 
     check_cu_seqlens(cu_seqlens_q)
     check_cu_seqlens(cu_seqlens_kv)
-    assert (
-            cu_seqlens_q.numel() == cu_seqlens_kv.numel()
+    assert (cu_seqlens_q.numel() == cu_seqlens_kv.numel()
             ), "cu_seqlens_q and cu_seqlens_kv must have the same length."
     b = cu_seqlens_q.numel() - 1
     qkv_type = TORCH_DType[qkv_dtype]
@@ -749,13 +686,11 @@ def fused_attn_bwd_kvpacked(
     check_o(o, qkv_type)
     check_o(d_o, qkv_type)
 
-    assert (
-            q.size(0) == cu_seqlens_q[-1]
+    assert (q.size(0) == cu_seqlens_q[-1]
             and kv.size(0) == cu_seqlens_kv[-1]
-            ), """Q's first dimension must be equal to cu_seqlens_q[-1], 
+            ), """Q's first dimension must be equal to cu_seqlens_q[-1],
             and KV's first dimension must be equal to cu_seqlens_kv[-1]."""
-    assert (
-            q.size(1) == kv.size(2)
+    assert (q.size(1) == kv.size(2)
             and q.size(2) == kv.size(3)
             ), "Q and KV must have the same num_heads and head_dim."
     total_seqs_q = q.size(0)
@@ -766,12 +701,12 @@ def fused_attn_bwd_kvpacked(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    assert (
-            len(aux_ctx_tensors) >= 1
+    assert (len(aux_ctx_tensors) >= 1
             ), "aux_ctx_tensors must contain rng_state as its last element."
     rng_state = aux_ctx_tensors[-1]
     check_rng_state(rng_state)
 
+    # FP8 fused attention API
     if (qkv_type is torch.uint8) and (max_seqlen_q <= 512) and (max_seqlen_kv <= 512) \
             and d == 64:
         assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
@@ -783,8 +718,7 @@ def fused_attn_bwd_kvpacked(
         assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
         assert (amax_ds is not None), "amax_ds is required for the FP8 API."
         assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
-        assert (
-                len(aux_ctx_tensors) == 3
+        assert (len(aux_ctx_tensors) == 3
                 ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
         check_scalar(d_scale_qkv)
         check_scalar(d_scale_s)
@@ -799,39 +733,10 @@ def fused_attn_bwd_kvpacked(
         check_stats(m, b, h, max_seqlen_q)
         check_stats(z_inv, b, h, max_seqlen_q)
 
-        output_tensors = tex.fused_attn_bwd_kvpacked(
-                b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-                attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens_q, cu_seqlens_kv,
-                q, kv, o, d_o,
-                qkv_dtype,
-                aux_ctx_tensors,
-                d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-                q_scale_s, q_scale_ds, q_scale_dqkv,
-                amax_ds, amax_dqkv,
-                bias,
-                bias_type,
-        )
-
     ############### BF16/FP16 fused attention API from fmha_v2 ################
     elif (qkv_type is torch.bfloat16) or (qkv_type is torch.float16):
         # add BF/FP16 support for >512 sequence length
-        if bias_type != "no_bias":
-            assert (bias is not None), "Bias is required if bias_type is not `no_bias`."
-
-        output_tensors = tex.fused_attn_bwd_kvpacked(
-                b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-                attn_scale, p_dropout, set_zero, qkv_layout, attn_mask_type,
-                cu_seqlens_q, cu_seqlens_kv,
-                q, kv, o, d_o,
-                qkv_dtype,
-                aux_ctx_tensors,
-                None, None, None, None,
-                None, None, None,
-                None, None,
-                bias,
-                bias_type,
-        )
+        pass
 
     ############### BF16/FP16 fused attention API from fmha_v1 apex ################
     elif (qkv_type is torch.bfloat16 or qkv_type is torch.float16) \
@@ -842,7 +747,21 @@ def fused_attn_bwd_kvpacked(
     else:
         assert False, "No support for this dtype and max_seqlen combination."
 
-    return output_tensors 
+    # execute kernel
+    output_tensors = tex.fused_attn_bwd_kvpacked(
+            b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
+            attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            cu_seqlens_q, cu_seqlens_kv,
+            q, kv, o, d_o,
+            qkv_dtype,
+            aux_ctx_tensors,
+            d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
+            q_scale_s, q_scale_ds, q_scale_dqkv,
+            amax_ds, amax_dqkv,
+            bias,
+    )
+
+    return output_tensors
 
 def fp8_gemm(
     A: torch.Tensor,
