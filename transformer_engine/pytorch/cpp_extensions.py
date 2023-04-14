@@ -101,7 +101,7 @@ def fused_attn_fwd_qkvpacked(
     amax_s: torch.Tensor = None,
     amax_o: torch.Tensor = None,
     attn_scale: float = None,
-    p_dropout: float = 0.0,
+    dropout: float = 0.0,
     set_zero: bool = True,
     qkv_layout: str = "qkv_interleaved",
     bias_type: str = "no_bias",
@@ -130,7 +130,7 @@ def fused_attn_fwd_qkvpacked(
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     q_scale_s: torch.Tensor, default = None
-                input tensor for the quantization of S in FP8 computations
+                input tensor for the quantization of S in FP8 computations, S = Softmax(Q * K.T)
     q_scale_o: torch.Tensor, default = None
                 input tensor for the quantization of O in FP8 computations
     amax_s: torch.Tensor, default = None
@@ -140,9 +140,9 @@ def fused_attn_fwd_qkvpacked(
     attn_scale: float, default = None
                 if not None, use attn_scale as the attention scale for Q*K.T BMM;
                 if None, use 1.0/sqrt(head_dim) as the default
-    p_dropout: float, default = 0.0
+    dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
-                p_dropout must be 0.0 if is_training is False
+                dropout must be 0.0 if is_training is False
     set_zero: bool, default = True
                 if True, initializes the output tensor O to zero using the mha_fill method;
                 if False, doesn't initialize O after its allocation
@@ -219,7 +219,7 @@ def fused_attn_fwd_qkvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_fwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
-            is_training, attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            is_training, attn_scale, dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
             cu_seqlens,
             qkv,
             qkv_dtype,
@@ -243,18 +243,18 @@ def fused_attn_bwd_qkvpacked(
     d_o: torch.Tensor,
     qkv_dtype: tex.DType,
     aux_ctx_tensors: List[torch.Tensor] = None,
-    bias: torch.Tensor = None,
+    d_bias: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     d_scale_s: torch.Tensor = None,
     d_scale_o: torch.Tensor = None,
     d_scale_do: torch.Tensor = None,
     q_scale_s: torch.Tensor = None,
-    q_scale_ds: torch.Tensor = None,
+    q_scale_dp: torch.Tensor = None,
     q_scale_dqkv: torch.Tensor = None,
-    amax_ds: torch.Tensor = None,
+    amax_dp: torch.Tensor = None,
     amax_dqkv: torch.Tensor = None,
     attn_scale: float = None,
-    p_dropout: float = 0.0,
+    dropout: float = 0.0,
     set_zero: bool = True,
     qkv_layout: str = "qkv_interleaved",
     bias_type: str = "no_bias",
@@ -282,33 +282,33 @@ def fused_attn_bwd_qkvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
-    bias: torch.Tensor, default = None
+    d_bias: torch.Tensor, default = None
                 input tensor Bias;
                 shape [total_seqs, num_heads, head_dim], where total_seqs = cu_seqlens[-1]
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     d_scale_s: torch.Tensor, default = None
-                input tensor for the dequantization of S in FP8 computations
+                input tensor for the dequantization of S in FP8 computations, S = Softmax(Q * K.T)
     d_scale_o: torch.Tensor, default = None
                 input tensor for the dequantization of O in FP8 computations
     d_scale_do: torch.Tensor, default = None
                 input tensor for the dequantization of dO in FP8 computations
     q_scale_s: torch.Tensor, default = None
                 input tensor for the quantization of S in FP8 computations
-    q_scale_ds: torch.Tensor, default = None
-                input tensor for the quantization of dS in FP8 computations
+    q_scale_dp: torch.Tensor, default = None
+                input tensor for the quantization of dP in FP8 computations, P = Q * K.T
     q_scale_dqkv: torch.Tensor, default = None
                 input tensor for the quantization of dQKV in FP8 computations
-    amax_ds: torch.Tensor, default = None
-                output tensor, amax of dS, used by the next iteration in FP8 computations
+    amax_dp: torch.Tensor, default = None
+                output tensor, amax of dP, used by the next iteration in FP8 computations
     amax_dqkv: torch.Tensor, default = None
                 output tensor, amax of dQKV, used by the next iteration in FP8 computations
     attn_scale: float, default = None
                 if not None, use attn_scale as the attention scale for Q*K.T BMM;
                 if None, use 1.0/sqrt(head_dim) as the default
-    p_dropout: float, default = 0.0
+    dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
-                p_dropout must be 0.0 if is_training is False
+                dropout must be 0.0 if is_training is False
     set_zero: bool, default = True
                 if True, initializes the output tensor O to zero using the mha_fill method;
                 if False, doesn't initialize O after its allocation
@@ -353,9 +353,9 @@ def fused_attn_bwd_qkvpacked(
         assert (d_scale_o is not None), "d_scale_o is required for the FP8 API."
         assert (d_scale_do is not None), "d_scale_do is required for the FP8 API."
         assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
-        assert (q_scale_ds is not None), "q_scale_ds is required for the FP8 API."
+        assert (q_scale_dp is not None), "q_scale_dp is required for the FP8 API."
         assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
-        assert (amax_ds is not None), "amax_ds is required for the FP8 API."
+        assert (amax_dp is not None), "amax_dp is required for the FP8 API."
         assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
         assert (len(aux_ctx_tensors) == 3
                 ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
@@ -364,9 +364,9 @@ def fused_attn_bwd_qkvpacked(
         check_scalar(d_scale_o)
         check_scalar(d_scale_do)
         check_scalar(q_scale_s)
-        check_scalar(q_scale_ds)
+        check_scalar(q_scale_dp)
         check_scalar(q_scale_dqkv)
-        check_scalar(amax_ds)
+        check_scalar(amax_dp)
         check_scalar(amax_dqkv)
         m, z_inv = aux_ctx_tensors[:2]
         check_stats(m, b, h, max_seqlen)
@@ -388,15 +388,15 @@ def fused_attn_bwd_qkvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_bwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
-            attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            attn_scale, dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
             cu_seqlens,
             qkv, o, d_o,
             qkv_dtype,
             aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-            q_scale_s, q_scale_ds, q_scale_dqkv,
-            amax_ds, amax_dqkv,
-            bias,
+            q_scale_s, q_scale_dp, q_scale_dqkv,
+            amax_dp, amax_dqkv,
+            d_bias,
     )
 
     return output_tensors[0]
@@ -418,7 +418,7 @@ def fused_attn_fwd_kvpacked(
     amax_s: torch.Tensor = None,
     amax_o: torch.Tensor = None,
     attn_scale: float = None,
-    p_dropout: float = 0.0,
+    dropout: float = 0.0,
     set_zero: bool = True,
     qkv_layout: str = "qkv_interleaved",
     bias_type: str = "no_bias",
@@ -455,7 +455,7 @@ def fused_attn_fwd_kvpacked(
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     q_scale_s: torch.Tensor, default = None
-                input tensor for the quantization of S in FP8 computations
+                input tensor for the quantization of S in FP8 computations, S = Softmax(Q * K.T)
     q_scale_o: torch.Tensor, default = None
                 input tensor for the quantization of O in FP8 computations
     amax_s: torch.Tensor, default = None
@@ -465,9 +465,9 @@ def fused_attn_fwd_kvpacked(
     attn_scale: float, default = None
                 if not None, use attn_scale as the attention scale for Q*K.T BMM;
                 if None, use 1.0/sqrt(head_dim) as the default
-    p_dropout: float, default = 0.0
+    dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
-                p_dropout must be 0.0 if is_training is False
+                dropout must be 0.0 if is_training is False
     set_zero: bool, default = True
                 if True, initializes the output tensor O to zero using the mha_fill method;
                 if False, doesn't initialize O after its allocation
@@ -557,7 +557,7 @@ def fused_attn_fwd_kvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_fwd_kvpacked(
             b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-            is_training, attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            is_training, attn_scale, dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
             cu_seqlens_q, cu_seqlens_kv,
             q, kv,
             qkv_dtype,
@@ -584,18 +584,18 @@ def fused_attn_bwd_kvpacked(
     d_o: torch.Tensor,
     qkv_dtype: tex.DType,
     aux_ctx_tensors: List[torch.Tensor] = None,
-    bias: torch.Tensor = None,
+    d_bias: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     d_scale_s: torch.Tensor = None,
     d_scale_o: torch.Tensor = None,
     d_scale_do: torch.Tensor = None,
     q_scale_s: torch.Tensor = None,
-    q_scale_ds: torch.Tensor = None,
+    q_scale_dp: torch.Tensor = None,
     q_scale_dqkv: torch.Tensor = None,
-    amax_ds: torch.Tensor = None,
+    amax_dp: torch.Tensor = None,
     amax_dqkv: torch.Tensor = None,
     attn_scale: float = None,
-    p_dropout: float = 0.0,
+    dropout: float = 0.0,
     set_zero: bool = True,
     qkv_layout: str = "qkv_interleaved",
     bias_type: str = "no_bias",
@@ -637,27 +637,28 @@ def fused_attn_bwd_kvpacked(
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     d_scale_s: torch.Tensor, default = None
-                input tensor for the dequantization of S in FP8 computations
+                input tensor for the dequantization of S in FP8 computations, S = Softmax(Q * K.T)
     d_scale_o: torch.Tensor, default = None
                 input tensor for the dequantization of O in FP8 computations
     d_scale_do: torch.Tensor, default = None
                 input tensor for the dequantization of dO in FP8 computations
     q_scale_s: torch.Tensor, default = None
                 input tensor for the quantization of S in FP8 computations
-    q_scale_ds: torch.Tensor, default = None
-                input tensor for the quantization of dS in FP8 computations
+    q_scale_dp: torch.Tensor, default = None
+                input tensor for the quantization of dP in FP8 computations, P = Q * K.T
     q_scale_dqkv: torch.Tensor, default = None
                 input tensor for the quantization of dQKV in FP8 computations
-    amax_ds: torch.Tensor, default = None
-                output tensor, amax of dS, used by the next iteration in FP8 computations
+    amax_dp: torch.Tensor, default = None
+                output tensor, amax of dP, used by the next iteration in FP8 computations,
+                P = Q * K.T
     amax_dqkv: torch.Tensor, default = None
                 output tensor, amax of dQKV, used by the next iteration in FP8 computations
     attn_scale: float, default = None
                 if not None, use attn_scale as the attention scale for Q*K.T BMM;
                 if None, use 1.0/sqrt(head_dim) as the default
-    p_dropout: float, default = 0.0
+    dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
-                p_dropout must be 0.0 if is_training is False
+                dropout must be 0.0 if is_training is False
     set_zero: bool, default = True
                 if True, initializes the output tensor O to zero using the mha_fill method;
                 if False, doesn't initialize O after its allocation
@@ -715,9 +716,9 @@ def fused_attn_bwd_kvpacked(
         #assert (d_scale_o is not None), "d_scale_o is required for the FP8 API."
         #assert (d_scale_do is not None), "d_scale_do is required for the FP8 API."
         #assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
-        #assert (q_scale_ds is not None), "q_scale_ds is required for the FP8 API."
+        #assert (q_scale_dp is not None), "q_scale_dp is required for the FP8 API."
         #assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
-        #assert (amax_ds is not None), "amax_ds is required for the FP8 API."
+        #assert (amax_dp is not None), "amax_dp is required for the FP8 API."
         #assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
         #assert (len(aux_ctx_tensors) == 3
         #        ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
@@ -726,9 +727,9 @@ def fused_attn_bwd_kvpacked(
         #check_scalar(d_scale_o)
         #check_scalar(d_scale_do)
         #check_scalar(q_scale_s)
-        #check_scalar(q_scale_ds)
+        #check_scalar(q_scale_dp)
         #check_scalar(q_scale_dqkv)
-        #check_scalar(amax_ds)
+        #check_scalar(amax_dp)
         #check_scalar(amax_dqkv)
         #m, z_inv = aux_ctx_tensors[:2]
         #check_stats(m, b, h, max_seqlen_q)
@@ -752,15 +753,15 @@ def fused_attn_bwd_kvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_bwd_kvpacked(
             b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-            attn_scale, p_dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
+            attn_scale, dropout, set_zero, qkv_layout, bias_type, attn_mask_type,
             cu_seqlens_q, cu_seqlens_kv,
             q, kv, o, d_o,
             qkv_dtype,
             aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-            q_scale_s, q_scale_ds, q_scale_dqkv,
-            amax_ds, amax_dqkv,
-            bias,
+            q_scale_s, q_scale_dp, q_scale_dqkv,
+            amax_dp, amax_dqkv,
+            d_bias,
     )
 
     return output_tensors

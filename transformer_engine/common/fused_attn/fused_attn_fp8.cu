@@ -2044,7 +2044,7 @@ void fused_attn_bwd_fp8_qkvpacked(
             const Tensor *input_M,
             const Tensor *input_ZInv,
             const Tensor *input_S,
-            Tensor *input_output_dS,
+            Tensor *input_output_dP,
             const Tensor *output_dQKV,
             const Tensor *cu_seqlens,
             const Tensor *rng_state,
@@ -2071,9 +2071,9 @@ void fused_attn_bwd_fp8_qkvpacked(
 
   void* devPtrScaleS = input_S->scale.dptr;
   void* devPtrDescaleS = input_S->scale_inv.dptr;
-  void* devPtrAmaxdS = input_output_dS->amax.dptr;
-  void* devPtrScaledS = input_output_dS->scale.dptr;
-  void* devPtrDescaledS = input_output_dS->scale_inv.dptr;
+  void* devPtrAmaxdS = input_output_dP->amax.dptr;
+  void* devPtrScaledS = input_output_dP->scale.dptr;
+  void* devPtrDescaledS = input_output_dP->scale_inv.dptr;
 
   // dQKV shape is [total_seqs, 3, h, d]
   void* devPtrdQKV = output_dQKV->data.dptr;
@@ -2235,7 +2235,7 @@ void fused_attn_bwd_fp8_qkvpacked(
 //            const Tensor *input_M,
 //            const Tensor *input_ZInv,
 //            const Tensor *input_S,
-//            Tensor *input_output_dS,
+//            Tensor *input_output_dP,
 //            Tensor *output_dQ,
 //            Tensor *output_dKV,
 //            const Tensor *cu_seqlens_q,
@@ -2265,9 +2265,9 @@ void fused_attn_bwd_fp8_qkvpacked(
 //
 //  void* devPtrScaleS = input_S->scale.dptr;
 //  void* devPtrDescaleS = input_S->scale_inv.dptr;
-//  void* devPtrAmaxdS = input_output_dS->amax.dptr;
-//  void* devPtrScaledS = input_output_dS->scale.dptr;
-//  void* devPtrDescaledS = input_output_dS->scale_inv.dptr;
+//  void* devPtrAmaxdS = input_output_dP->amax.dptr;
+//  void* devPtrScaledS = input_output_dP->scale.dptr;
+//  void* devPtrDescaledS = input_output_dP->scale_inv.dptr;
 //
 //  // dQ shape is [total_seqs_q, h, d]
 //  void* devPtrdQ = output_dQ->data.dptr;
@@ -2393,11 +2393,11 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens,
             const NVTETensor QKV,
-            const NVTETensor Bias,
+            const NVTETensor dBias,
             const NVTETensor O,
             const NVTETensor dO,
             const NVTETensor S,
-            NVTETensor dS,
+            NVTETensor dP,
             const NVTETensorPack* Aux_CTX_Tensors,
             NVTETensor dQKV,
             NVTETensor workspace,
@@ -2406,11 +2406,11 @@ void nvte_fused_attn_bwd_qkvpacked(
   using namespace transformer_engine;
   const Tensor *input_cu_seqlens = reinterpret_cast<const Tensor*>(cu_seqlens);
   const Tensor *input_QKV = reinterpret_cast<const Tensor*>(QKV);
-  const Tensor *input_Bias = reinterpret_cast<const Tensor*>(Bias);
+  const Tensor *input_dBias = reinterpret_cast<const Tensor*>(dBias);
   const Tensor *input_O = reinterpret_cast<const Tensor*>(O);
   const Tensor *input_dO = reinterpret_cast<const Tensor*>(dO);
   const Tensor *input_S = reinterpret_cast<const Tensor*>(S);
-  Tensor *input_output_dS = reinterpret_cast<Tensor*>(dS);
+  Tensor *input_output_dP = reinterpret_cast<Tensor*>(dP);
   Tensor *output_dQKV = reinterpret_cast<Tensor*>(dQKV);
   Tensor *wkspace = reinterpret_cast<Tensor*>(workspace);
 
@@ -2428,13 +2428,13 @@ void nvte_fused_attn_bwd_qkvpacked(
     const Tensor *input_ZInv = reinterpret_cast<const Tensor*>(Aux_CTX_Tensors->tensors[1]);
     const Tensor *input_rng_state = reinterpret_cast<const Tensor*>(Aux_CTX_Tensors->tensors[2]);
     auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
-    // FP8 API doesn't use input_Bias, bias_type or attn_mask_type
+    // FP8 API doesn't use input_dBias, bias_type or attn_mask_type
     fused_attn_bwd_fp8_qkvpacked(
                     b, max_seqlen, h, d,
                     attn_scale, p_dropout, qkv_layout,
                     input_QKV, input_O, input_dO,
                     input_M, input_ZInv,
-                    input_S, input_output_dS,
+                    input_S, input_output_dP,
                     output_dQKV,
                     input_cu_seqlens,
                     input_rng_state,
@@ -2522,11 +2522,11 @@ void nvte_fused_attn_bwd_kvpacked(
             const NVTETensor cu_seqlens_kv,
             const NVTETensor Q,
             const NVTETensor KV,
-            const NVTETensor Bias,
+            const NVTETensor dBias,
             const NVTETensor O,
             const NVTETensor dO,
             const NVTETensor S,
-            NVTETensor dS,
+            NVTETensor dP,
             const NVTETensorPack* Aux_CTX_Tensors,
             NVTETensor dQ,
             NVTETensor dKV,
@@ -2538,11 +2538,11 @@ void nvte_fused_attn_bwd_kvpacked(
   const Tensor *input_cu_seqlens_kv = reinterpret_cast<const Tensor*>(cu_seqlens_kv);
   const Tensor *input_Q = reinterpret_cast<const Tensor*>(Q);
   const Tensor *input_KV = reinterpret_cast<const Tensor*>(KV);
-  const Tensor *input_Bias = reinterpret_cast<const Tensor*>(Bias);
+  const Tensor *input_dBias = reinterpret_cast<const Tensor*>(dBias);
   const Tensor *input_O = reinterpret_cast<const Tensor*>(O);
   const Tensor *input_dO = reinterpret_cast<const Tensor*>(dO);
   const Tensor *input_S = reinterpret_cast<const Tensor*>(S);
-  Tensor *input_output_dS = reinterpret_cast<Tensor*>(dS);
+  Tensor *input_output_dP = reinterpret_cast<Tensor*>(dP);
   Tensor *output_dQ = reinterpret_cast<Tensor*>(dQ);
   Tensor *output_dKV = reinterpret_cast<Tensor*>(dKV);
   Tensor *wkspace = reinterpret_cast<Tensor*>(workspace);
@@ -2560,14 +2560,14 @@ void nvte_fused_attn_bwd_kvpacked(
 //    const Tensor *input_ZInv = reinterpret_cast<const Tensor*>(Aux_CTX_Tensors->tensors[1]);
 //    const Tensor *input_rng_state = reinterpret_cast<const Tensor*>(Aux_CTX_Tensors->tensors[2]);
 //    auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
-//    // FP8 API doesn't use input_Bias, bias_type or attn_mask_type
+//    // FP8 API doesn't use input_dBias, bias_type or attn_mask_type
 //    fused_attn_bwd_fp8_kvpacked(
 //                    b, max_seqlen_q, max_seqlen_kv, h, d,
 //                    attn_scale, p_dropout, qkv_layout,
 //                    input_Q, input_KV,
 //                    input_O, input_dO,
 //                    input_M, input_ZInv,
-//                    input_S, input_output_dS,
+//                    input_S, input_output_dP,
 //                    output_dQ, output_dKV,
 //                    input_cu_seqlens_q, input_cu_seqlens_kv,
 //                    input_rng_state,
