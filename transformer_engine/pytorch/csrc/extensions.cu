@@ -206,16 +206,16 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
 
   // populate tensors with appropriate shapes and dtypes
   nvte_fused_attn_fwd_qkvpacked(
-                  max_seqlen,
-                  is_training, attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens.data(),
-                  te_rng_state.data(),
                   te_QKV.data(),
                   te_Bias.data(),
                   te_S.data(),
                   te_O.data(),
                   &nvte_aux_tensor_pack,
+                  te_cu_seqlens.data(),
+                  te_rng_state.data(),
+                  max_seqlen,
+                  is_training, attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -242,16 +242,16 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
 
   // execute the kernel
   nvte_fused_attn_fwd_qkvpacked(
-                  max_seqlen,
-                  is_training, attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens.data(),
-                  te_rng_state.data(),
                   te_QKV.data(),
                   te_Bias.data(),
                   te_S.data(),
                   te_O.data(),
                   &nvte_aux_tensor_pack,
+                  te_cu_seqlens.data(),
+                  te_rng_state.data(),
+                  max_seqlen,
+                  is_training, attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -374,10 +374,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
 
   // populate tensors with appropriate shapes and dtypes
   nvte_fused_attn_bwd_qkvpacked(
-                  max_seqlen,
-                  attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens.data(),
                   te_QKV.data(),
                   te_dBias.data(),
                   te_O.data(),
@@ -386,6 +382,10 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   te_dP.data(),
                   &nvte_aux_tensor_pack,
                   te_dQKV.data(),
+                  te_cu_seqlens.data(),
+                  max_seqlen,
+                  attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -397,10 +397,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
 
   // execute kernel
   nvte_fused_attn_bwd_qkvpacked(
-                  max_seqlen,
-                  attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens.data(),
                   te_QKV.data(),
                   te_dBias.data(),
                   te_O.data(),
@@ -409,6 +405,10 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   te_dP.data(),
                   &nvte_aux_tensor_pack,
                   te_dQKV.data(),
+                  te_cu_seqlens.data(),
+                  max_seqlen,
+                  attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -516,18 +516,18 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
 
   // populate tensors with appropriate shapes and dtypes
   nvte_fused_attn_fwd_kvpacked(
-                  max_seqlen_q, max_seqlen_kv,
-                  is_training, attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens_q.data(),
-                  te_cu_seqlens_kv.data(),
-                  te_rng_state.data(),
                   te_Q.data(),
                   te_KV.data(),
                   te_Bias.data(),
                   te_S.data(),
                   te_O.data(),
                   &nvte_aux_tensor_pack,
+                  te_cu_seqlens_q.data(),
+                  te_cu_seqlens_kv.data(),
+                  te_rng_state.data(),
+                  max_seqlen_q, max_seqlen_kv,
+                  is_training, attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -554,18 +554,18 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
 
   // execute the kernel
   nvte_fused_attn_fwd_kvpacked(
-                  max_seqlen_q, max_seqlen_kv,
-                  is_training, attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens_q.data(),
-                  te_cu_seqlens_kv.data(),
-                  te_rng_state.data(),
                   te_Q.data(),
                   te_KV.data(),
                   te_Bias.data(),
                   te_S.data(),
                   te_O.data(),
                   &nvte_aux_tensor_pack,
+                  te_cu_seqlens_q.data(),
+                  te_cu_seqlens_kv.data(),
+                  te_rng_state.data(),
+                  max_seqlen_q, max_seqlen_kv,
+                  is_training, attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -701,11 +701,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
 
   // populate tensors with appropriate shapes and dtypes
   nvte_fused_attn_bwd_kvpacked(
-                  max_seqlen_q, max_seqlen_kv,
-                  attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens_q.data(),
-                  te_cu_seqlens_kv.data(),
                   te_Q.data(),
                   te_KV.data(),
                   te_dBias.data(),
@@ -716,6 +711,11 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   &nvte_aux_tensor_pack,
                   te_dQ.data(),
                   te_dKV.data(),
+                  te_cu_seqlens_q.data(),
+                  te_cu_seqlens_kv.data(),
+                  max_seqlen_q, max_seqlen_kv,
+                  attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
@@ -727,11 +727,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
 
   // execute kernel
   nvte_fused_attn_bwd_kvpacked(
-                  max_seqlen_q, max_seqlen_kv,
-                  attn_scale, p_dropout,
-                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
-                  te_cu_seqlens_q.data(),
-                  te_cu_seqlens_kv.data(),
                   te_Q.data(),
                   te_KV.data(),
                   te_dBias.data(),
@@ -742,6 +737,11 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   &nvte_aux_tensor_pack,
                   te_dQ.data(),
                   te_dKV.data(),
+                  te_cu_seqlens_q.data(),
+                  te_cu_seqlens_kv.data(),
+                  max_seqlen_q, max_seqlen_kv,
+                  attn_scale, p_dropout,
+                  qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 

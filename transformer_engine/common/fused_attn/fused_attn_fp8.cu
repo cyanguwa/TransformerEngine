@@ -2331,17 +2331,17 @@ void fused_attn_bwd_fp8_qkvpacked(
 
 // NVTE fused attention FWD FP8 with packed QKV
 void nvte_fused_attn_fwd_qkvpacked(
-            size_t max_seqlen,
-            bool is_training, float attn_scale, float p_dropout,
-            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
-            NVTE_Mask_Type attn_mask_type,
-            const NVTETensor cu_seqlens,
-            const NVTETensor rng_state,
             const NVTETensor QKV,
             const NVTETensor Bias,
             NVTETensor S,
             NVTETensor O,
             NVTETensorPack* Aux_Output_Tensors,
+            const NVTETensor cu_seqlens,
+            const NVTETensor rng_state,
+            size_t max_seqlen,
+            bool is_training, float attn_scale, float p_dropout,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream) {
   NVTE_API_CALL(nvte_flash_attn_fwd_qkvpacked);
@@ -2387,11 +2387,6 @@ void nvte_fused_attn_fwd_qkvpacked(
 }
 // NVTE fused attention BWD FP8 with packed QKV
 void nvte_fused_attn_bwd_qkvpacked(
-            size_t max_seqlen,
-            float attn_scale, float p_dropout,
-            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
-            NVTE_Mask_Type attn_mask_type,
-            const NVTETensor cu_seqlens,
             const NVTETensor QKV,
             const NVTETensor dBias,
             const NVTETensor O,
@@ -2400,6 +2395,11 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTETensor dP,
             const NVTETensorPack* Aux_CTX_Tensors,
             NVTETensor dQKV,
+            const NVTETensor cu_seqlens,
+            size_t max_seqlen,
+            float attn_scale, float p_dropout,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream) {
   NVTE_API_CALL(nvte_flash_attn_bwd_qkvpacked);
@@ -2453,19 +2453,19 @@ void nvte_fused_attn_bwd_qkvpacked(
 }
 // NVTE fused attention FWD FP8 with packed KV
 void nvte_fused_attn_fwd_kvpacked(
-            size_t max_seqlen_q, size_t max_seqlen_kv,
-            bool is_training, float attn_scale, float p_dropout,
-            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
-            NVTE_Mask_Type attn_mask_type,
-            const NVTETensor cu_seqlens_q,
-            const NVTETensor cu_seqlens_kv,
-            const NVTETensor rng_state,
             const NVTETensor Q,
             const NVTETensor KV,
             const NVTETensor Bias,
             NVTETensor S,
             NVTETensor O,
             NVTETensorPack* Aux_Output_Tensors,
+            const NVTETensor cu_seqlens_q,
+            const NVTETensor cu_seqlens_kv,
+            const NVTETensor rng_state,
+            size_t max_seqlen_q, size_t max_seqlen_kv,
+            bool is_training, float attn_scale, float p_dropout,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream) {
   NVTE_API_CALL(nvte_flash_attn_fwd_kvpacked);
@@ -2514,12 +2514,6 @@ void nvte_fused_attn_fwd_kvpacked(
 }
 // NVTE fused attention BWD FP8 with packed KV
 void nvte_fused_attn_bwd_kvpacked(
-            size_t max_seqlen_q, size_t max_seqlen_kv,
-            float attn_scale, float p_dropout,
-            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
-            NVTE_Mask_Type attn_mask_type,
-            const NVTETensor cu_seqlens_q,
-            const NVTETensor cu_seqlens_kv,
             const NVTETensor Q,
             const NVTETensor KV,
             const NVTETensor dBias,
@@ -2530,6 +2524,12 @@ void nvte_fused_attn_bwd_kvpacked(
             const NVTETensorPack* Aux_CTX_Tensors,
             NVTETensor dQ,
             NVTETensor dKV,
+            const NVTETensor cu_seqlens_q,
+            const NVTETensor cu_seqlens_kv,
+            size_t max_seqlen_q, size_t max_seqlen_kv,
+            float attn_scale, float p_dropout,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream) {
   NVTE_API_CALL(nvte_flash_attn_bwd_kvpacked);
