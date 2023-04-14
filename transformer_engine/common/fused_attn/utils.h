@@ -9,7 +9,6 @@
 
 #include "transformer_engine/transformer_engine.h"
 #include <cudnn_frontend.h>
-//#include <cstdint>
 
 #ifdef __cplusplus
 extern "C" {

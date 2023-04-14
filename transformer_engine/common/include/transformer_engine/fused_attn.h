@@ -37,8 +37,12 @@ struct NVTETensorPack {
   size_t size = 0;
 };
 
+/*! \brief Create NVTETensors in NVTETensorPack.
+ */
 void nvte_tensor_pack_create(NVTETensorPack* pack);
 
+/*! \brief Destroy NVTETensors in NVTETensorPack.
+ */
 void nvte_tensor_pack_destroy(NVTETensorPack* pack);
 
 /*! \brief Compute dot product attention with packed QKV input.
