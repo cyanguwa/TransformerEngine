@@ -8,38 +8,37 @@
 #define TRANSFORMER_ENGINE_FUSED_ATTN_FP8_H_
 
 #include "transformer_engine.h"
-#include <cudnn_frontend.h>
-#include <cstdint>
+//#include <cudnn_frontend.h>
+//#include <cstdint>
+#include <string>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define CUDNN_FRONTEND_UNUSED(X) ((void)X)
-
-enum MHA_Layout {
+enum NVTE_QKV_Layout {
     NOT_INTERLEAVED = 0,
     QKV_INTERLEAVED = 1,
     KV_INTERLEAVED = 2
 };
 
-enum MHA_Bias_Type {
+enum NVTE_Bias_Type {
     NO_BIAS = 0,
     PRE_SCALE_BIAS = 1,
     POST_SCALE_BIAS = 2
 };
 
-enum Attn_Mask_Type {
+enum NVTE_Mask_Type {
     PADDING = 0,
     CAUSAL = 1,
     NO_MASK = 2
 };
 
-MHA_Layout get_mha_layout(const std::string layout);
+NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout);
 
-MHA_Bias_Type get_mha_bias_type(const std::string bias_type);
+NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type);
 
-Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type);
+NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type);
 
 struct NVTETensorPack {
   static const int MAX_SIZE = 10;
@@ -54,8 +53,8 @@ void nvte_tensor_pack_destroy(NVTETensorPack* pack);
 void nvte_fused_attn_fwd_qkvpacked(
             size_t max_seqlen,
             bool is_training, float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens,
             const NVTETensor rng_state,
             const NVTETensor QKV,
@@ -69,8 +68,8 @@ void nvte_fused_attn_fwd_qkvpacked(
 void nvte_fused_attn_bwd_qkvpacked(
             size_t max_seqlen,
             float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens,
             const NVTETensor QKV,
             const NVTETensor Bias,
@@ -86,8 +85,8 @@ void nvte_fused_attn_bwd_qkvpacked(
 void nvte_fused_attn_fwd_kvpacked(
             size_t max_seqlen_q, size_t max_seqlen_kv,
             bool is_training, float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens_q,
             const NVTETensor cu_seqlens_kv,
             const NVTETensor rng_state,
@@ -103,8 +102,8 @@ void nvte_fused_attn_fwd_kvpacked(
 void nvte_fused_attn_bwd_kvpacked(
             size_t max_seqlen_q, size_t max_seqlen_kv,
             float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens_q,
             const NVTETensor cu_seqlens_kv,
             const NVTETensor Q,

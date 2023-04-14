@@ -143,9 +143,9 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                     DType::kInt32, nullptr, nullptr, nullptr);
 
   // convert strings to enums
-  MHA_Layout qkv_layout_enum = get_mha_layout(qkv_layout);
-  MHA_Bias_Type bias_type_enum = get_mha_bias_type(bias_type);
-  Attn_Mask_Type attn_mask_type_enum = get_attn_mask_type(attn_mask_type);
+  NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
+  NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
+  NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
 
   // extract random number generator seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
@@ -157,7 +157,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
   auto te_rng_state = makeTransformerEngineTensor(rng_state);
 
-  // create auxilary output tensors
+  // create auxiliary output tensors
   // if training, tensors are [M, ZInv]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
@@ -180,7 +180,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  // allocate memory for workspace and auxilary output tensors
+  // allocate memory for workspace and auxiliary output tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
   workspace = makeTransformerEngineTensor(
                   workspace_data.data_ptr(),
@@ -308,11 +308,11 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
   }
 
   // convert strings to enums
-  MHA_Layout qkv_layout_enum = get_mha_layout(qkv_layout);
-  MHA_Bias_Type bias_type_enum = get_mha_bias_type(bias_type);
-  Attn_Mask_Type attn_mask_type_enum = get_attn_mask_type(attn_mask_type);
+  NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
+  NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
+  NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
 
-  // convert auxilary tensors from forward into NVTETensors
+  // convert auxiliary tensors from forward into NVTETensors
   // aux_ctx_tensors are [M, ZInv, rng_state]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
@@ -452,9 +452,9 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                     DType::kInt32, nullptr, nullptr, nullptr);
 
   // convert strings to enums
-  MHA_Layout qkv_layout_enum = get_mha_layout(qkv_layout);
-  MHA_Bias_Type bias_type_enum = get_mha_bias_type(bias_type);
-  Attn_Mask_Type attn_mask_type_enum = get_attn_mask_type(attn_mask_type);
+  NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
+  NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
+  NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
 
   // extract rng seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
@@ -467,7 +467,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
   auto te_rng_state = makeTransformerEngineTensor(rng_state);
 
-  // create auxilary output tensors
+  // create auxiliary output tensors
   // if training, tensors are [M, ZInv]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
@@ -492,7 +492,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream());
 
-  // allocate memory for workspace and auxilary output tensors
+  // allocate memory for workspace and auxiliary output tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
   workspace = makeTransformerEngineTensor(
                   workspace_data.data_ptr(),
@@ -640,11 +640,11 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                     DType::kInt32, nullptr, nullptr, nullptr);
 
   // convert strings to enums
-  MHA_Layout qkv_layout_enum = get_mha_layout(qkv_layout);
-  MHA_Bias_Type bias_type_enum = get_mha_bias_type(bias_type);
-  Attn_Mask_Type attn_mask_type_enum = get_attn_mask_type(attn_mask_type);
+  NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
+  NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
+  NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
 
-  // convert auxilary tensors from forward to NVTETensors
+  // convert auxiliary tensors from forward to NVTETensors
   // aux_ctx_tensors are [M, ZInv, rng_state]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);

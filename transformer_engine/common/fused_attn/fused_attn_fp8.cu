@@ -238,7 +238,6 @@ static cudnn_frontend::Tensor createScale(
                 bool isOutputVirtual, bool isScaleByValue,
                 std::vector<cudnn_frontend::Operation>* ops,
                 int UID_offset, const std::string& output_tensor_name ="") {
-  CUDNN_FRONTEND_UNUSED(isScaleByValue);
   int64_t output_dim[4];
   int64_t output_stride[4];
   for (int i = 0; i < 4; i++) {
@@ -286,7 +285,7 @@ static cudnn_frontend::Tensor createScaleWithOffset(
       generateMHAStrides(output_dim[0], output_dim[1], output_dim[2],
                       0  /*s_kv = 0 for placeholder*/,
                       output_dim[3], output_stride,
-                      MHA_Layout::QKV_INTERLEAVED, MHA_Matrix::Q_Matrix);
+                      NVTE_QKV_Layout::QKV_INTERLEAVED, MHA_Matrix::Q_Matrix);
   } else {
       // Otherwise output dim and stride should be the same as prev block dim and stride
       for (int i = 0; i < 4; i++) {
@@ -650,7 +649,7 @@ static cudnn_frontend::Tensor createSoftmaxBackward(
 
 static cudnn_frontend::Tensor createQKBMM(
             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-            MHA_Layout layout,
+            NVTE_QKV_Layout layout,
             cudnnDataType_t tensorType,
             std::vector<cudnn_frontend::Operation>* ops,
             const cudnn_frontend::Tensor &qTensor,
@@ -710,7 +709,7 @@ static cudnn_frontend::Tensor createQKBMM(
 
 static cudnn_frontend::Tensor createSVBMM(
             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-            MHA_Layout layout,
+            NVTE_QKV_Layout layout,
             cudnnDataType_t tensorType,
             std::vector<cudnn_frontend::Operation>* ops,
             const cudnn_frontend::Tensor &softmaxTensor,
@@ -816,7 +815,7 @@ static cudnn_frontend::Tensor createSdOBMM(
 
 static cudnn_frontend::Tensor createdOVBMM(
             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-            MHA_Layout layout,
+            NVTE_QKV_Layout layout,
             cudnnDataType_t tensorType,
             std::vector<cudnn_frontend::Operation>* ops,
             const cudnn_frontend::Tensor &dOTensor,
@@ -884,7 +883,7 @@ static cudnn_frontend::Tensor createdOVBMM(
 
 static cudnn_frontend::Tensor createdOAndORowReductionChain(
             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-            MHA_Layout layout,
+            NVTE_QKV_Layout layout,
             std::vector<cudnn_frontend::Operation>* ops,
             const cudnn_frontend::Tensor &O_after_dequan,
             const cudnn_frontend::Tensor &dO_after_dequan,
@@ -941,7 +940,7 @@ static cudnn_frontend::Tensor createdOAndORowReductionChain(
 
 static cudnn_frontend::Tensor createBiasSubtractionSoftmaxMulChain(
             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-            MHA_Layout layout,
+            NVTE_QKV_Layout layout,
             std::vector<cudnn_frontend::Operation>* ops,
             const cudnn_frontend::Tensor &dS_after_dropout,
             const cudnn_frontend::Tensor &AfterDropout_before_quan_S,
@@ -993,7 +992,6 @@ static cudnn_frontend::Tensor createdSKBMM(
             const cudnn_frontend::Tensor &dSTensor,
             const cudnn_frontend::Tensor &kTensor,
             const cudnn_frontend::Tensor &mnkOverride) {
-  CUDNN_FRONTEND_UNUSED(s_q);
   // Creates the necessary tensor descriptors
   int64_t after_dSK_dim[4] = {b, h, s_kv, d};
   int64_t after_dSK_stride[4] = {h * s_kv * d, d, h * d, 1};
@@ -1026,7 +1024,7 @@ static cudnn_frontend::Tensor createdSKBMM(
 
 static cudnn_frontend::Tensor createdSQBMM(
             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-            MHA_Layout layout,
+            NVTE_QKV_Layout layout,
             std::vector<cudnn_frontend::Operation>* ops,
             const cudnn_frontend::Tensor &dSTensor,
             const cudnn_frontend::Tensor &qTensor,
@@ -1088,7 +1086,7 @@ static cudnn_frontend::Tensor createdSQBMM(
 // fused attention FWD FP8
 void fa_fwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
             bool isTraining, float attnScale,
-            float dropoutProbability, MHA_Layout layout,
+            float dropoutProbability, NVTE_QKV_Layout layout,
             void* devPtrQ, void* devPtrK, void* devPtrV,
             void* devPtrM, void* devPtrZInv,
             void* devPtrO,
@@ -1396,7 +1394,7 @@ void fa_fwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
 
 // fused attention BWD FP8
 void fa_bwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
-            float attnScale, float dropoutProbability, MHA_Layout layout,
+            float attnScale, float dropoutProbability, NVTE_QKV_Layout layout,
             void* devPtrQ, void* devPtrK, void* devPtrV,
             void* devPtrM, void* devPtrZInv,
             void* devPtrO, void* devPtrdO,
@@ -1950,7 +1948,7 @@ void fused_attn_fwd_fp8_qkvpacked(
             size_t b, size_t max_seqlen,
             size_t h, size_t d,
             bool is_training, float attn_scale,
-            float p_dropout, MHA_Layout qkv_layout,
+            float p_dropout, NVTE_QKV_Layout qkv_layout,
             const Tensor *input_QKV,
             Tensor *input_output_S,
             Tensor *output_O,
@@ -2039,7 +2037,7 @@ void fused_attn_fwd_fp8_qkvpacked(
 void fused_attn_bwd_fp8_qkvpacked(
             size_t b, size_t max_seqlen,
             size_t h, size_t d,
-            float attn_scale, float p_dropout, MHA_Layout qkv_layout,
+            float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
             const Tensor *input_QKV,
             const Tensor *input_O,
             const Tensor *input_dO,
@@ -2135,7 +2133,7 @@ void fused_attn_bwd_fp8_qkvpacked(
 //            size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
 //            size_t h, size_t d,
 //            bool is_training, float attn_scale,
-//            float p_dropout, MHA_Layout qkv_layout,
+//            float p_dropout, NVTE_QKV_Layout qkv_layout,
 //            const Tensor *input_Q,
 //            const Tensor *input_KV,
 //            Tensor *input_output_S,
@@ -2229,7 +2227,7 @@ void fused_attn_bwd_fp8_qkvpacked(
 //void fused_attn_bwd_fp8_kvpacked(
 //            size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
 //            size_t h, size_t d,
-//            float attn_scale, float p_dropout, MHA_Layout qkv_layout,
+//            float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
 //            const Tensor *input_Q,
 //            const Tensor *input_KV,
 //            const Tensor *input_O,
@@ -2335,8 +2333,8 @@ void fused_attn_bwd_fp8_qkvpacked(
 void nvte_fused_attn_fwd_qkvpacked(
             size_t max_seqlen,
             bool is_training, float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens,
             const NVTETensor rng_state,
             const NVTETensor QKV,
@@ -2391,8 +2389,8 @@ void nvte_fused_attn_fwd_qkvpacked(
 void nvte_fused_attn_bwd_qkvpacked(
             size_t max_seqlen,
             float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens,
             const NVTETensor QKV,
             const NVTETensor Bias,
@@ -2457,8 +2455,8 @@ void nvte_fused_attn_bwd_qkvpacked(
 void nvte_fused_attn_fwd_kvpacked(
             size_t max_seqlen_q, size_t max_seqlen_kv,
             bool is_training, float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens_q,
             const NVTETensor cu_seqlens_kv,
             const NVTETensor rng_state,
@@ -2518,8 +2516,8 @@ void nvte_fused_attn_fwd_kvpacked(
 void nvte_fused_attn_bwd_kvpacked(
             size_t max_seqlen_q, size_t max_seqlen_kv,
             float attn_scale, float p_dropout,
-            MHA_Layout qkv_layout, MHA_Bias_Type bias_type,
-            Attn_Mask_Type attn_mask_type,
+            NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+            NVTE_Mask_Type attn_mask_type,
             const NVTETensor cu_seqlens_q,
             const NVTETensor cu_seqlens_kv,
             const NVTETensor Q,

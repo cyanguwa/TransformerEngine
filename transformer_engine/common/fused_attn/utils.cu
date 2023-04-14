@@ -9,39 +9,39 @@
 #include "utils.h"
 
 // get QKV layout in enums
-MHA_Layout get_mha_layout(const std::string layout) {
-  if (layout == "not_interleaved") {
-      return MHA_Layout::NOT_INTERLEAVED;
-  } else if (layout == "qkv_interleaved") {
-      return MHA_Layout::QKV_INTERLEAVED;
-  } else if (layout == "kv_interleaved") {
-      return MHA_Layout::KV_INTERLEAVED;
+NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout) {
+  if (qkv_layout == "not_interleaved") {
+      return NVTE_QKV_Layout::NOT_INTERLEAVED;
+  } else if (qkv_layout == "qkv_interleaved") {
+      return NVTE_QKV_Layout::QKV_INTERLEAVED;
+  } else if (qkv_layout == "kv_interleaved") {
+      return NVTE_QKV_Layout::KV_INTERLEAVED;
   } else {
       NVTE_ERROR("Invalid QKV layout. \n");
   }
 }
 
 // get bias type in enums
-MHA_Bias_Type get_mha_bias_type(const std::string bias_type) {
+NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type) {
   if (bias_type == "no_bias") {
-      return MHA_Bias_Type::NO_BIAS;
+      return NVTE_Bias_Type::NO_BIAS;
   } else if (bias_type == "pre_scale_bias") {
-      return MHA_Bias_Type::PRE_SCALE_BIAS;
+      return NVTE_Bias_Type::PRE_SCALE_BIAS;
   } else if (bias_type == "post_scale_bias") {
-      return MHA_Bias_Type::POST_SCALE_BIAS;
+      return NVTE_Bias_Type::POST_SCALE_BIAS;
   } else {
       NVTE_ERROR("Invalid bias type. \n");
   }
 }
 
 // get attn mask type in enums
-Attn_Mask_Type get_attn_mask_type(const std::string attn_mask_type) {
-  if (attn_mask_type == "padding") {
-      return Attn_Mask_Type::PADDING;
-  } else if (attn_mask_type == "causal") {
-      return Attn_Mask_Type::CAUSAL;
-  } else if (attn_mask_type == "no_mask") {
-      return Attn_Mask_Type::NO_MASK;
+NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type) {
+  if (mask_type == "padding") {
+      return NVTE_Mask_Type::PADDING;
+  } else if (mask_type == "causal") {
+      return NVTE_Mask_Type::CAUSAL;
+  } else if (mask_type == "no_mask") {
+      return NVTE_Mask_Type::NO_MASK;
   } else {
       NVTE_ERROR("Invalid attention mask type. \n");
   }
@@ -106,8 +106,7 @@ void generateMHAStrides(
             int64_t b, int64_t h,
             int64_t s_q, int64_t s_kv,
             int64_t d, int64_t* strideA,
-            MHA_Layout layout, MHA_Matrix matrix) {
-    CUDNN_FRONTEND_UNUSED(b);
+            NVTE_QKV_Layout layout, MHA_Matrix matrix) {
     constexpr int batch_dim_idx   = 0;
     constexpr int head_dim_idx    = 1;
     constexpr int seqlen_dim_idx  = 2;
@@ -121,7 +120,7 @@ void generateMHAStrides(
 
     switch (matrix) {
         case MHA_Matrix::Q_Matrix:
-            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+            if (layout == NVTE_QKV_Layout::QKV_INTERLEAVED) {
                 strideA[hidden_dim_idx] = 1;
                 strideA[seqlen_dim_idx] = 3 * h * d;
                 strideA[head_dim_idx] = d;
@@ -134,12 +133,12 @@ void generateMHAStrides(
             }
             break;
         case MHA_Matrix::K_Matrix:
-            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+            if (layout == NVTE_QKV_Layout::QKV_INTERLEAVED) {
                 strideA[seqlen_dim_idx] = 3 * h * d;
                 strideA[hidden_dim_idx] = 1;
                 strideA[head_dim_idx] = d;
                 strideA[batch_dim_idx] = s_kv * 3 * h * d;
-            } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+            } else if (layout == NVTE_QKV_Layout::KV_INTERLEAVED) {
                 strideA[seqlen_transpose_dim_idx] = 2 * h * d;
                 strideA[hidden_transpose_dim_idx] = 1;
                 strideA[head_dim_idx] = d;
@@ -152,12 +151,12 @@ void generateMHAStrides(
             }
             break;
         case MHA_Matrix::K_Matrix_Transpose:
-            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+            if (layout == NVTE_QKV_Layout::QKV_INTERLEAVED) {
                 strideA[seqlen_transpose_dim_idx] = 3 * h * d;
                 strideA[hidden_transpose_dim_idx] = 1;
                 strideA[head_dim_idx] = d;
                 strideA[batch_dim_idx] = s_kv * 3 * h * d;
-            } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+            } else if (layout == NVTE_QKV_Layout::KV_INTERLEAVED) {
                 strideA[seqlen_transpose_dim_idx] = 2 * h * d;
                 strideA[hidden_transpose_dim_idx] = 1;
                 strideA[head_dim_idx] = d;
@@ -170,12 +169,12 @@ void generateMHAStrides(
             }
             break;
         case MHA_Matrix::V_Matrix:
-            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+            if (layout == NVTE_QKV_Layout::QKV_INTERLEAVED) {
                 strideA[hidden_dim_idx] = 1;
                 strideA[seqlen_dim_idx] = 3 * h * d;
                 strideA[head_dim_idx] = d;
                 strideA[batch_dim_idx] = s_kv * 3 * h * d;
-            } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+            } else if (layout == NVTE_QKV_Layout::KV_INTERLEAVED) {
                 strideA[hidden_dim_idx] = 1;
                 strideA[seqlen_dim_idx] = 2* h * d;
                 strideA[head_dim_idx] = d;
@@ -188,12 +187,12 @@ void generateMHAStrides(
             }
             break;
         case MHA_Matrix::V_Matrix_Transpose:
-            if (layout == MHA_Layout::QKV_INTERLEAVED) {
+            if (layout == NVTE_QKV_Layout::QKV_INTERLEAVED) {
                     strideA[hidden_transpose_dim_idx] = 1;
                     strideA[seqlen_transpose_dim_idx] = 3 * h * d;
                     strideA[head_dim_idx] = d;
                     strideA[batch_dim_idx] = s_kv * 3 * h * d;
-                } else if (layout == MHA_Layout::KV_INTERLEAVED) {
+                } else if (layout == NVTE_QKV_Layout::KV_INTERLEAVED) {
                     strideA[hidden_transpose_dim_idx] = 1;
                     strideA[seqlen_transpose_dim_idx] = 2* h * d;
                     strideA[head_dim_idx] = d;

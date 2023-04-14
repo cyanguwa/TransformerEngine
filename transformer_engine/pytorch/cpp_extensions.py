@@ -113,7 +113,7 @@ def fused_attn_fwd_qkvpacked(
     Parameters
     ----------
     is_training: bool
-                if True, runs training and produces auxilary tensors aux_ctx_tensors
+                if True, runs training and produces auxiliary tensors aux_ctx_tensors
                 for the backward; if False, runs inference and doesn't produce aux_ctx_tensors
     max_seqlen: int
                 max sequence length for QKV, used for padding; may be larger than max(cu_seqlens)
@@ -162,7 +162,7 @@ def fused_attn_fwd_qkvpacked(
                 output tensor O, of the attention calculation; same data type as QKV;
                 shape [total_seqs, num_heads, head_dim], where total_seqs = cu_seqlens[-1]
     aux_ctx_tensors: List[torch.Tensor]
-                auxilary output tensors used for the backward;
+                auxiliary output tensors used for the backward;
                 if is_training is True, aux_ctx_tensors = [M, ZInv, rng_state]
                 if is_training is False, aux_ctx_tensors = [rng_state]
                 M: torch.Tensor
@@ -280,7 +280,7 @@ def fused_attn_bwd_qkvpacked(
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
     aux_ctx_tensors: List[torch.Tensor]
-                auxilary output tensors of the forward pass when its is_training is True,
+                auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
     bias: torch.Tensor, default = None
                 input tensor Bias;
@@ -430,7 +430,7 @@ def fused_attn_fwd_kvpacked(
     Parameters
     ----------
     is_training: bool
-                if True, runs training and produces auxilary tensors aux_ctx_tensors
+                if True, runs training and produces auxiliary tensors aux_ctx_tensors
                 for the backward; if False, runs inference and doesn't produce aux_ctx_tensors
     max_seqlen_q: int
                 max sequence length for Q, used for padding; may be larger than max(cu_seqlens_q)
@@ -487,7 +487,7 @@ def fused_attn_fwd_kvpacked(
                 output tensor O, of the attention calculation; same data type as QKV;
                 shape [total_seqs, num_heads, head_dim], where total_seqs = cu_seqlens[-1]
     aux_ctx_tensors: List[torch.Tensor]
-                auxilary output tensors used for the backward;
+                auxiliary output tensors used for the backward;
                 if is_training is True, aux_ctx_tensors = [M, ZInv, rng_state]
                 if is_training is False, aux_ctx_tensors = [rng_state]
                 M: torch.Tensor
@@ -629,7 +629,7 @@ def fused_attn_bwd_kvpacked(
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
     aux_ctx_tensors: List[torch.Tensor]
-                auxilary output tensors of the forward pass when its is_training is True,
+                auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
     bias: torch.Tensor, default = None
                 input tensor Bias;

@@ -9,7 +9,7 @@
 
 #include "transformer_engine/transformer_engine.h"
 #include <cudnn_frontend.h>
-#include <cstdint>
+//#include <cstdint>
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,7 +62,7 @@ void generateMHAStrides(
             int64_t b, int64_t h,
             int64_t s_q, int64_t s_kv,
             int64_t d, int64_t* strideA,
-            MHA_Layout layout, MHA_Matrix matrix);
+            NVTE_QKV_Layout layout, MHA_Matrix matrix);
 
 struct FADescriptor {
   std::int64_t b;
@@ -73,7 +73,7 @@ struct FADescriptor {
   float attnScale;
   bool isTraining;
   float dropoutProbability;
-  MHA_Layout layout;
+  NVTE_QKV_Layout layout;
   cudnnDataType_t tensor_type;
 
   bool operator<(const FADescriptor &rhs) const {
