@@ -15,6 +15,11 @@
 extern "C" {
 #endif
 
+namespace transformer_engine {
+namespace fused_attn {
+
+using namespace transformer_engine;
+
 enum MHA_Matrix {
     Q_Matrix            = 0,  // queries
     K_Matrix            = 1,  // keys
@@ -24,39 +29,6 @@ enum MHA_Matrix {
     S_Matrix            = 5,  // output of GEMM1
     O_Matrix            = 6,  // final output
 };
-
-class cudnnExecutionPlanManager {
- public:
-    static cudnnExecutionPlanManager &Instance() {
-        static thread_local cudnnExecutionPlanManager instance;
-        return instance;
-    }
-
-    cudnnHandle_t GetCudnnHandle() {
-        static thread_local std::once_flag flag;
-        std::call_once(flag, [&] { cudnnCreate(&handle_); });
-        return handle_;
-    }
-
-    ~cudnnExecutionPlanManager() {
-        static thread_local std::once_flag flag;
-        std::call_once(flag, [&] { cudnnDestroy(handle_); });
-    }
-
- private:
-    cudnnHandle_t handle_;
-};
-
-cudnnDataType_t get_cudnn_dtype(const transformer_engine::DType t);
-
-__global__ void cu_seqlens_to_offsets(size_t b, size_t h, size_t d,
-                int32_t *cu_seqlens_q, int32_t *actual_seqlens_q,
-                int32_t *qkv_ragged_offset, int32_t *o_ragged_offset);
-
-namespace transformer_engine {
-namespace fused_attn {
-
-using namespace transformer_engine;
 
 void generateMHAStrides(
             int64_t b, int64_t h,
@@ -85,7 +57,36 @@ struct FADescriptor {
                             rhs.dropoutProbability, rhs.layout, rhs.tensor_type);
   }
 };
+
+__global__ void cu_seqlens_to_offsets(size_t b, size_t h, size_t d,
+                int32_t *cu_seqlens_q, int32_t *actual_seqlens_q,
+                int32_t *qkv_ragged_offset, int32_t *o_ragged_offset);
+
 }  // namespace fused_attn
+
+cudnnDataType_t get_cudnn_dtype(const transformer_engine::DType t);
+
+class cudnnExecutionPlanManager {
+ public:
+    static cudnnExecutionPlanManager &Instance() {
+        static thread_local cudnnExecutionPlanManager instance;
+        return instance;
+    }
+
+    cudnnHandle_t GetCudnnHandle() {
+        static thread_local std::once_flag flag;
+        std::call_once(flag, [&] { cudnnCreate(&handle_); });
+        return handle_;
+    }
+
+    ~cudnnExecutionPlanManager() {
+        static thread_local std::once_flag flag;
+        std::call_once(flag, [&] { cudnnDestroy(handle_); });
+    }
+
+ private:
+    cudnnHandle_t handle_;
+};
 }  // namespace transformer_engine
 
 #ifdef __cplusplus

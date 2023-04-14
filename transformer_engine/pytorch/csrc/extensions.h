@@ -6,6 +6,12 @@
 
 #include "common.h"
 
+NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout);
+
+NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type);
+
+NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type);
+
 std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
                 size_t h, size_t d,

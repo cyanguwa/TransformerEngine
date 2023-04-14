@@ -8,9 +8,7 @@
 #define TRANSFORMER_ENGINE_FUSED_ATTN_FP8_H_
 
 #include "transformer_engine.h"
-//#include <cudnn_frontend.h>
-//#include <cstdint>
-#include <string>
+//#include <string>
 
 #ifdef __cplusplus
 extern "C" {
@@ -34,11 +32,11 @@ enum NVTE_Mask_Type {
     NO_MASK = 2
 };
 
-NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout);
-
-NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type);
-
-NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type);
+//NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout);
+//
+//NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type);
+//
+//NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type);
 
 struct NVTETensorPack {
   static const int MAX_SIZE = 10;

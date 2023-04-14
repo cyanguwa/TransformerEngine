@@ -15,6 +15,45 @@
 constexpr int block_size = 512;
 constexpr int ctas_per_sm = 4;
 
+// get QKV layout in enums
+NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout) {
+  if (qkv_layout == "not_interleaved") {
+      return NVTE_QKV_Layout::NOT_INTERLEAVED;
+  } else if (qkv_layout == "qkv_interleaved") {
+      return NVTE_QKV_Layout::QKV_INTERLEAVED;
+  } else if (qkv_layout == "kv_interleaved") {
+      return NVTE_QKV_Layout::KV_INTERLEAVED;
+  } else {
+      NVTE_ERROR("Invalid QKV layout. \n");
+  }
+}
+
+// get bias type in enums
+NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type) {
+  if (bias_type == "no_bias") {
+      return NVTE_Bias_Type::NO_BIAS;
+  } else if (bias_type == "pre_scale_bias") {
+      return NVTE_Bias_Type::PRE_SCALE_BIAS;
+  } else if (bias_type == "post_scale_bias") {
+      return NVTE_Bias_Type::POST_SCALE_BIAS;
+  } else {
+      NVTE_ERROR("Invalid bias type. \n");
+  }
+}
+
+// get attn mask type in enums
+NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type) {
+  if (mask_type == "padding") {
+      return NVTE_Mask_Type::PADDING;
+  } else if (mask_type == "causal") {
+      return NVTE_Mask_Type::CAUSAL;
+  } else if (mask_type == "no_mask") {
+      return NVTE_Mask_Type::NO_MASK;
+  } else {
+      NVTE_ERROR("Invalid attention mask type. \n");
+  }
+}
+
 // fast zero-fills of tensors
 template <typename scalar_t>
 __global__ void __launch_bounds__(block_size) mha_fill_kernel(scalar_t* out_tensor,
