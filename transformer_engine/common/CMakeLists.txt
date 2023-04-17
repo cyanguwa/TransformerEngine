@@ -28,9 +28,7 @@ list(APPEND transformer_engine_LINKER_LIBS CUDA::cublas CUDA::cudart CUDA::nvToo
 target_link_libraries(transformer_engine PUBLIC ${transformer_engine_LINKER_LIBS})
 
 target_include_directories(transformer_engine PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-#target_include_directories(transformer_engine PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../cudnn-frontend/include")
 target_include_directories(transformer_engine PRIVATE "${CMAKE_SOURCE_DIR}/../cudnn-frontend/include")
-#target_include_directories(transformer_engine PRIVATE "${PROJECT_SOURCE_DIR}/cudnn-frontend/include")
 
 set_source_files_properties(fused_softmax/scaled_masked_softmax.cu
                             fused_softmax/scaled_upper_triang_masked_softmax.cu

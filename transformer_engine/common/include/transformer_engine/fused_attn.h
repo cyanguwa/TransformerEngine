@@ -16,9 +16,9 @@ extern "C" {
 enum NVTE_QKV_Layout {
     NOT_INTERLEAVED = 0,  /*!< separate Q, K, V matrices */
     QKV_INTERLEAVED = 1,  /*!< packed QKV: [total_seqs, 3, num_heads, head_dim] */
-    KV_INTERLEAVED = 2  /*!< Q, packed KV;
-			  Q [total_seqs_q, num_heads, head_dim]
-			  KV: [total_seqs_kv, 2, num_heads, head_dim] */
+    KV_INTERLEAVED = 2  /*!< Q, packed KV; */
+                        /*!< Q: [total_seqs_q, num_heads, head_dim] */
+                        /*!< KV: [total_seqs_kv, 2, num_heads, head_dim] */
 };
 
 enum NVTE_Bias_Type {
@@ -170,28 +170,30 @@ void nvte_fused_attn_fwd_kvpacked(
 
 /*! \brief Compute the backward of the dot product attention with packed KV input.
  *
- *  \param[in]     Q                     The Q tensor.
- *  \param[in]     KV                    The KV tensor.
+ *  \param[in]     Q                     The Q tensor, [total_seqs_q, num_head, head_dim].
+ *  \param[in]     KV                    The KV tensor, [total_seqs_kv, 2, num_head, head_dim].
  *  \param[in]     dBias                 The gradient of the B tensor.
- *  \param[in]     O                     The O tensor from the forward pass.
+ *  \param[in]     O                     The O tensor from forward.
  *  \param[in]     dO                    The gradient of the O tensor.
- *  \param[in]     S                     The S tensor, S = Softmax(Q * K.T).
+ *  \param[in]     S                     The S tensor, S = Softmax(P).
  *  \param[in,out] dP                    The gradient of the P tensor, P = Q * K.T.
- *  \param[in]     Aux_CTX_tensors       Auxiliary tensors from the forward pass when training.
+ *  \param[in]     Aux_CTX_tensors       Auxiliary tensors from forward when in training mode.
  *  \param[out]    dQ                    The gradient of the Q tensor.
  *  \param[out]    dKV                   The gradient of the KV tensor.
- *  \param[in]     cu_seqlens_q          Accumulative sequence lengths in a batch for Q.
- *  \param[in]     cu_seqlens_kv         Accumulative sequence lengths in a batch for KV.
- *  \param[in]     rng_state             Seed and offset of the random number generator.
- *  \param[in]     max_seqlen_q          Max sequence length of this batch for Q.  
- *  \param[in]     max_seqlen_kv         Max sequence length of this batch for KV.  
+ *  \param[in]     cu_seqlens_q          Accumulative sequence lengths for Q, [batch_size + 1].
+ *  \param[in]     cu_seqlens_kv         Accumulative sequence lengths for KV, [batch_size + 1].
+ *  \param[in]     rng_state             Seed and offset of CUDA random number generator.
+ *  \param[in]     max_seqlen_q          Max sequence length used for computing for Q.  
+ *                                       it may be >= max(cu_seqlens_q). 
+ *  \param[in]     max_seqlen_kv         Max sequence length used for computing for KV.  
+ *                                       it may be >= max(cu_seqlens_kv). 
  *  \param[in]     attn_scale            Scaling factor for Q * K.T.
- *  \param[in]     p_dropout             Dropout probability.
- *  \param[in]     qkv_layout            Layout of QKV.
- *  \param[in]     bias_type             Type of the bias.
- *  \param[in]     attn_mask_type        Type of the attention mask.
- *  \param[in]     workspace             The workspace tensor.
- *  \param[in]     stream                CUDA stream used for this function.
+ *  \param[in]     dropout               Dropout probability.
+ *  \param[in]     qkv_layout            QKV tensor's layout.
+ *  \param[in]     bias_type             Bias type.
+ *  \param[in]     attn_mask_type        Attention mask type.
+ *  \param[in]     workspace             Workspace tensor.
+ *  \param[in]     stream                CUDA stream used for this operation.
  */
 void nvte_fused_attn_bwd_kvpacked(
             const NVTETensor Q,

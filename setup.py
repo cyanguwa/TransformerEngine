@@ -20,8 +20,6 @@ path = os.path.dirname(os.path.realpath(__file__))
 with open(path + "/VERSION", "r") as f:
     te_version = f.readline()
 CUDA_HOME = os.environ.get("CUDA_HOME", "/usr/local/cuda")
-CUDNN_PATH = os.environ.get("CUDNN_PATH", "/usr/local/cudnn")
-CUDNN_FRONTEND_PATH = os.environ.get("CUDNN_FRONTEND_PATH", "/usr/local/cudnn_frontend")
 
 def get_cuda_bare_metal_version(cuda_dir):
     raw_output = subprocess.check_output(
@@ -81,7 +79,7 @@ def make_abs_path(l):
 include_dirs = [
     "transformer_engine/common/include",
     "transformer_engine/pytorch/csrc",
-    CUDNN_FRONTEND_PATH+"/include",
+    "cudnn-frontend/include",
 ]
 include_dirs = make_abs_path(include_dirs)
 
