@@ -10,10 +10,6 @@
 #include "transformer_engine/transformer_engine.h"
 #include <cudnn_frontend.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 namespace transformer_engine {
 namespace fused_attn {
 
@@ -80,16 +76,15 @@ class cudnnExecutionPlanManager {
 
     ~cudnnExecutionPlanManager() {
         static thread_local std::once_flag flag;
-        std::call_once(flag, [&] { cudnnDestroy(handle_); });
+        std::call_once(flag, [&] {
+			if (handle_ != nullptr) {
+			  cudnnDestroy(handle_);
+			}});
     }
 
  private:
-    cudnnHandle_t handle_;
+    cudnnHandle_t handle_ = nullptr;
 };
 }  // namespace transformer_engine
-
-#ifdef __cplusplus
-}  // extern "C"
-#endif
 
 #endif
