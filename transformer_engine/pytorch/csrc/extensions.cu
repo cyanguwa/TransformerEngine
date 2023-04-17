@@ -71,7 +71,7 @@ void mha_fill(const at::Tensor &self, const at::Tensor &start_index) {
   TORCH_CHECK(fcd_size % block_size == 0, "input size not aligned to block size");
   const int num_mp = at::cuda::getCurrentDeviceProperties()->multiProcessorCount;
   uint64_t num_blk_y = (uint64_t)(fcd_size / block_size);
-  uint64_t num_blk_x = (uint64_t)std::ceil(num_mp * ctas_per_sm / num_blk_y);
+  uint64_t num_blk_x = (uint64_t)((num_mp * ctas_per_sm + num_blk_y - 1) / num_blk_y);
   dim3 dim_grid(num_blk_x, num_blk_y);
   dim3 dim_block(block_size);
   AT_DISPATCH_ALL_TYPES_AND_COMPLEX_AND2(
