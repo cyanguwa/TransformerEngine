@@ -175,7 +175,7 @@ static cudnn_frontend::Tensor createAmax(
                   amax_dim, amax_stride, false, false);
 
   // Define the amax descriptor
-  auto redunctionDesc = cudnn_frontend::ReductionDescBuilder()
+  auto reductionDesc = cudnn_frontend::ReductionDescBuilder()
                             .setMathPrecision(CUDNN_DATA_FLOAT)
                             .setReductionOp(CUDNN_REDUCE_TENSOR_AMAX)
                             .build();
@@ -185,7 +185,7 @@ static cudnn_frontend::Tensor createAmax(
                   CUDNN_BACKEND_OPERATION_REDUCTION_DESCRIPTOR)
                           .setxDesc(prevBlockOutputTensor)
                           .setyDesc(amaxTensor)
-                          .setreductionDesc(redunctionDesc)
+                          .setreductionDesc(reductionDesc)
                           .build();
   ops->push_back(std::move(reduction_op));
   return amaxTensor;
