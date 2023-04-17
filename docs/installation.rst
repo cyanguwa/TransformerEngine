@@ -14,6 +14,7 @@ Prerequisites
 1. Linux x86_64
 2. `CUDA 11.8 <https://developer.nvidia.com/cuda-downloads>`__
 3. |driver link|_ supporting CUDA 11.8 or later.
+4. For FP8, `CUDA 12.1 <https://developer.nvidia.com/cuda-downloads>`__ or later, and `cuDNN 8.9 <https://developer.nvidia.com/cudnn>`__ or later.
 
 
 Transformer Engine in NGC Containers
