@@ -77,9 +77,9 @@ class cudnnExecutionPlanManager {
     ~cudnnExecutionPlanManager() {
         static thread_local std::once_flag flag;
         std::call_once(flag, [&] {
-			if (handle_ != nullptr) {
-			  cudnnDestroy(handle_);
-			}});
+                        if (handle_ != nullptr) {
+                          cudnnDestroy(handle_);
+                        }});
     }
 
  private:
