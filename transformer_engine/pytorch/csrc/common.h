@@ -19,6 +19,9 @@
 #include <ATen/ATen.h>
 #include <ATen/cudnn/Handle.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/macros/Macros.h>
+#include <ATen/Dispatch.h>
+#include <ATen/native/DispatchStub.h>
 #include <ATen/cuda/CUDAGeneratorImpl.h>
 #include <ATen/cuda/CUDAGraphsUtils.cuh>
 #include <torch/extension.h>

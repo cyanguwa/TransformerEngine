@@ -5,6 +5,7 @@
  ************************************************************************/
 
 #include "common.h"
+#include "../common.h"
 
 NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout);
 

@@ -5,12 +5,6 @@
  ************************************************************************/
 
 #include "extensions.h"
-#include <vector>
-#include <ATen/Dispatch.h>
-#include <string>
-#include <ATen/native/DispatchStub.h>
-#include <c10/macros/Macros.h>
-#include "../common.h"
 
 constexpr int block_size = 512;
 constexpr int ctas_per_sm = 4;
@@ -81,17 +75,14 @@ void mha_fill(const at::Tensor &self, const at::Tensor &start_index) {
   dim3 dim_grid(num_blk_x, num_blk_y);
   dim3 dim_block(block_size);
   AT_DISPATCH_ALL_TYPES_AND_COMPLEX_AND2(
-                  at::ScalarType::Half,
-                  at::ScalarType::BFloat16,
-                  self_2d.scalar_type(),
-                  "mha_fill", [&]() {
-                  mha_fill_kernel<<<dim_grid, dim_block, 0,
-                                  at::cuda::getCurrentCUDAStream()>>>(
-                                  self_2d.data_ptr<scalar_t>(),
-                                  static_cast<int32_t*>(start_index.data_ptr()),
-                                  max_tokens);
-                  C10_CUDA_KERNEL_LAUNCH_CHECK();
-                  });
+          at::ScalarType::Half, at::ScalarType::BFloat16,
+          self_2d.scalar_type(), "mha_fill", [&]() {
+          mha_fill_kernel<<<dim_grid, dim_block, 0, at::cuda::getCurrentCUDAStream()>>>(
+                  self_2d.data_ptr<scalar_t>(),
+                  static_cast<int32_t*>(start_index.data_ptr()),
+                  max_tokens);
+          C10_CUDA_KERNEL_LAUNCH_CHECK();
+          });
 }
 
 // extract seed and offset from PhiloxCudaState
@@ -230,7 +221,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   output_tensors.push_back(O);
   // nvte_aux_tensor_pack.size is 0 if inference
   for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
-    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+    auto tensor = reinterpret_cast<transformer_engine::Tensor*>(nvte_aux_tensor_pack.tensors[i]);
     // allocate memory for nvte_aux_tensor_pack.tensors
     auto output_tensor = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
     output_tensors.push_back(output_tensor);
@@ -357,7 +348,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
   nvte_aux_tensor_pack.size = Aux_CTX_Tensors.size();
   for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
-    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+    auto tensor = reinterpret_cast<transformer_engine::Tensor*>(nvte_aux_tensor_pack.tensors[i]);
     tensor->data.dptr = Aux_CTX_Tensors[i].data_ptr();
     std::vector<int64_t> tmp(Aux_CTX_Tensors[i].sizes().vec());
     tensor->data.shape = std::vector<size_t>(tmp.begin(), tmp.end());
@@ -542,7 +533,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   output_tensors.push_back(O);
   // nvte_aux_tensor_pack.size is 0 if inference
   for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
-    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+    auto tensor = reinterpret_cast<transformer_engine::Tensor*>(nvte_aux_tensor_pack.tensors[i]);
     // allocate memory for nvte_aux_tensor_pack.tensors
     auto output_tensor = allocateSpace(tensor->data.shape, tensor->data.dtype, false);
     output_tensors.push_back(output_tensor);
@@ -689,7 +680,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
   nvte_aux_tensor_pack.size = Aux_CTX_Tensors.size();
   for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
-    auto tensor = reinterpret_cast<Tensor*>(nvte_aux_tensor_pack.tensors[i]);
+    auto tensor = reinterpret_cast<transformer_engine::Tensor*>(nvte_aux_tensor_pack.tensors[i]);
     tensor->data.dptr = Aux_CTX_Tensors[i].data_ptr();
     std::vector<int64_t> tmp(Aux_CTX_Tensors[i].sizes().vec());
     tensor->data.shape = std::vector<size_t>(tmp.begin(), tmp.end());
