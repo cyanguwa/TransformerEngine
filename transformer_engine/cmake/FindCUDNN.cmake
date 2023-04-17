@@ -40,7 +40,7 @@ find_cudnn_library(cudnn_ops_train)
 
 include (FindPackageHandleStandardArgs)
 find_package_handle_standard_args(
-    LIBRARY REQUIRED_VARS
+    CUDNN REQUIRED_VARS
     CUDNN_INCLUDE_DIR CUDNN_LIBRARY
 )
 
