@@ -181,8 +181,6 @@ def fused_attn_fwd_qkvpacked(
     qkv_type = TORCH_DType[qkv_dtype]
     check_qkv(qkv, qkv_type)
 
-    assert (qkv.size(0) == cu_seqlens[-1]
-            ), "QKV's first dimension must be equal to cu_seqlens[-1]."
     total_seqs = qkv.size(0)
     h = qkv.size(2)
     d = qkv.size(3)
@@ -332,8 +330,6 @@ def fused_attn_bwd_qkvpacked(
     check_o(o, qkv_type)
     check_o(d_o, qkv_type)
 
-    assert (qkv.size(0) == cu_seqlens[-1]
-            ), "QKV's first dimension must be equal to cu_seqlens[-1]."
     total_seqs = qkv.size(0)
     h = qkv.size(2)
     d = qkv.size(3)
@@ -510,10 +506,6 @@ def fused_attn_fwd_kvpacked(
     check_q(q, qkv_type)
     check_kv(kv, qkv_type)
 
-    assert (q.size(0) == cu_seqlens_q[-1]
-            and kv.size(0) == cu_seqlens_kv[-1]
-            ), """Q's first dimension must be equal to cu_seqlens_q[-1],
-            and KV's first dimension must be equal to cu_seqlens_kv[-1]."""
     assert (q.size(1) == kv.size(2)
             and q.size(2) == kv.size(3)
             ), "Q and KV must have the same num_heads and head_dim."
@@ -679,10 +671,6 @@ def fused_attn_bwd_kvpacked(
     check_o(o, qkv_type)
     check_o(d_o, qkv_type)
 
-    assert (q.size(0) == cu_seqlens_q[-1]
-            and kv.size(0) == cu_seqlens_kv[-1]
-            ), """Q's first dimension must be equal to cu_seqlens_q[-1],
-            and KV's first dimension must be equal to cu_seqlens_kv[-1]."""
     assert (q.size(1) == kv.size(2)
             and q.size(2) == kv.size(3)
             ), "Q and KV must have the same num_heads and head_dim."
