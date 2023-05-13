@@ -51,7 +51,7 @@ createScale(int64_t b,
             int64_t s_q,
             int64_t s_kv,
             int64_t d,
-            MHA_Layout layout, 
+            NVTE_QKV_Layout layout, 
             cudnnDataType_t tensorType,
             const cudnn_frontend::Tensor& sTensor,
             std::vector<cudnn_frontend::Operation>& ops) {
@@ -62,7 +62,7 @@ createScale(int64_t b,
 
     int64_t s_dim [4] =  {b, h, s_q, s_kv};
     int64_t s_stride [4];
-    generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::S_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
 
     auto scaleTensor = tensor_create(tensorType, S_CONST_ID, scale_dim, scale_stride, false, true); // is by value
     auto sScaleTensor = tensor_create(tensorType, VIRTUAL_ID + 2000, s_dim, s_stride, true, false); // is virtual
@@ -83,7 +83,7 @@ createQKBMM(int64_t b,
            int64_t s_q,
            int64_t s_kv,
            int64_t d,
-           MHA_Layout layout,
+           NVTE_QKV_Layout layout,
            cudnnDataType_t tensorType,
            std::vector<cudnn_frontend::Operation>& ops) {
     // Creates the necessary tensor descriptors
@@ -97,7 +97,7 @@ createQKBMM(int64_t b,
 
     int64_t s_dim [4] = {b, h, s_q, s_kv};
     int64_t s_stride [4];
-    generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::S_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
 
     auto qTensor = tensor_create(tensorType, Q_ID, q_dim, q_stride, false, false);
     auto kTransposeTensor = tensor_create(tensorType, K_ID, k_dim, k_stride, false, false); // is virtual
@@ -129,7 +129,7 @@ createCausalMask(int64_t b,
            int64_t s_q,
            int64_t s_kv,
            int64_t d,
-           MHA_Layout layout,
+           NVTE_QKV_Layout layout,
            cudnnDataType_t tensorType,
            std::vector<cudnn_frontend::Operation>& ops,
            cudnn_frontend::Tensor& prevBlockOutputTensor) {
@@ -484,7 +484,7 @@ createSVBMM(int64_t b,
            int64_t s_q,
            int64_t s_kv,
            int64_t d,
-           MHA_Layout layout,
+           NVTE_QKV_Layout layout,
            cudnnDataType_t tensorType,
            std::vector<cudnn_frontend::Operation>& ops,
            cudnn_frontend::Tensor const &afterScaleDropoutTensor) {
@@ -497,7 +497,7 @@ createSVBMM(int64_t b,
 
     int64_t o_dim [4] =  {b, h, s_q, d};
     int64_t o_stride [4];
-    generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::O_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
     
     auto vTensor = tensor_create(tensorType, V_ID, v_dim, v_stride, false, false);
     // second GEMM output
@@ -526,7 +526,7 @@ createSoftmaxBackward(int64_t b,
                      int64_t s_q,
                      int64_t s_kv,
                      int64_t d,
-                     MHA_Layout layout,
+                     NVTE_QKV_Layout layout,
                      cudnnDataType_t tensorType,
                      std::vector<cudnn_frontend::Operation>& ops,
                      cudnn_frontend::Tensor& yTensor,
@@ -538,7 +538,7 @@ createSoftmaxBackward(int64_t b,
 
     int64_t p_dim [4] = {b, h, s_q, s_kv};
     int64_t p_stride [4];
-    generateMatrixStrides(b, h, s_q, s_kv, d, p_stride, layout, NVTE_QKV_Matrix::S_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, p_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
 
     int64_t p_reduction_dim [4] = {b, h, s_q, 1};
     int64_t p_reduction_stride [4];
@@ -642,16 +642,12 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
             auto sScaleTensor = createScale(b, h, s_q, s_kv, d, layout, CUDNN_DATA_FLOAT, sTensor, ops);
 
             // Causual mask
-            float negInfinity = -1.0E+20f; // change this if you have access to float_min
             auto sAfterMaskTensor = createCausalMask(b, h, s_q, s_kv, d, layout, tensorType, ops, sScaleTensor);
 
-            cudnn_frontend::throw_if(dropout_probability != 0.0f && !isTraining, "Dropout probability should be 0.0f for inference mode", CUDNN_STATUS_BAD_PARAM);
+            cudnn_frontend::throw_if(dropout_probability != 0.0f && !is_training, "Dropout probability should be 0.0f for inference mode", CUDNN_STATUS_BAD_PARAM);
             cudnn_frontend::throw_if(dropout_probability == 1.0f, "Dropout probability cannot be 1.0", CUDNN_STATUS_BAD_PARAM);
 
-            // needs to be bf16 (Please change)
-            half1 scale_dropout = cpu_float2half_rn(static_cast<float>(1/(1 - dropout_probability)));
-
-            auto softmax_output = createSoftmaxForward(b, h, s_q, s_kv, isTraining, ops, sAfterMaskTensor);
+            auto softmax_output = createSoftmaxForward(b, h, s_q, s_kv, is_training, ops, sAfterMaskTensor);
 
             // Dropout(softmax)
             auto dropout_output = createDropoutForward(b, h, s_q, s_kv, d, dropout_probability, tensorType, ops, softmax_output);
@@ -671,7 +667,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
 
             cudnn_frontend::EngineConfigList filtered_configs;
             auto statuses = cudnn_frontend::get_heuristics_list<1>(
-                               {"heuristics_instant"}, opGraph, ::allowAllConfig,
+                               {"heuristics_instant"}, opGraph, allowAllConfig,
                                filtered_configs, true);
 
             if (filtered_configs.size() == 0) {
@@ -704,6 +700,10 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
 
         std::set<std::pair<uint64_t, void*>> data_ptrs;
         // Add all the data pointers to be used in the variant pack
+        float negInfinity = -1.0E+20f; // change this if you have access to float_min
+        // needs to be bf16 (Please change)
+        half1 scale_dropout = cpu_float2half_rn(static_cast<float>(1/(1 - dropout_probability)));
+
         data_ptrs.insert(std::pair<uint64_t, void*>(Q_ID, devPtrQ));
         data_ptrs.insert(std::pair<uint64_t, void*>(K_ID, devPtrK));
         data_ptrs.insert(std::pair<uint64_t, void*>(V_ID, devPtrV));
@@ -715,7 +715,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
         data_ptrs.insert(std::pair<uint64_t, void*>(D_CONST_ID, &scale_dropout));
 
         // If training mode, we write out softmax stats
-        if (isTraining) {
+        if (is_training) {
             data_ptrs.insert(std::pair<uint64_t, void*>(S_STATS_ID, devPtrSoftmaxStats));
         }
 
@@ -777,7 +777,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int
 
             int64_t p_dim [4] = {b, h, s_q, s_kv};
             int64_t p_stride [4];
-            generateMatrixStrides(b, h, s_q, s_kv, d, p_stride, layout, NVTE_QKV_Matrix::S_Matrix);
+            generateMatrixStrides(b, h, s_q, s_kv, d, p_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
 
             int64_t p_transpose_dim [4] = {b, h, s_kv, s_q};
             int64_t p_transpose_stride [4];
@@ -788,7 +788,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int
 
             int64_t o_dim [4] =  {b, h, s_q, d};
             int64_t o_stride [4];
-            generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::O_Matrix);
+            generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
 
             int64_t scale_dim [4] = {1, 1, 1, 1};
             int64_t scale_stride [4] = {1, 1, 1, 1};
@@ -873,7 +873,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int
             /*******************************************************************************
              *                          Causal masking -> pAfterMaskTensor
             *///////////////////////////////////////////////////////////////////////////////
-            float negInfinity = -1.0E+20f; // change this if you have access to float_min
             auto pAfterMaskTensor = createCausalMask(b, h, s_q, s_kv, d, layout, tensorType, ops, pAfterScaleTensor);
 
             /*******************************************************************************
@@ -979,7 +978,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int
              *                          dP * scaleDropout -> dPAfterDropoutScale
             *///////////////////////////////////////////////////////////////////////////////
             auto dPAfterDropoutScaleTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 11, p_dim, p_stride, true, false); // is virtual
-            half1 scale_dropout = cpu_float2half_rn(static_cast<float>(1/(1 - dropout_probability)));
             auto scaleDropoutTensor = tensor_create(CUDNN_DATA_FLOAT, D_CONST_ID, scale_dim, scale_stride, false, true); // is by value
             auto multiply_op3 = binary_pw_op_create(dPTensor, scaleDropoutTensor, dPAfterDropoutScaleTensor, multiplyDesc);
             ops.push_back(std::move(multiply_op3));
@@ -1105,6 +1103,8 @@ void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int
 
         std::set<std::pair<uint64_t, void *>> data_ptrs;
         // add all the data pointers to be used in the variant pack
+        float negInfinity = -1.0E+20f; // change this if you have access to float_min
+        half1 scale_dropout = cpu_float2half_rn(static_cast<float>(1/(1 - dropout_probability)));
         data_ptrs.insert(std::pair<uint64_t, void*>(dQ_ID, devPtrdQ));
         data_ptrs.insert(std::pair<uint64_t, void*>(dQ_ACCUM_ID, devPtrdQAccumulator));
         data_ptrs.insert(std::pair<uint64_t, void*>(dK_ID, devPtrdK));

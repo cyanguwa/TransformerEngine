@@ -15,6 +15,8 @@
 
 #include <cstdint>
 #include <mutex>
+#include "fp16_dev.h"
+#include "fp16_emu.h"
 
 namespace transformer_engine {
 namespace fused_attn {

@@ -8,6 +8,7 @@
 #include "../common.h"
 #include "utils.h"
 #include "fused_attn_fp16_bf16_max_seqlen_512.h"
+#include "fused_attn_fp16_bf16_arbitrary_seqlen.h"
 #include "fused_attn_fp8.h"
 
 // NVTE fused attention FWD FP8 with packed QKV
