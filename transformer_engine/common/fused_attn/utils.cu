@@ -131,12 +131,12 @@ void generateMatrixStrides(
     }
 }
 
-bool allowAllConfig(cudnnBackendDescriptor_t engine_config) {
+static bool allowAllConfig(cudnnBackendDescriptor_t engine_config) {
   (void)engine_config;
   return false;
 }
 
-cudnn_frontend::Tensor tensor_create(
+static cudnn_frontend::Tensor tensor_create(
                 cudnnDataType_t type, int64_t id,
                 int64_t const * dim, int64_t const * stride,
                 bool is_virtual, bool is_value) {
@@ -153,7 +153,7 @@ cudnn_frontend::Tensor tensor_create(
   return tensor_created;
 }
 
-cudnn_frontend::Tensor tensor_create_with_offset(
+static cudnn_frontend::Tensor tensor_create_with_offset(
                 cudnnDataType_t type, int64_t id,
                 int64_t const * dim, int64_t const * stride,
                 bool is_virtual, bool is_value,
@@ -172,7 +172,7 @@ cudnn_frontend::Tensor tensor_create_with_offset(
   return tensor_created;
 }
 
-cudnn_frontend::PointWiseDesc pw_desc_create(
+static cudnn_frontend::PointWiseDesc pw_desc_create(
                 cudnnDataType_t type, cudnnPointwiseMode_t mode) {
   auto pw_desc_created = cudnn_frontend::PointWiseDescBuilder()
           .setMode(mode)
@@ -181,7 +181,7 @@ cudnn_frontend::PointWiseDesc pw_desc_create(
   return pw_desc_created;
 }
 
-cudnn_frontend::Operation unary_pw_op_create(
+static cudnn_frontend::Operation unary_pw_op_create(
                 cudnn_frontend::Tensor const &xDesc,
                 cudnn_frontend::Tensor const &yDesc,
                 cudnn_frontend::PointWiseDesc const &pwDesc) {
@@ -194,7 +194,7 @@ cudnn_frontend::Operation unary_pw_op_create(
   return pw_op_created;
 }
 
-cudnn_frontend::Operation binary_pw_op_create(
+static cudnn_frontend::Operation binary_pw_op_create(
                 cudnn_frontend::Tensor const &xDesc,
                 cudnn_frontend::Tensor const &bDesc,
                 cudnn_frontend::Tensor const &yDesc,
@@ -209,7 +209,7 @@ cudnn_frontend::Operation binary_pw_op_create(
   return pw_op_created;
 }
 
-cudnn_frontend::Operation ternary_pw_op_create(
+static cudnn_frontend::Operation ternary_pw_op_create(
     cudnn_frontend::Tensor const &xDesc, cudnn_frontend::Tensor const &bDesc,
     cudnn_frontend::Tensor const &tDesc, cudnn_frontend::Tensor const &yDesc,
     cudnn_frontend::PointWiseDesc const &pwDesc) {
