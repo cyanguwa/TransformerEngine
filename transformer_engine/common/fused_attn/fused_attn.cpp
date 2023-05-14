@@ -52,8 +52,10 @@ void nvte_fused_attn_fwd_qkvpacked(
   // TODO use enums instead
   if (fused_attention_backend == 1) {
     // return_softmax and num_split are used in backend 1
-    NVTE_ERROR("Fused attention backend 1 is currently a placeholder. \
-      Please use one of the other backends instead. \n");
+    const char *err_msg =
+    "Fused attention backend 1 is currently a placeholder. "
+    "Please use one of the other backends instead. \n";
+    NVTE_ERROR(err_msg);
   } else if (fused_attention_backend == 2) {
 #if (CUDNN_VERSION >= 8901)
       fused_attn_max_512_fwd_qkvpacked(
@@ -142,8 +144,10 @@ void nvte_fused_attn_bwd_qkvpacked(
 
   if (fused_attention_backend == 1) {
     // return_softmax and num_split are used in backend 1
-    NVTE_ERROR("Fused attention backend 1 is currently a placeholder. \
-      Please use one of the other backends instead. \n");
+    const char *err_msg =
+    "Fused attention backend 1 is currently a placeholder. "
+    "Please use one of the other backends instead. \n";
+    NVTE_ERROR(err_msg);
   } else if (fused_attention_backend == 2) {
 #if (CUDNN_VERSION >= 8901)
       // TODO input_S or output_S?
@@ -175,8 +179,10 @@ void nvte_fused_attn_bwd_qkvpacked(
           input_cu_seqlens, input_rng_state,
           wkspace, stream, handle);
 #else
-    NVTE_ERROR(
-      "cuDNN 8.9.0 is required for BF16/FP16 fused attention with arbitrary sequence length. \n");
+    const char *err_msg =
+    "cuDNN 8.9.0 is required for BF16/FP16 fused attention "
+    "with arbitrary sequence length. \n";
+    NVTE_ERROR(err_msg);
 #endif
   } else if (fused_attention_backend == 4) {
 #if (CUDNN_VERSION >= 8900)
@@ -247,8 +253,9 @@ void nvte_fused_attn_fwd_kvpacked(
 
   if (fused_attention_backend == 1) {
     // return_softmax and num_split are used in backend 1
-    NVTE_ERROR("Fused attention backend 1 is currently a placeholder. \
-      Please use one of the other backends instead. \n");
+    const char *err_msg =
+    "Fused attention backend 1 is currently a placeholder. "
+    "Please use one of the other backends instead. \n";
   } else if (fused_attention_backend == 2) {
 #if (CUDNN_VERSION >= 8901)
       fused_attn_max_512_fwd_kvpacked(
@@ -263,8 +270,10 @@ void nvte_fused_attn_fwd_kvpacked(
     NVTE_ERROR("cuDNN 8.9.1 is required for BF16/FP16 fused attention with max_seqlen<=512. \n");
 #endif
   } else if (fused_attention_backend == 3) {
-    NVTE_ERROR(
-      "The FP16/BF16 fused attention (arbitrary seqlen) currently only supports packed QKV input.\n");
+    const char* err_msg =
+    "The FP16/BF16 fused attention (arbitrary seqlen) currently "
+    "only supports packed QKV input.\n";
+    NVTE_ERROR(err_msg);
   } else if (fused_attention_backend == 4) {
     NVTE_ERROR("The FP8 fused attention API only supports packed QKV input. \n");
   } else {
@@ -320,8 +329,9 @@ void nvte_fused_attn_bwd_kvpacked(
 
   if (fused_attention_backend == 1) {
     // return_softmax and num_split are used in backend 1
-    NVTE_ERROR("Fused attention backend 1 is currently a placeholder. \
-      Please use one of the other backends instead. \n");
+    const char *err_msg =
+    "Fused attention backend 1 is currently a placeholder. "
+    "Please use one of the other backends instead. \n";
   } else if (fused_attention_backend == 2) {
 #if (CUDNN_VERSION >= 8901)
       Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
@@ -338,8 +348,10 @@ void nvte_fused_attn_bwd_kvpacked(
     NVTE_ERROR("cuDNN 8.9.1 is required for BF16/FP16 fused attention with max_seqlen<=512. \n");
 #endif
   } else if (fused_attention_backend == 3) {
-    NVTE_ERROR(
-      "The FP16/BF16 fused attention (arbitrary seqlen) currently only supports packed QKV input.\n");
+    const char* err_msg =
+    "The FP16/BF16 fused attention (arbitrary seqlen) currently "
+    "only supports packed QKV input.\n";
+    NVTE_ERROR(err_msg);
   } else if (fused_attention_backend == 4) {
     NVTE_ERROR("The FP8 fused attention API only supports packed QKV input. \n");
   } else {

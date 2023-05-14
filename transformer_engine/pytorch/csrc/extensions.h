@@ -53,7 +53,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 c10::optional<at::Tensor> amax_dP,
                 c10::optional<at::Tensor> amax_dQKV,
                 int num_split,
-                int fused_attention_backend); 
+                int fused_attention_backend);
 
 std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
@@ -101,7 +101,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 c10::optional<at::Tensor> amax_dP,
                 c10::optional<at::Tensor> amax_dQKV,
                 int num_split,
-                int fused_attention_backend); 
+                int fused_attention_backend);
 
 void te_gemm(at::Tensor A,
              at::Tensor A_scale_inverse,

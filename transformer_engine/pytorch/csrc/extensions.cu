@@ -217,7 +217,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   at::cuda::getCurrentCUDAStream(),
                   return_softmax,
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // allocate memory for workspace and auxiliary output tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -256,7 +256,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   at::cuda::getCurrentCUDAStream(),
                   return_softmax,
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -395,7 +395,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // allocate memory for workspace
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -420,7 +420,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // destroy tensor wrappers
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -545,7 +545,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   at::cuda::getCurrentCUDAStream(),
                   return_softmax,
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // allocate memory for workspace and auxiliary output tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -586,7 +586,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   at::cuda::getCurrentCUDAStream(),
                   return_softmax,
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -741,7 +741,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // allocate memory for workspace
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -769,7 +769,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
                   num_split,
-                  fused_attention_backend); 
+                  fused_attention_backend);
 
   // destroy tensor wrappers
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);

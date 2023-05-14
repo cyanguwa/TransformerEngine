@@ -1360,7 +1360,6 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t max_seqlen, size_t nu
                                       size_t head_dim, float attn_scale, float p_dropout,
                                       NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
                                       NVTE_Mask_Type mask_type, const Tensor *input_QKV,
-//                                      const Tensor *input_dO, const NVTETensorPack *Aux_CTX_Tensors,
                                       const Tensor *input_dO, Tensor *output_S,
                                       Tensor *output_dQKV, Tensor *output_dBias,
                                       const Tensor *cu_seqlens, Tensor *workspace,
@@ -1395,7 +1394,7 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t max_seqlen, size_t nu
 //        devPtrS = output_S->data.dptr;
 //    }
     devPtrS = output_S->data.dptr;
-    
+
     // devPtrdS reuses the memory of devPtrS
     void *devPtrdS = devPtrS;
 
@@ -1428,7 +1427,7 @@ void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t q_max_seqlen, size_t k
                                      float p_dropout, NVTE_QKV_Layout qkv_layout,
                                      NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                      const Tensor *input_Q, const Tensor *input_KV,
-//                                     const Tensor *input_dO, const NVTETensorPack *Aux_CTX_Tensors,
+//                          const Tensor *input_dO, const NVTETensorPack *Aux_CTX_Tensors,
                                      const Tensor *input_dO, Tensor *output_S,
                                      Tensor *output_dQ, Tensor *output_dKV, Tensor *output_dBias,
                                      const Tensor *q_cu_seqlens, const Tensor *kv_cu_seqlens,

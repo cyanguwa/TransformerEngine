@@ -28,10 +28,9 @@
 // Host functions for converting between FP32 and FP16 formats
 // Paulius Micikevicius (pauliusm@nvidia.com)
 
-half1 cpu_float2half_rn(float f)
-{
+half1 cpu_float2half_rn(float f) {
     void* f_ptr = &f;
-    unsigned x = *((int*)f_ptr);
+    unsigned x = *(reinterpret_cast<int*>(f_ptr));
     unsigned u = (x & 0x7fffffff), remainder, shift, lsb, lsb_s1, lsb_m1;
     unsigned sign, exponent, mantissa;
 
@@ -44,11 +43,12 @@ half1 cpu_float2half_rn(float f)
         void* hr_ptr = &hr;
         return *reinterpret_cast<half1*>(hr_ptr);
     }
-  
+
     sign = ((x >> 16) & 0x8000);
-  
+
     // Get rid of +Inf/-Inf, +0/-0.
     if (u > 0x477fefff) {
+        // TODO short -> int16
         hr.x = static_cast<unsigned short> (sign | 0x7c00U);
         // Add an indirection to get around type aliasing check
         void* hr_ptr = &hr;
@@ -75,7 +75,7 @@ half1 cpu_float2half_rn(float f)
     lsb = (1 << shift);
     lsb_s1 = (lsb >> 1);
     lsb_m1 = (lsb - 1);
-  
+
     // Round to nearest even.
     remainder = (mantissa & lsb_m1);
     mantissa >>= shift;
@@ -85,7 +85,7 @@ half1 cpu_float2half_rn(float f)
             ++exponent;
             mantissa = 0;
         }
-    }  
+    }
 
     hr.x = static_cast<unsigned short>((sign | (exponent << 10) | mantissa));
 
@@ -95,8 +95,7 @@ half1 cpu_float2half_rn(float f)
 }
 
 
-float cpu_half2float(half1 h)
-{
+float cpu_half2float(half1 h) {
     STATIC_ASSERT(sizeof(int) == sizeof(float));
 
     // Add an indirection to get around type aliasing check
@@ -129,7 +128,7 @@ float cpu_half2float(half1 h)
 
     // Add an indirection to get around type aliasing check
     void* temp_ptr = &temp;
-    float* res_ptr = reinterpret_cast<float*>(temp_ptr); 
+    float* res_ptr = reinterpret_cast<float*>(temp_ptr);
     return *res_ptr;
 }
 

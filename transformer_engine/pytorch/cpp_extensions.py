@@ -19,11 +19,11 @@ TORCH_DType = {
 }
 
 FusedAttnBackends = {
-        "FUSED_ATTN_FP16_BF16_FlashAttn": 1,          # HazyResearch FlashAttention C API
-        "FUSED_ATTN_FP16_BF16_max_seqlen_512": 2,     # FP16/BF16 fused attention, <=512 sequence length
-        "FUSED_ATTN_FP16_BF16_arbitrary_seqlen": 3,   # FP16/BF16 fused attention, any sequence length
-        "FUSED_ATTN_FP8": 4,                          # FP8 fused attention, <=512 sequence length
-        }
+    "FUSED_ATTN_FP16_BF16_FlashAttn": 1,          # HazyResearch FlashAttention C API
+    "FUSED_ATTN_FP16_BF16_max_seqlen_512": 2,     # FP16/BF16 fused attention, <=512 sequence length
+    "FUSED_ATTN_FP16_BF16_arbitrary_seqlen": 3,   # FP16/BF16 fused attention, any sequence length
+    "FUSED_ATTN_FP8": 4,                          # FP8 fused attention, <=512 sequence length
+    }
 
 def check_tensor(x: torch.Tensor):
     """Check tensor properties."""
@@ -98,17 +98,14 @@ def check_rng_state(rng_state: torch.Tensor):
 def check_for_fa_fp16bf16_maxseqlen512(
     qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
     head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
-    assert (qkv_layout == "qkv_interleaved"
-            or qkv_layout == "kv_interleaved"
+    """Check input arguments."""
+    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
             ), """FP16/BF16 fused attention (max sequence length 512) currently only supports
             qkv_interleaved and kv_interleaved qkv_layout."""
-    assert (attn_bias_type == "no_bias"
-            or attn_bias_type == "pre_scale_bias" 
-            or attn_bias_type == "post_scale_bias"
+    assert (attn_bias_type in ["no_bias", "pre_scale_bias", "post_scale_bias"]
             ), """FP16/BF16 fused attention (max sequence length 512) currently only supports
             no_bias, pre_scale_bias, and post_scale_bias attn_bias_type."""
-    assert (attn_mask_type == "causal"
-            or attn_mask_type == "padding"
+    assert (attn_mask_type in ["causal", "padding"]
             ), """FP16/BF16 fused attention (max sequence length 512) currently only supports
             padding and causal attn_mask_type."""
     assert (qkv_type in [torch.bfloat16, torch.float16]
@@ -130,9 +127,8 @@ def check_for_fa_fp16bf16_maxseqlen512(
 def check_for_fa_fp16bf16_arbitrary_seqlen(
     qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
     head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
-    assert (qkv_layout == "qkv_interleaved"
-            or qkv_layout == "kv_interleaved"
-            or qkv_layout == "sbh_interleaved"
+    """Check input arguments."""
+    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved", "sbh_interleaved"]
             ), """FP16/BF16 fused attention (arbitrary sequence length) currently only supports
             qkv_interleaved, kv_interleaved, and sbh_interleaved qkv_layout."""
     assert (attn_bias_type == "no_bias"
@@ -153,14 +149,14 @@ def check_for_fa_fp16bf16_arbitrary_seqlen(
     #            or max_seqlen_kv > 512
     #            ), """This version of FP16/BF16 fused attention is suitable for sequence length
     #            > 512. Please use FUSED_ATTN_FP16_BF16_max_seqlen_512 for <= 512."""
-    assert (head_dim == 64
-            or head_dim == 128
+    assert (head_dim in [64, 128]
             ), """FP16/BF16 fused attention (arbitrary sequence length) currently only supports
             head_dim = 64, 128."""
 
 def check_for_fa_fp8(
     qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
     head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
+    """Check input arguments."""
     assert (qkv_layout == "qkv_interleaved"
             ), "FP8 fused attention currently only supports qkv_interleaved qkv_layout."
     assert (attn_bias_type == "no_bias"
@@ -390,12 +386,12 @@ def fused_attn_fwd_qkvpacked(
             num_splits,
             fused_attention_backend,
     )
- 
-    if return_softmax and fused_attention_backend == FusedAttnBackends["FUSED_ATTN_FP16_BF16_FlashAttn"]:
+
+    if (return_softmax
+        and fused_attention_backend == FusedAttnBackends["FUSED_ATTN_FP16_BF16_FlashAttn"]):
         # out, [softmax_lse, rng_state], S_dmask
         return output_tensors[0], output_tensors[1:-1], output_tensors[-1]
-    else:
-        return output_tensors[0], output_tensors[1:], None
+    return output_tensors[0], output_tensors[1:], None
 
 
 def fused_attn_bwd_qkvpacked(
@@ -502,8 +498,8 @@ def fused_attn_bwd_qkvpacked(
     d_qkv: torch.Tensor
                 gradient tensor of QKV; same data type and shape as QKV
     d_bias: torch.Tensor, optional
-                gradient tensor of Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
-                same data type and shape as Bias
+                gradient tensor of Bias when attn_bias_type is "pre_scale_bias"
+                or "post_scale_bias"; same data type and shape as Bias
     """
 
     check_cu_seqlens(cu_seqlens)
@@ -759,11 +755,12 @@ def fused_attn_fwd_kvpacked(
         attn_scale = 1.0 / math.sqrt(d)
 
     if attn_bias_type != "no_bias":
-        assert attn_bias is not None, "attn_bias tensor cannot be None when attn_bias_type is not no_bias."
+        assert (attn_bias is not None
+                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias."
         assert (attn_bias.shape == [1, h, max_seqlen_q, max_seqlen_kv]
-               ), "attn_bias tensor must be in [1, h, max_seqlen_q, max_seqlen_kv] shape."
+                ), "attn_bias tensor must be in [1, h, max_seqlen_q, max_seqlen_kv] shape."
         assert (attn_bias.dtype == q.dtype
-               ), "attn_bias tensor must be in the same dtype as q and kv."
+                ), "attn_bias tensor must be in the same dtype as q and kv."
 
     # TODO add FlashAttention C API
     if fused_attention_backend == FusedAttnBackends["FUSED_ATTN_FP16_BF16_FlashAttn"]:
@@ -806,11 +803,11 @@ def fused_attn_fwd_kvpacked(
             fused_attention_backend,
     )
 
-    if return_softmax and fused_attention_backend == FusedAttnBackends["FUSED_ATTN_FP16_BF16_FlashAttn"]:
+    if (return_softmax
+        and fused_attention_backend == FusedAttnBackends["FUSED_ATTN_FP16_BF16_FlashAttn"]):
         # out, [softmax_lse, rng_state], S_dmask
         return output_tensors[0], output_tensors[1:-1], output_tensors[-1]
-    else:
-        return output_tensors[0], output_tensors[1:], None
+    return output_tensors[0], output_tensors[1:], None
 
 
 def fused_attn_bwd_kvpacked(
@@ -931,8 +928,8 @@ def fused_attn_bwd_kvpacked(
     d_kv: torch.Tensor
                 gradient tensor of KV; same data type and shape as KV
     d_bias: torch.Tensor, optional
-                gradient tensor of Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
-                same data type and shape as Bias
+                gradient tensor of Bias when attn_bias_type is "pre_scale_bias"
+                or "post_scale_bias"; same data type and shape as Bias
     """
 
     check_cu_seqlens(cu_seqlens_q)
