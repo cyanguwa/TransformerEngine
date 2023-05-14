@@ -1014,6 +1014,8 @@ class DotProductAttention(torch.nn.Module):
         # 4. FP8 fused attention, <=512 sequence length
         #    i.e. FUSED_ATTN_FP8
         use_fused_attention = self.use_fused_attention
+        # TODO testing
+        fused_attention_backend = 0
 
         # prohibitive conditions for FlashAttention
         if (query_layer.dtype not in [torch.bfloat16, torch.float16]
@@ -1048,7 +1050,8 @@ class DotProductAttention(torch.nn.Module):
             # FusedAttention backend 2 is faster than FlashAttention as of now
             use_flash_attention = False
             use_fused_attention = True and use_fused_attention
-            fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_max_seqlen_512"]
+            #fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_max_seqlen_512"]
+            fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
         elif (query_layer.dtype in [torch.bfloat16, torch.float16]
             and key_layer.dtype in [torch.bfloat16, torch.float16]
             and value_layer.dtype in [torch.bfloat16, torch.float16]
@@ -1057,19 +1060,24 @@ class DotProductAttention(torch.nn.Module):
                 or key_layer.shape[0] > 512
                 or value_layer.shape[0] > 512)
         ):
-            # FlashAttention is faster than FusedAttention backend 3 as of now
-            use_flash_attention = True and use_flash_attention 
-            use_fused_attention = False 
-            # however, if FlashAttention is not applicable,
-            # fall back to FusedAttention backend 3
-            if not use_flash_attention:
-                if (self.attention_type == "self"
-                    and self.attn_mask_type == "causal"):
-                    # TODO does backend 3 compute cross attn by using the same max_seqlen_q/kv
-                    # in the self attn code path, i.e. max_seqlen is longer than max of seqlens 
-                    # TODO what about the "no mask" case, i.e. is_causal = False
-                    use_fused_attention = True and use_fused_attention 
-                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+            ## FlashAttention is faster than FusedAttention backend 3 as of now
+            #use_flash_attention = True and use_flash_attention 
+            #use_fused_attention = False 
+            ## however, if FlashAttention is not applicable,
+            ## fall back to FusedAttention backend 3
+            #if not use_flash_attention:
+            #    if (self.attention_type == "self"
+            #        and self.attn_mask_type == "causal"):
+            #        # TODO does backend 3 compute cross attn by using the same max_seqlen_q/kv
+            #        # in the self attn code path, i.e. max_seqlen is longer than max of seqlens 
+            #        # TODO what about the "no mask" case, i.e. is_causal = False
+            #        use_fused_attention = True and use_fused_attention 
+            #        fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+
+            # TODO testing fused attn v2
+            use_flash_attention = False
+            use_fused_attention = True and use_fused_attention
+            fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
         else:
             # disable FlashAttention and FusedAttention outside their support matrix
             use_flash_attention = False 
@@ -1078,11 +1086,11 @@ class DotProductAttention(torch.nn.Module):
         # TODO testing 
         print("DotProductAttention backend: ")
         print("  before applying envvar control: FlashAttention ", use_flash_attention,
-                "FusedAttention ", use_fused_attention)
+                "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
         use_flash_attention = False if int(os.getenv("NVTE_FLASH_ATTN")) == 0 else True
         use_fused_attention = False if int(os.getenv("NVTE_FUSED_ATTN")) == 0 else True
         print("  after applying envvar control: FlashAttention ", use_flash_attention,
-                "FusedAttention ", use_fused_attention)
+                "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
 
         # if FlashAttention is selected
         if use_flash_attention:

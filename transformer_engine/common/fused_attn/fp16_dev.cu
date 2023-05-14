@@ -47,7 +47,7 @@ void gpu_float2half_rn(int size, const value_type *buffIn, half1 *buffOut)
     int grid_size = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     float2half_rn_kernel<value_type><<<grid_size, BLOCK_SIZE>>> (size, buffIn, buffOut);
 //    checkCudaErrors(cudaDeviceSynchronize());
-    NVTE_CHECK_CUDA((cudaDeviceSynchronize());
+    NVTE_CHECK_CUDA(cudaDeviceSynchronize());
 }
 
 template void gpu_float2half_rn<float> (int, const float*, half1*);

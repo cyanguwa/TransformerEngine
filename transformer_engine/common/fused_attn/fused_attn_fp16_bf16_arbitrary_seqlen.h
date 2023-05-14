@@ -36,8 +36,8 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
                                       //const Tensor *input_dO, const NVTETensorPack *Aux_CTX_Tensors,
                                       const Tensor *input_dO, Tensor *output_S,
                                       Tensor *output_dQKV, Tensor *output_dBias,
-                                      const Tensor *cu_seqlens, Tensor *workspace,
-                                      cudaStream_t stream, cudnnHandle_t handle);
+                                      const Tensor *cu_seqlens, const Tensor *rng_state,
+                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
 #endif  // CUDNN_VERSION >= 8900
 }  // namespace transformer_engine

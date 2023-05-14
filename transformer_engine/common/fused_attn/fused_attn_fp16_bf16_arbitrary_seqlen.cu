@@ -520,85 +520,85 @@ createSVBMM(int64_t b,
     ops.push_back(std::move(matmul_op2));
 }
 
-static cudnn_frontend::Tensor
-createSoftmaxBackward(int64_t b, 
-                     int64_t h, 
-                     int64_t s_q,
-                     int64_t s_kv,
-                     int64_t d,
-                     NVTE_QKV_Layout layout,
-                     cudnnDataType_t tensorType,
-                     std::vector<cudnn_frontend::Operation>& ops,
-                     cudnn_frontend::Tensor& yTensor,
-                     cudnn_frontend::Tensor& dyTensor) {
-
-    CUDNN_FRONTEND_UNUSED(tensorType);
-
-    cudnn_frontend::throw_if(ops.size() == 0, "Softmax backward constructed incorrectly as the first one", CUDNN_STATUS_BAD_PARAM);
-
-    int64_t p_dim [4] = {b, h, s_q, s_kv};
-    int64_t p_stride [4];
-    generateMatrixStrides(b, h, s_q, s_kv, d, p_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
-
-    int64_t p_reduction_dim [4] = {b, h, s_q, 1};
-    int64_t p_reduction_stride [4];
-
-    p_reduction_stride[3] = 1;
-    p_reduction_stride[2] = 1;
-    p_reduction_stride[1] = s_q;
-    p_reduction_stride[0] = s_q * h;
-
-    int64_t const_dim [4] =  {1, 1, 1, 1};
-    int64_t const_stride [4] = {1, 1, 1, 1};
-
-    // creating all tensors
-    auto softmaxScaleTensor = tensor_create(CUDNN_DATA_FLOAT, S_CONST_ID, const_dim, const_stride, false, true);
-    auto dyMulYTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 250, p_dim, p_stride, true, false);
-    auto dxAfterReductionTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 251, p_reduction_dim, p_reduction_stride, true, false);
-    auto dxAfterSubtractionTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 252, p_dim, p_stride, true, false);
-    auto dxUnscaleTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 253, p_dim, p_stride, true, false);
-    auto dxTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 254, p_dim, p_stride, true, false);
-
-    // creating all ops
-    // mul (y * dy)
-    auto mul_1_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
-    auto mul_1_op = binary_pw_op_create(yTensor, dyTensor, dyMulYTensor, mul_1_desc);
-
-    // reduction add sum (y * dy)
-    auto reductionAddDesc = cudnn_frontend::ReductionDescBuilder()
-                                .setComputeType(CUDNN_DATA_FLOAT)
-                                .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
-                                .build();
-    std::cout << reductionAddDesc.describe() << std::endl;
-
-    auto reductionAdd_op = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_REDUCTION_DESCRIPTOR)
-                                .setxDesc(dyMulYTensor)
-                                .setyDesc(dxAfterReductionTensor)
-                                .setreductionDesc(reductionAddDesc)
-                                .build();
-
-    std::cout << reductionAdd_op.describe() << std::endl;
-
-    // subtraction (dy - sum(y * dy))
-    auto sub_0_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_SUB);
-    auto sub_0_op = binary_pw_op_create(dyTensor, dxAfterReductionTensor, dxAfterSubtractionTensor, sub_0_desc);
-
-    // mul (y * (dy - sum(y * dy)))
-    auto mul_2_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
-    auto mul_2_op = binary_pw_op_create(yTensor, dxAfterSubtractionTensor, dxUnscaleTensor, mul_2_desc);
-
-    // mul (scale * dx)
-    auto mul_3_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
-    auto mul_3_op = binary_pw_op_create(dxUnscaleTensor, softmaxScaleTensor, dxTensor, mul_3_desc);
-
-    ops.push_back(std::move(mul_1_op));
-    ops.push_back(std::move(reductionAdd_op));
-    ops.push_back(std::move(sub_0_op));
-    ops.push_back(std::move(mul_2_op));
-    ops.push_back(std::move(mul_3_op));
-
-    return dxTensor;
-}
+//static cudnn_frontend::Tensor
+//createSoftmaxBackward(int64_t b, 
+//                     int64_t h, 
+//                     int64_t s_q,
+//                     int64_t s_kv,
+//                     int64_t d,
+//                     NVTE_QKV_Layout layout,
+//                     cudnnDataType_t tensorType,
+//                     std::vector<cudnn_frontend::Operation>& ops,
+//                     cudnn_frontend::Tensor& yTensor,
+//                     cudnn_frontend::Tensor& dyTensor) {
+//
+//    CUDNN_FRONTEND_UNUSED(tensorType);
+//
+//    cudnn_frontend::throw_if(ops.size() == 0, "Softmax backward constructed incorrectly as the first one", CUDNN_STATUS_BAD_PARAM);
+//
+//    int64_t p_dim [4] = {b, h, s_q, s_kv};
+//    int64_t p_stride [4];
+//    generateMatrixStrides(b, h, s_q, s_kv, d, p_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
+//
+//    int64_t p_reduction_dim [4] = {b, h, s_q, 1};
+//    int64_t p_reduction_stride [4];
+//
+//    p_reduction_stride[3] = 1;
+//    p_reduction_stride[2] = 1;
+//    p_reduction_stride[1] = s_q;
+//    p_reduction_stride[0] = s_q * h;
+//
+//    int64_t const_dim [4] =  {1, 1, 1, 1};
+//    int64_t const_stride [4] = {1, 1, 1, 1};
+//
+//    // creating all tensors
+//    auto softmaxScaleTensor = tensor_create(CUDNN_DATA_FLOAT, S_CONST_ID, const_dim, const_stride, false, true);
+//    auto dyMulYTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 250, p_dim, p_stride, true, false);
+//    auto dxAfterReductionTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 251, p_reduction_dim, p_reduction_stride, true, false);
+//    auto dxAfterSubtractionTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 252, p_dim, p_stride, true, false);
+//    auto dxUnscaleTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 253, p_dim, p_stride, true, false);
+//    auto dxTensor = tensor_create(CUDNN_DATA_FLOAT, VIRTUAL_ID + 254, p_dim, p_stride, true, false);
+//
+//    // creating all ops
+//    // mul (y * dy)
+//    auto mul_1_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
+//    auto mul_1_op = binary_pw_op_create(yTensor, dyTensor, dyMulYTensor, mul_1_desc);
+//
+//    // reduction add sum (y * dy)
+//    auto reductionAddDesc = cudnn_frontend::ReductionDescBuilder()
+//                                .setComputeType(CUDNN_DATA_FLOAT)
+//                                .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
+//                                .build();
+//    std::cout << reductionAddDesc.describe() << std::endl;
+//
+//    auto reductionAdd_op = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_REDUCTION_DESCRIPTOR)
+//                                .setxDesc(dyMulYTensor)
+//                                .setyDesc(dxAfterReductionTensor)
+//                                .setreductionDesc(reductionAddDesc)
+//                                .build();
+//
+//    std::cout << reductionAdd_op.describe() << std::endl;
+//
+//    // subtraction (dy - sum(y * dy))
+//    auto sub_0_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_SUB);
+//    auto sub_0_op = binary_pw_op_create(dyTensor, dxAfterReductionTensor, dxAfterSubtractionTensor, sub_0_desc);
+//
+//    // mul (y * (dy - sum(y * dy)))
+//    auto mul_2_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
+//    auto mul_2_op = binary_pw_op_create(yTensor, dxAfterSubtractionTensor, dxUnscaleTensor, mul_2_desc);
+//
+//    // mul (scale * dx)
+//    auto mul_3_desc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
+//    auto mul_3_op = binary_pw_op_create(dxUnscaleTensor, softmaxScaleTensor, dxTensor, mul_3_desc);
+//
+//    ops.push_back(std::move(mul_1_op));
+//    ops.push_back(std::move(reductionAdd_op));
+//    ops.push_back(std::move(sub_0_op));
+//    ops.push_back(std::move(mul_2_op));
+//    ops.push_back(std::move(mul_3_op));
+//
+//    return dxTensor;
+//}
 
 void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                                  bool is_training, float scaling_factor, float dropout_probability,
@@ -658,17 +658,20 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
             }
+            std::cout << "all ops pushed back: " << ops.size() << std::endl;
 
             // Create an Operation Graph
             auto opGraph = cudnn_frontend::OperationGraphBuilder()
                                .setHandle(handle)
                                .setOperationGraph(all_ops.size(), all_ops.data())
                                .build();
+            std::cout << "graph created: " << ops.size() << std::endl;
 
             cudnn_frontend::EngineConfigList filtered_configs;
             auto statuses = cudnn_frontend::get_heuristics_list<1>(
                                {"heuristics_instant"}, opGraph, allowAllConfig,
                                filtered_configs, true);
+            std::cout << "getting status: " << ops.size() << std::endl;
 
             if (filtered_configs.size() == 0) {
                 cudnn_frontend::set_error_and_throw_exception(
@@ -677,6 +680,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
                         "run_mha_fprop: No config returned by the heuristics");
             }   
 
+            std::cout << "filetre configs : " << ops.size() << std::endl;
             auto plan = cudnn_frontend::ExecutionPlanBuilder()
                            .setHandle(handle)
                            .setEngineConfig(filtered_configs[0], opGraph.getTag())
@@ -734,10 +738,10 @@ void fused_attn_arbitrary_seqlen_fwd_impl(int64_t b, int64_t h, int64_t s_q, int
 void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                     float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
                     void* devPtrQ, void* devPtrKTranspose, void* devPtrVTranspose, void* devPtrO,
-                    void* devPtrSoftmaxStats, void* devPtrSoftmaxSum, void* devPtrdQAccumulator,
+                    void* devPtrSoftmaxStats, // void* devPtrSoftmaxSum, void* devPtrdQAccumulator,
                     void* devPtrdQ, void* devPtrdK, void* devPtrdV, void* devPtrdO,
-                    void* devPtrDropoutSeed, void* devPtrDropoutOffset,
-                    void *workspace, size_t *workspace_size, cudnnDataType_t tensorType,
+                    void* devPtrDropoutSeed, void* devPtrDropoutOffset, cudnnDataType_t tensorType,
+                    void *workspace, size_t *workspace_size,
                     cudaStream_t stream, cudnnHandle_t handle) {
     try {
         // Create cudnn handle
@@ -1096,10 +1100,17 @@ void fused_attn_arbitrary_seqlen_bwd_impl(int64_t b, int64_t h, int64_t s_q, int
         auto plan_workspace_size = plan.getWorkspaceSize();
 
         // Exit to request upper level API to allocate memory if needed
+        size_t softmaxSum_workspace_size = b * h * s_q * sizeof(float);
+        size_t dqAccum_workspace_size = b * s_q * h * d * sizeof(float);
         if (workspace == nullptr) {
-            *workspace_size = plan_workspace_size;
+            *workspace_size = plan_workspace_size + softmaxSum_workspace_size
+                              + dqAccum_workspace_size;
             return;
         }
+
+        void *devPtrSoftmaxSum = static_cast<int8_t *>(workspace) + plan_workspace_size;
+        void *devPtrdQAccumulator = static_cast<int8_t *>(devPtrSoftmaxSum)
+                                    + softmaxSum_workspace_size; 
 
         std::set<std::pair<uint64_t, void *>> data_ptrs;
         // add all the data pointers to be used in the variant pack
@@ -1162,7 +1173,7 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(
     void *devPtrK = static_cast<void *>(static_cast<int8_t *>(devPtrQKV) + stride);
     void *devPtrV = static_cast<void *>(static_cast<int8_t *>(devPtrQKV) + 2 * stride);
 
-    void *devPtrBias = static_cast<void *>(input_Bias->data.dptr);
+    //void *devPtrBias = static_cast<void *>(input_Bias->data.dptr);
 
     void *devPtrO = output_O->data.dptr;
 
@@ -1179,7 +1190,7 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(
         devPtrS = output_S->data.dptr;
     }
 
-    void *devCuSeqlen = cu_seqlens->data.dptr;
+    //void *devCuSeqlen = cu_seqlens->data.dptr;
     void* devPtrDropoutSeed = reinterpret_cast<void *>(
                     reinterpret_cast<uint64_t*>(rng_state->data.dptr));
     void* devPtrDropoutOffset = reinterpret_cast<void *>(
@@ -1216,8 +1227,8 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
 //                                      const Tensor *input_dO, const NVTETensorPack *Aux_CTX_Tensors,
                                       const Tensor *input_dO, Tensor *output_S,
                                       Tensor *output_dQKV, Tensor *output_dBias,
-                                      const Tensor *cu_seqlens, Tensor *workspace,
-                                      cudaStream_t stream, cudnnHandle_t handle) {
+                                      const Tensor *cu_seqlens, const Tensor *rng_state,
+                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle) {
     using namespace transformer_engine;
 
     NVTE_CHECK(qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED,
@@ -1240,20 +1251,27 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
     void *devPtrdK = static_cast<void *>(static_cast<int8_t *>(devPtrdQKV) + stride);
     void *devPtrdV = static_cast<void *>(static_cast<int8_t *>(devPtrdQKV) + 2 * stride);
 
-    void *devPtrdBias = output_dBias->data.dptr;
+    //void *devPtrdBias = output_dBias->data.dptr;
 
 //    NVTE_CHECK(Aux_CTX_Tensors->size == 1);
-    void *devPtrS = nullptr;
+//    void *devPtrS = nullptr;
 //    if (Aux_CTX_Tensors->size == 1) {
 //        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
 //        devPtrS = output_S->data.dptr;
 //    }
-    devPtrS = output_S->data.dptr;
+//    devPtrS = output_S->data.dptr;
+    void *devPtrSoftmaxStats = nullptr;
+    devPtrSoftmaxStats = output_S->data.dptr;
     
     // devPtrdS reuses the memory of devPtrS
-    void *devPtrdS = devPtrS;
+//    void *devPtrdS = devPtrS;
+    //void *devPtrdS = devPtrSoftmaxStats;
 
-    void *devPtrCuSeqlens = cu_seqlens->data.dptr;
+    //void *devPtrCuSeqlens = cu_seqlens->data.dptr;
+    void* devPtrDropoutSeed = reinterpret_cast<void *>(
+                    reinterpret_cast<uint64_t*>(rng_state->data.dptr));
+    void* devPtrDropoutOffset = reinterpret_cast<void *>(
+                    reinterpret_cast<uint64_t*>(rng_state->data.dptr) + 1);
 
     const auto qkv_type = input_QKV->data.dtype;
     size_t workspace_size = 0;
@@ -1261,9 +1279,9 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen, max_seqlen, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
                                 devPtrQ, devPtrK, devPtrV, devPtrO,
-                                devPtrSoftmaxStats, devPtrSoftmaxSum, devPtrdQAccumulator,
+                                devPtrSoftmaxStats, // devPtrSoftmaxSum, devPtrdQAccumulator,
                                 devPtrdQ, devPtrdK, devPtrdV, devPtrdO,
-                                devPtrdBias, devPtrCuSeqlens, devPtrCuSeqlens, 
+                                //devPtrdBias, devPtrCuSeqlens, devPtrCuSeqlens, 
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 get_cudnn_dtype(qkv_type),
                                 workspace->data.dptr, &workspace_size, stream, handle);

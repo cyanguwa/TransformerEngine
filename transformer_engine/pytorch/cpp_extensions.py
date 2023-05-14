@@ -144,15 +144,15 @@ def check_for_fa_fp16bf16_arbitrary_seqlen(
     assert (qkv_type in [torch.bfloat16, torch.float16]
             ), """FP16/BF16 fused attention (arbitrary sequence length) currently only supports
             FP16 and BF16 precisions."""
-    if max_seqlen_kv is None:
-        assert (max_seqlen_q > 512
-                ), """This version of FP16/BF16 fused attention is suitable for sequence length
-                > 512. Please use FUSED_ATTN_FP16_BF16_max_seqlen_512 for <= 512."""
-    else:
-        assert (max_seqlen_q > 512
-                or max_seqlen_kv > 512
-                ), """This version of FP16/BF16 fused attention is suitable for sequence length
-                > 512. Please use FUSED_ATTN_FP16_BF16_max_seqlen_512 for <= 512."""
+    #if max_seqlen_kv is None:
+    #    assert (max_seqlen_q > 512
+    #            ), """This version of FP16/BF16 fused attention is suitable for sequence length
+    #            > 512. Please use FUSED_ATTN_FP16_BF16_max_seqlen_512 for <= 512."""
+    #else:
+    #    assert (max_seqlen_q > 512
+    #            or max_seqlen_kv > 512
+    #            ), """This version of FP16/BF16 fused attention is suitable for sequence length
+    #            > 512. Please use FUSED_ATTN_FP16_BF16_max_seqlen_512 for <= 512."""
     assert (head_dim == 64
             or head_dim == 128
             ), """FP16/BF16 fused attention (arbitrary sequence length) currently only supports

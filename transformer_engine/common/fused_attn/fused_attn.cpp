@@ -164,6 +164,7 @@ void nvte_fused_attn_bwd_qkvpacked(
   } else if (fused_attention_backend == 3) {
 #if (CUDNN_VERSION >= 8900)
       Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
+      const Tensor *input_rng_state = reinterpret_cast<const Tensor*>(Aux_CTX_Tensors->tensors[1]);
       fused_attn_arbitrary_seqlen_bwd_qkvpacked(
           b, max_seqlen, h, d,
           attn_scale, dropout, qkv_layout, bias_type, attn_mask_type,
@@ -171,7 +172,7 @@ void nvte_fused_attn_bwd_qkvpacked(
 //          Aux_CTX_Tensors,
           output_S,
           output_dQKV, output_dBias,
-          input_cu_seqlens,
+          input_cu_seqlens, input_rng_state,
           wkspace, stream, handle);
 #else
     NVTE_ERROR(

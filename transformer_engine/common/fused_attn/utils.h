@@ -39,32 +39,32 @@ void generateMatrixStrides(
             int64_t d, int64_t* strideA,
             NVTE_QKV_Layout layout, NVTE_QKV_Matrix matrix);
 
-static bool allowAllConfig(cudnnBackendDescriptor_t engine_config);
+bool allowAllConfig(cudnnBackendDescriptor_t engine_config);
 
-static cudnn_frontend::Tensor tensor_create(cudnnDataType_t type, int64_t id,
+cudnn_frontend::Tensor tensor_create(cudnnDataType_t type, int64_t id,
                                             int64_t const *dim,
                                             int64_t const *stride,
                                             bool is_virtual, bool is_value);
 
-static cudnn_frontend::Tensor tensor_create_with_offset(
+cudnn_frontend::Tensor tensor_create_with_offset(
                 cudnnDataType_t type, int64_t id,
                 int64_t const * dim, int64_t const * stride,
                 bool is_virtual, bool is_value,
                 std::shared_ptr<cudnn_frontend::Tensor> raggedOffset);
 
-static cudnn_frontend::PointWiseDesc pw_desc_create(cudnnDataType_t type,
+cudnn_frontend::PointWiseDesc pw_desc_create(cudnnDataType_t type,
                                                     cudnnPointwiseMode_t mode);
 
-static cudnn_frontend::Operation unary_pw_op_create(
+cudnn_frontend::Operation unary_pw_op_create(
     cudnn_frontend::Tensor const &xDesc, cudnn_frontend::Tensor const &yDesc,
     cudnn_frontend::PointWiseDesc const &pwDesc);
 
-static cudnn_frontend::Operation binary_pw_op_create(
+cudnn_frontend::Operation binary_pw_op_create(
     cudnn_frontend::Tensor const &xDesc, cudnn_frontend::Tensor const &bDesc,
     cudnn_frontend::Tensor const &yDesc,
     cudnn_frontend::PointWiseDesc const &pwDesc);
 
-static cudnn_frontend::Operation ternary_pw_op_create(
+cudnn_frontend::Operation ternary_pw_op_create(
     cudnn_frontend::Tensor const &xDesc, cudnn_frontend::Tensor const &bDesc,
     cudnn_frontend::Tensor const &tDesc, cudnn_frontend::Tensor const &yDesc,
     cudnn_frontend::PointWiseDesc const &pwDesc);
