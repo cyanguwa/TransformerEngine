@@ -114,7 +114,6 @@ createQKBMM(int64_t b,
     auto matmul_1_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-    std::cout << matmul_1_Desc.describe() << std::endl;
 
     // Create a matmul 1 Node
     auto matmul_op1 = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -123,8 +122,6 @@ createQKBMM(int64_t b,
                             .setcMatDesc(sTensor)
                             .setmatmulDesc(matmul_1_Desc)
                             .build();
-
-    std::cout << matmul_op1.describe() << std::endl;
 
     ops->push_back(std::move(matmul_op1));
 
@@ -183,12 +180,10 @@ createCausalMask(int64_t b,
                             .setAxis(2)
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-    std::cout << genIndexRowDesc.describe() << std::endl;
 
     // Create a gen index Node.
     auto genIndexRow_op = unary_pw_op_create(
                             prevBlockOutputTensor, rowIndexTensor, genIndexRowDesc);
-    std::cout << genIndexRow_op.describe() << std::endl;
 
     // Define the gen index for row descriptor
     auto genIndexColumnDesc = cudnn_frontend::PointWiseDescBuilder()
@@ -196,7 +191,6 @@ createCausalMask(int64_t b,
                             .setAxis(3)
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-    std::cout << genIndexColumnDesc.describe() << std::endl;
 
     // Create a gen index Node.
     auto genIndexColumn_op = unary_pw_op_create(
@@ -290,7 +284,6 @@ createSoftmaxForward(int64_t b,
                                 .setComputeType(CUDNN_DATA_FLOAT)
                                 .setReductionOp(CUDNN_REDUCE_TENSOR_MAX)
                                 .build();
-    std::cout << reductionMaxDesc.describe() << std::endl;
 
     // Create a reduction max Node.
     auto reductionMax_op = cudnn_frontend::OperationBuilder(
@@ -299,7 +292,6 @@ createSoftmaxForward(int64_t b,
                                 .setyDesc(afterMaxReductionTensor)
                                 .setreductionDesc(reductionMaxDesc)
                                 .build();
-    std::cout << reductionMax_op.describe() << std::endl;
 
     // Define the subtract descriptor
     auto subtractDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_SUB);
@@ -321,7 +313,6 @@ createSoftmaxForward(int64_t b,
                                 .setComputeType(CUDNN_DATA_FLOAT)
                                 .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
                                 .build();
-    std::cout << reductionAddDesc.describe() << std::endl;
 
     // Create a reduction add Node.
     auto reductionAdd_op = cudnn_frontend::OperationBuilder(
@@ -330,8 +321,6 @@ createSoftmaxForward(int64_t b,
                                 .setyDesc(afterAddReductionTensor)
                                 .setreductionDesc(reductionAddDesc)
                                 .build();
-
-    std::cout << reductionAdd_op.describe() << std::endl;
 
     // Create log descriptor
     auto logDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_LOG);
@@ -425,7 +414,6 @@ createDropoutForward(int64_t b,
                             .setRngDistribution(CUDNN_RNG_DISTRIBUTION_BERNOULLI)
                             .setBernoulliDistProbability(1.0 - probability)
                             .build();
-    std::cout << rngDesc.describe() << std::endl;
 
     // Create a rng Node.
     auto rng_op = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_RNG_DESCRIPTOR)
@@ -434,8 +422,6 @@ createDropoutForward(int64_t b,
                             .setOffsetDesc(dropoutOffset)
                             .setRngDesc(rngDesc)
                             .build();
-
-    std::cout << rng_op.describe() << std::endl;
 
     // Define the multiply mask descriptor
     auto maskMulDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
@@ -516,7 +502,6 @@ createDropoutBackward(int64_t b,
                             .setRngDistribution(CUDNN_RNG_DISTRIBUTION_BERNOULLI)
                             .setBernoulliDistProbability(1.0 - probability)
                             .build();
-    std::cout << rngDesc.describe() << std::endl;
 
     // Create a rng Node.
     auto rng_op = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_RNG_DESCRIPTOR)
@@ -525,8 +510,6 @@ createDropoutBackward(int64_t b,
                             .setOffsetDesc(dropoutOffset)
                             .setRngDesc(rngDesc)
                             .build();
-
-    std::cout << rng_op.describe() << std::endl;
 
     // Define the multiply mask descriptor
     auto maskMulDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
@@ -581,7 +564,6 @@ createSVBMM(int64_t b,
     auto matmul_2_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-    std::cout << matmul_2_Desc.describe() << std::endl;
 
     // Create a matmul 2 Node
     auto matmul_op2 = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -590,8 +572,6 @@ createSVBMM(int64_t b,
                             .setcMatDesc(oTensor)
                             .setmatmulDesc(matmul_2_Desc)
                             .build();
-
-    std::cout << matmul_op2.describe() << std::endl;
 
     ops->push_back(std::move(matmul_op2));
 }
@@ -659,25 +639,25 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 dropout_probability, tensorType, &ops, softmax_output);
             createSVBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops, dropout_output);
 
-            std::cout << "Total ops created: " << ops.size() << std::endl;
+            //std::cout << "Total ops created: " << ops.size() << std::endl;
 
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
             }
-            std::cout << "all ops pushed back: " << ops.size() << std::endl;
+            //std::cout << "all ops pushed back: " << ops.size() << std::endl;
 
             // Create an Operation Graph
             auto opGraph = cudnn_frontend::OperationGraphBuilder()
                                 .setHandle(handle)
                                 .setOperationGraph(all_ops.size(), all_ops.data())
                                 .build();
-            std::cout << "graph created: " << ops.size() << std::endl;
+            //std::cout << "graph created: " << ops.size() << std::endl;
 
             cudnn_frontend::EngineConfigList filtered_configs;
             auto statuses = cudnn_frontend::get_heuristics_list<1>(
                                 {"heuristics_instant"}, opGraph, allowAllConfig,
                                 filtered_configs, true);
-            std::cout << "getting status: " << ops.size() << std::endl;
+            //std::cout << "getting status: " << ops.size() << std::endl;
 
             if (filtered_configs.size() == 0) {
                 cudnn_frontend::set_error_and_throw_exception(
@@ -686,13 +666,13 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                         "run_mha_fprop: No config returned by the heuristics");
             }
 
-            std::cout << "filetre configs : " << ops.size() << std::endl;
+            //std::cout << "filetre configs : " << ops.size() << std::endl;
             auto plan = cudnn_frontend::ExecutionPlanBuilder()
                                 .setHandle(handle)
                                 .setEngineConfig(filtered_configs[0], opGraph.getTag())
                                 .build();
 
-            std::cout << "Plan tag: " << plan.getTag() << std::endl;
+            //std::cout << "Plan tag: " << plan.getTag() << std::endl;
 
             cache.insert({descriptor, plan});
             return plan;
@@ -846,7 +826,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .setReductionOp(CUDNN_REDUCE_TENSOR_MAX)
                             .build();
-            std::cout << reductionMaxDesc.describe() << std::endl;
 
             // Create a reduction max Node.
             auto reductionMax_op = cudnn_frontend::OperationBuilder(
@@ -855,7 +834,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setyDesc(afterReductionTensor)
                             .setreductionDesc(reductionMaxDesc)
                             .build();
-            std::cout << reductionMax_op.describe() << std::endl;
             ops.push_back(std::move(reductionMax_op));
 
 
@@ -888,7 +866,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto matmul_0_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-            std::cout << matmul_0_Desc.describe() << std::endl;
 
             auto matmul_op0 = cudnn_frontend::OperationBuilder(
                             CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -898,7 +875,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setmatmulDesc(matmul_0_Desc)
                             .build();
 
-            std::cout << matmul_op0.describe() << std::endl;
             ops.push_back(std::move(matmul_op0));
 
             /*******************************************************************************
@@ -988,7 +964,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto matmul_1_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-            std::cout << matmul_1_Desc.describe() << std::endl;
 
             auto matmul_op1 = cudnn_frontend::OperationBuilder(
                             CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -998,7 +973,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setmatmulDesc(matmul_1_Desc)
                             .build();
 
-            std::cout << matmul_op1.describe() << std::endl;
             ops.push_back(std::move(matmul_op1));
 
             /*******************************************************************************
@@ -1014,7 +988,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto matmul_2_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
-            std::cout << matmul_1_Desc.describe() << std::endl;
 
             auto matmul_op2 = cudnn_frontend::OperationBuilder(
                             CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -1024,7 +997,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setmatmulDesc(matmul_2_Desc)
                             .build();
 
-            std::cout << matmul_op2.describe() << std::endl;
             ops.push_back(std::move(matmul_op2));
 
             /*******************************************************************************
@@ -1101,7 +1073,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setxDesc(kTransposeTensor)
                             .setyDesc(kTensor)
                             .build();
-            std::cout << reshape_op2.describe() << std::endl;
             ops.push_back(std::move(reshape_op2));
 
             /*******************************************************************************
@@ -1131,7 +1102,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 .setmatmulDesc(matmul_3_Desc)
                                 .build();
 
-            std::cout << matmul_op3.describe() << std::endl;
             ops.push_back(std::move(matmul_op3));
 
             /*******************************************************************************
@@ -1146,7 +1116,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 .setxDesc(dPTensor)
                                 .setyDesc(dPTransposeTensor)
                                 .build();
-            std::cout << reshape_op3.describe() << std::endl;
             ops.push_back(std::move(reshape_op3));
 
             auto matmul_4_Desc = cudnn_frontend::MatMulDescBuilder()
@@ -1160,7 +1129,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 .setmatmulDesc(matmul_4_Desc)
                                 .build();
 
-            std::cout << matmul_op4.describe() << std::endl;
             ops.push_back(std::move(matmul_op4));
 
             /*******************************************************************************
@@ -1170,7 +1138,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto identity_op = unary_pw_op_create(dqAccumTensor, dQTensor, identityDesc);
             ops.push_back(std::move(identity_op));
 
-            std::cout << "Total ops created: " << ops.size() << std::endl;
+            //std::cout << "Total ops created: " << ops.size() << std::endl;
 
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
@@ -1197,7 +1165,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setEngineConfig(filtered_configs[0], opGraph.getTag())
                             .build();
 
-            std::cout << "Plan tag: " << plan.getTag() << std::endl;
+            //std::cout << "Plan tag: " << plan.getTag() << std::endl;
 
             cache.insert({descriptor, plan});
             return plan;

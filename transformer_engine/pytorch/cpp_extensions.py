@@ -272,7 +272,7 @@ def fused_attn_fwd_qkvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors used for the backward;
                 if is_training is True, aux_ctx_tensors = [softmax-related tensors, rng_state]
-                if is_training is False, aux_ctx_tensors = [rng_state]
+                if is_training is False, aux_ctx_tensors = None
 
                 softmax-related tensors:
                     1. if fused_attention_backend == FUSED_ATTN_FP16_BF16_FlashAttn
@@ -696,7 +696,7 @@ def fused_attn_fwd_kvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors used for the backward;
                 if is_training is True, aux_ctx_tensors = [softmax-related tensors, rng_state]
-                if is_training is False, aux_ctx_tensors = [rng_state]
+                if is_training is False, aux_ctx_tensors = None
 
                 softmax-related tensors:
                     1. if fused_attention_backend == FUSED_ATTN_FP16_BF16_FlashAttn

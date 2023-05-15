@@ -186,7 +186,8 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   // extract random number generator seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
-  size_t threads_per_cta = 128;
+  // TODO different values for v1 and v2
+  size_t threads_per_cta = 16;  // 128;
   at::PhiloxCudaState philox_args = init_philox_state(gen, max_seqlen, threads_per_cta);
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
@@ -239,6 +240,10 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   if (is_training) {
     output_tensors.push_back(rng_state);
   }
+  // TODO None or empty? cpp_extensions.py, kvpacked funcs
+  //else {
+  //  output_tensors.push_back(torch::indexing::None);
+  //}
 
   // execute the kernel
   nvte_fused_attn_fwd_qkvpacked(

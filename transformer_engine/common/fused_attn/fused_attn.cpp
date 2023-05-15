@@ -36,6 +36,8 @@ void nvte_fused_attn_fwd_qkvpacked(
   const Tensor *input_rng_state = reinterpret_cast<const Tensor*>(rng_state);
   const Tensor *input_QKV = reinterpret_cast<const Tensor*>(QKV);
   const Tensor *input_Bias = reinterpret_cast<const Tensor*>(Bias);
+  // TODO should S be included in aux_output_tensors (no? amax/scale tensors need to be provided)
+  // should S be used as Softmax, S_dmask, softmax_stats, or softmax_lse
   Tensor *input_output_S = reinterpret_cast<Tensor*>(S);
   Tensor *output_O = reinterpret_cast<Tensor*>(O);
   Tensor *wkspace = reinterpret_cast<Tensor*>(workspace);
