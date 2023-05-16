@@ -260,8 +260,8 @@ class _PrepareQKVForFA(torch.autograd.Function):
 
 
 def _check_if_interleaved(q, k, v):
-    data_ptr = q.storage().data_ptr()
-    check_ptrs = all(x.storage().data_ptr() == data_ptr for x in [q, k, v])
+    data_ptr = q.untyped_storage().data_ptr()
+    check_ptrs = all(x.untyped_storage().data_ptr() == data_ptr for x in [q, k, v])
     if not check_ptrs:
         return False
 
@@ -1044,7 +1044,11 @@ class DotProductAttention(torch.nn.Module):
             # FlashAttention does not support FP8
             use_flash_attention = False
             use_fused_attention = True and use_fused_attention
-            fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP8"]
+            if use_fused_attention:
+                if os.getenv("NVTE_FUSED_ATTN_BACKEND", "4") == "4":
+                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP8"]
+                else:
+                    assert False, "NVTE_FUSED_ATTN_BACKEND must be 4 for the provided inputs."
         elif (query_layer.dtype in [torch.bfloat16, torch.float16]
             and key_layer.dtype in [torch.bfloat16, torch.float16]
             and value_layer.dtype in [torch.bfloat16, torch.float16]
@@ -1054,10 +1058,16 @@ class DotProductAttention(torch.nn.Module):
             and value_layer.shape[0] <= 512
         ):
             # FusedAttention backend 2 is faster than FlashAttention as of now
-            use_flash_attention = False
+            #use_flash_attention = False
             use_fused_attention = True and use_fused_attention
-            #fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_max_seqlen_512"]
-            fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+            #if use_fused_attention:
+            if use_fused_attention:
+                if os.getenv("NVTE_FUSED_ATTN_BACKEND", "2") == "2":
+                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_max_seqlen_512"]
+                elif os.getenv("NVTE_FUSED_ATTN_BACKEND", "2") == "3":
+                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+                else:
+                    assert False, "NVTE_FUSED_ATTN_BACKEND must be 2 or 3 for the provided inputs."
         elif (query_layer.dtype in [torch.bfloat16, torch.float16]
             and key_layer.dtype in [torch.bfloat16, torch.float16]
             and value_layer.dtype in [torch.bfloat16, torch.float16]
@@ -1082,22 +1092,29 @@ class DotProductAttention(torch.nn.Module):
             #           FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
 
             # TODO testing fused attn v2
-            use_flash_attention = False
+            #use_flash_attention = False
             use_fused_attention = True and use_fused_attention
-            fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+            #if use_fused_attention:
+            #if use_fused_attention and os.getenv("NVTE_FUSED_ATTN_BACKEND", "3") == "3":
+            #    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+            if use_fused_attention:
+                if os.getenv("NVTE_FUSED_ATTN_BACKEND", "3") == "3":
+                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+                else:
+                    assert False, "NVTE_FUSED_ATTN_BACKEND must be 3 for the provided inputs."
         else:
             # disable FlashAttention and FusedAttention outside their support matrix
             use_flash_attention = False
             use_fused_attention = False
 
-        # TODO testing
-        print("DotProductAttention backend: ")
-        print("  before applying envvar control: FlashAttention ", use_flash_attention,
-                "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
-        use_flash_attention = False if int(os.getenv("NVTE_FLASH_ATTN")) == 0 else True
-        use_fused_attention = False if int(os.getenv("NVTE_FUSED_ATTN")) == 0 else True
-        print("  after applying envvar control: FlashAttention ", use_flash_attention,
-                "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
+        ## TODO testing
+        #print("DotProductAttention backend: ")
+        #print("  before applying envvar control: FlashAttention ", use_flash_attention,
+        #        "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
+        #use_flash_attention = False if int(os.getenv("NVTE_FLASH_ATTN")) == 0 else True
+        #use_fused_attention = False if int(os.getenv("NVTE_FUSED_ATTN")) == 0 else True
+        #print("  after applying envvar control: FlashAttention ", use_flash_attention,
+        #        "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
 
         # if FlashAttention is selected
         if use_flash_attention:

@@ -639,25 +639,20 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 dropout_probability, tensorType, &ops, softmax_output);
             createSVBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops, dropout_output);
 
-            //std::cout << "Total ops created: " << ops.size() << std::endl;
-
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
             }
-            //std::cout << "all ops pushed back: " << ops.size() << std::endl;
 
             // Create an Operation Graph
             auto opGraph = cudnn_frontend::OperationGraphBuilder()
                                 .setHandle(handle)
                                 .setOperationGraph(all_ops.size(), all_ops.data())
                                 .build();
-            //std::cout << "graph created: " << ops.size() << std::endl;
 
             cudnn_frontend::EngineConfigList filtered_configs;
             auto statuses = cudnn_frontend::get_heuristics_list<1>(
                                 {"heuristics_instant"}, opGraph, allowAllConfig,
                                 filtered_configs, true);
-            //std::cout << "getting status: " << ops.size() << std::endl;
 
             if (filtered_configs.size() == 0) {
                 cudnn_frontend::set_error_and_throw_exception(
@@ -666,13 +661,10 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                         "run_mha_fprop: No config returned by the heuristics");
             }
 
-            //std::cout << "filetre configs : " << ops.size() << std::endl;
             auto plan = cudnn_frontend::ExecutionPlanBuilder()
                                 .setHandle(handle)
                                 .setEngineConfig(filtered_configs[0], opGraph.getTag())
                                 .build();
-
-            //std::cout << "Plan tag: " << plan.getTag() << std::endl;
 
             cache.insert({descriptor, plan});
             return plan;
@@ -1138,8 +1130,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto identity_op = unary_pw_op_create(dqAccumTensor, dQTensor, identityDesc);
             ops.push_back(std::move(identity_op));
 
-            //std::cout << "Total ops created: " << ops.size() << std::endl;
-
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
             }
@@ -1164,8 +1154,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setHandle(handle)
                             .setEngineConfig(filtered_configs[0], opGraph.getTag())
                             .build();
-
-            //std::cout << "Plan tag: " << plan.getTag() << std::endl;
 
             cache.insert({descriptor, plan});
             return plan;
