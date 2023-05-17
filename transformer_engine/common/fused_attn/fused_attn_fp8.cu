@@ -991,7 +991,7 @@ static cudnn_frontend::Tensor createdSQBMM(
 }
 
 // fused attention FWD FP8
-void fa_fwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
+void fused_attn_fp8_fwd_impl(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
             bool isTraining, float attnScale,
             float dropoutProbability, NVTE_QKV_Layout layout,
             void* devPtrQ, void* devPtrK, void* devPtrV,
@@ -1303,7 +1303,7 @@ void fa_fwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
 }
 
 // fused attention BWD FP8
-void fa_bwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
+void fused_attn_fp8_bwd_impl(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
             float attnScale, float dropoutProbability, NVTE_QKV_Layout layout,
             void* devPtrQ, void* devPtrK, void* devPtrV,
             void* devPtrM, void* devPtrZInv,
@@ -1858,7 +1858,7 @@ void fa_bwd_fp8(int64_t b, int64_t s_q, int64_t s_kv, int64_t h, int64_t d,
 
 #if (CUDNN_VERSION >= 8900)
 // fused attention FWD FP8 with packed QKV
-void fused_attn_fwd_fp8_qkvpacked(
+void fused_attn_fp8_fwd_qkvpacked(
             size_t b, size_t max_seqlen,
             size_t h, size_t d,
             bool is_training, float attn_scale,
@@ -1921,7 +1921,7 @@ void fused_attn_fwd_fp8_qkvpacked(
   const DType QKV_type = input_QKV->data.dtype;
   size_t workspace_size = 0;
 
-  fused_attn::fa_fwd_fp8(
+  fused_attn::fused_attn_fp8_fwd_impl(
                   b, max_seqlen, max_seqlen, h, d,
                   is_training, attn_scale, p_dropout, qkv_layout,
                   devPtrQ, devPtrK, devPtrV,
@@ -1948,7 +1948,7 @@ void fused_attn_fwd_fp8_qkvpacked(
   }
 }
 // fused attention BWD FP8 with packed QKV
-void fused_attn_bwd_fp8_qkvpacked(
+void fused_attn_fp8_bwd_qkvpacked(
             size_t b, size_t max_seqlen,
             size_t h, size_t d,
             float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
@@ -2011,7 +2011,7 @@ void fused_attn_bwd_fp8_qkvpacked(
   const DType QKV_type = input_QKV->data.dtype;
   size_t workspace_size = 0;
 
-  fused_attn::fa_bwd_fp8(
+  fused_attn::fused_attn_fp8_bwd_impl(
                   b, max_seqlen, max_seqlen, h, d,
                   attn_scale, p_dropout, qkv_layout,
                   devPtrQ, devPtrK, devPtrV,
