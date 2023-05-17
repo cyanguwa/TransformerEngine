@@ -387,25 +387,16 @@ def fused_attn_fwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
             is_training, attn_scale, dropout, set_zero,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
-            cu_seqlens,
-            qkv,
-            qkv_dtype,
-            d_scale_qkv,
-            q_scale_s,
-            q_scale_o,
-            amax_s,
-            amax_o,
-            attn_bias,
-            rng_gen,
-            return_softmax,
-            num_splits,
-            fused_attention_backend,
+            cu_seqlens, qkv, qkv_dtype,
+            d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o, attn_bias,
+            rng_gen, return_softmax, num_splits, fused_attention_backend,
     )
 
     if (return_softmax
         and fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]):
         # out, [softmax_lse, rng_state], S_dmask
         return output_tensors[0], output_tensors[1:-1], output_tensors[-1]
+    # out, [softmax_lse, rng_state], None
     return output_tensors[0], output_tensors[1:], None
 
 
@@ -586,15 +577,10 @@ def fused_attn_bwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
             attn_scale, dropout, set_zero,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
-            cu_seqlens,
-            qkv, o, d_o,
-            qkv_dtype,
-            aux_ctx_tensors,
+            cu_seqlens, qkv, o, d_o, qkv_dtype, aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-            q_scale_s, q_scale_dp, q_scale_dqkv,
-            amax_dp, amax_dqkv,
-            num_splits,
-            fused_attention_backend,
+            q_scale_s, q_scale_dp, q_scale_dqkv, amax_dp, amax_dqkv,
+            num_splits, fused_attention_backend,
     )
 
     if attn_bias_type == "no_bias":
@@ -807,25 +793,16 @@ def fused_attn_fwd_kvpacked(
             b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
             is_training, attn_scale, dropout, set_zero,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
-            cu_seqlens_q, cu_seqlens_kv,
-            q, kv,
-            qkv_dtype,
-            d_scale_qkv,
-            q_scale_s,
-            q_scale_o,
-            amax_s,
-            amax_o,
-            attn_bias,
-            rng_gen,
-            return_softmax,
-            num_splits,
-            fused_attention_backend,
+            cu_seqlens_q, cu_seqlens_kv, q, kv, qkv_dtype,
+            d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o,
+            attn_bias, rng_gen, return_softmax, num_splits, fused_attention_backend,
     )
 
     if (return_softmax
         and fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]):
         # out, [softmax_lse, rng_state], S_dmask
         return output_tensors[0], output_tensors[1:-1], output_tensors[-1]
+    # out, [softmax_lse, rng_state]
     return output_tensors[0], output_tensors[1:], None
 
 
@@ -932,7 +909,7 @@ def fused_attn_bwd_kvpacked(
                 supported backends:
                 1. HazyResearch FlashAttention C API
                    i.e. FusedAttnBackend["F16_FlashAttn"]
-                   (only for testing purposes, same performance as FlashAttention PyTorch API)
+                   (for testing purposes, same performance as FlashAttention() module)
                 2. FP16/BF16 fused attention, <=512 sequence length
                    i.e. FusedAttnBackend["F16_max512_seqlen"]
                 3. FP16/BF16 fused attention, any sequence length
@@ -1005,21 +982,16 @@ def fused_attn_bwd_kvpacked(
             b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
             attn_scale, dropout, set_zero,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
-            cu_seqlens_q, cu_seqlens_kv,
-            q, kv, o, d_o,
-            qkv_dtype,
-            aux_ctx_tensors,
+            cu_seqlens_q, cu_seqlens_kv, q, kv, o, d_o, qkv_dtype, aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
-            q_scale_s, q_scale_dp, q_scale_dqkv,
-            amax_dp, amax_dqkv,
-            num_splits,
-            fused_attention_backend,
+            q_scale_s, q_scale_dp, q_scale_dqkv, amax_dp, amax_dqkv,
+            num_splits, fused_attention_backend,
     )
 
     if attn_bias_type == "no_bias":
         # return (d_q, d_kv) when attn_bias_type is no_bias
         return output_tensors
-    # otherwise return (d_q, d_kv, d_bias)
+    # otherwise return (d_q, d_kv), d_bias
     return output_tensors[:2], output_tensors[2]
 
 
