@@ -58,15 +58,32 @@ enum NVTE_QKV_Layout {
 };
 
 enum NVTE_Bias_Type {
-    NVTE_NO_BIAS = 0,  /*!< no bias */
-    NVTE_PRE_SCALE_BIAS = 1,  /*!< bias before scale */
-    NVTE_POST_SCALE_BIAS = 2  /*!< bias after scale */
+    /*!< no bias */
+    NVTE_NO_BIAS = 0,
+    /*!< bias before scale */
+    NVTE_PRE_SCALE_BIAS = 1,
+    /*!< bias after scale */
+    NVTE_POST_SCALE_BIAS = 2
 };
 
 enum NVTE_Mask_Type {
-    NVTE_PADDING_MASK = 0,  /*!< padding attention mask */
-    NVTE_CAUSAL_MASK = 1,  /*!< causal attention mask */
-    NVTE_NO_MASK = 2  /*!< no masking */
+    /*!< no masking */
+    NVTE_NO_MASK = 0,
+    /*!< padding attention mask */
+    NVTE_PADDING_MASK = 1,
+    /*!< causal attention mask */
+    NVTE_CAUSAL_MASK = 2,
+};
+
+enum NVTE_Fused_Attn_Backend {
+    /*!< HazyResearch FlashAttention C API for FP16/BF16 and any sequence length */
+    NVTE_F16_FlashAttn = 1,
+    /*!< cuDNN-based FP16/BF16 fused attention for <= 512 sequence length */
+    NVTE_F16_max512_seqlen = 2,
+    /*!< cuDNN-based FP16/BF16 fused attention for any sequence length */
+    NVTE_F16_arbitrary_seqlen = 3,
+    /*!< cuDNN-based FP8 fused attention for <= 512 sequence length */
+    NVTE_FP8 = 4,
 };
 
 /*! \brief Compute dot product attention with packed QKV input.

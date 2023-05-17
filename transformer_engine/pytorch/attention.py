@@ -21,7 +21,7 @@ from transformer_engine.pytorch.cpp_extensions import (
     fused_attn_bwd_qkvpacked,
     fused_attn_fwd_kvpacked,
     fused_attn_bwd_kvpacked,
-    FusedAttnBackends
+    FusedAttnBackend
 )
 from transformer_engine.pytorch.module import LayerNormLinear, Linear
 from transformer_engine.pytorch.module.base import _prepare_backward
@@ -259,7 +259,7 @@ class _PrepareQKVForFA(torch.autograd.Function):
         return dq, dk, dv
 
 
-def _check_if_interleaved(q, k, v):
+def _check_if_interleaved_qkv(q, k, v):
     data_ptr = q.untyped_storage().data_ptr()
     check_ptrs = all(x.untyped_storage().data_ptr() == data_ptr for x in [q, k, v])
     if not check_ptrs:
@@ -279,6 +279,28 @@ def _check_if_interleaved(q, k, v):
     check_offsets = all(i * last_dim_size == x.storage_offset()
                         for i, x in enumerate([q, k, v]))
     return check_offsets
+
+def _check_if_interleaved_kv(k, v):
+    data_ptr = k.untyped_storage().data_ptr()
+    check_ptrs = all(x.untyped_storage().data_ptr() == data_ptr for x in [k, v])
+    if not check_ptrs:
+        return False
+
+    stride = k.stride()
+    check_strides = all(stride == x.stride() for x in [k, v])
+    if not check_strides:
+        return False
+
+    shape = k.shape
+    check_shapes = all(shape == x.shape for x in [k, v])
+    if not check_shapes:
+        return False
+
+    last_dim_size = shape[-1]
+    check_offsets = all(i * last_dim_size == x.storage_offset()
+                        for i, x in enumerate([k, v]))
+    return check_offsets
+
 
 
 class FlashAttention(torch.nn.Module):
@@ -335,7 +357,7 @@ class FlashAttention(torch.nn.Module):
 
         if (query_layer.shape[-1] == 128 and
             query_layer.shape[0] * query_layer.shape[1] >= 512 and
-            _check_if_interleaved(query_layer, key_layer, value_layer)):
+            _check_if_interleaved_qkv(query_layer, key_layer, value_layer)):
             query_layer, key_layer, value_layer = _PrepareQKVForFA.apply(query_layer,
                                                                          key_layer,
                                                                          value_layer)
@@ -370,6 +392,7 @@ class FlashAttention(torch.nn.Module):
         # [(b sq), np, hn] -> [sq, b, (np hn)]
         return output.view(batch_size, seqlen, -1).transpose(0, 1).contiguous()
 
+
 class FusedAttnFunc_qkvpacked(torch.autograd.Function):
     """Function for FusedAttention with packed QKV input"""
 
@@ -378,6 +401,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 attn_scale, dropout_p, set_zero, qkv_layout, attn_bias_type, attn_mask_type,
                 rng_gen, tp_group, tp_size,
                 return_softmax=False, deterministic=True, fused_attention_backend=None):
+        # TODO return_softmax? fp8 in cpp_ext?
         # deterministic and num_splits are only used by fused_attention_backend = 1
         if fp8_meta is not None:
             out, aux_ctx_tensors, *rest = fused_attn_fwd_qkvpacked(
@@ -403,7 +427,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
         # backend 2/3/4: None
         S_dmask = rest[0] if return_softmax else None
 
-        # TODO can you save a dict
+        # TODO can you save a dict fp8_meta
         ctx.save_for_backward(qkv, out, cu_seqlens, fp8_meta)
         ctx.aux_ctx_tensors = aux_ctx_tensors
         ctx.max_seqlen = max_seqlen
@@ -604,31 +628,31 @@ class FusedAttention(torch.nn.Module):
     """Dot product attention, implemented by using cuDNN graphs.
 
     Supported backends:
-     1. HazyResearch FlashAttention C API
-        i.e. FUSED_ATTN_FP16_BF16_FlashAttn
-        (only for testing purposes, same performance as FlashAttention PyTorch API)
-     2. FP16/BF16 fused attention, <=512 sequence length
-        i.e. FUSED_ATTN_FP16_BF16_max_seqlen_512
-     3. FP16/BF16 fused attention, any sequence length
-        i.e. FUSED_ATTN_FP16_BF16_arbitrary_seqlen
-     4. FP8 fused attention, <=512 sequence length
-        i.e. FUSED_ATTN_FP8
+    1. HazyResearch FlashAttention C API
+       i.e. FusedAttnBackend["F16_FlashAttn"]
+       (for testing purposes, same performance as FlashAttention() module)
+    2. FP16/BF16 fused attention, <=512 sequence length
+       i.e. FusedAttnBackend["F16_max512_seqlen"]
+    3. FP16/BF16 fused attention, any sequence length
+       i.e. FusedAttnBackend["F16_arbitrary_seqlen"]
+    4. FP8 fused attention, <=512 sequence length
+       i.e. FusedAttnBackend["FP8"]
 
     Support matrix:
-    | backends       | 1              | 2                       | 3                   | 4                   |
-    | flash based    | yes            | no                      | yes                 | yes                 |
-    | precision      | fp16/bf16      | fp16/bf16               | fp16/bf16           | fp8                 |
-    | attn_type      | self           | self/cross              | self                | self                |
-    | qkv/qkv_layout | qkv/NA         | qkv/qkv_interleaved     | qkv/qkv_interleaved | qkv/qkv_interleaved |
-    |                | (q,kv)/NA      | (q,kv)/kv_interleaved   | qkv/sbh_interleaved |                     |
-    |                | (q,k,v)/NA     | (q,k,v)/not_interleaved |                     |                     |
-    | qkv padding    | padded/ragged  | padded/ragged           | padded              | ragged              |
-    | mask_type      | causal/(p?no?) | padding/padding+causal  | causal/p?no mask?   | padding             |
-    | bias_type      | no_bias        | pre/post_scale/no_bias  | no_bias             | no_bias             |
-    | dropout        | yes            | yes (jax no)            | yes (jax no)        | yes                 |
-    | max_seqlen     | >512           | <=512                   | >512                | <=512               |
-    | head_dim       | multiples of 8 | 64                      | 64, 128             | 64                  |
-    |                | up to 128      |                         |                     |                     |
+    | backends      | 1              | 2                      | 3               | 4               |
+    | flash based   | yes            | no                     | yes             | yes             |
+    | cuDNN based   | no             | yes                    | yes             | yes             |
+    | precision     | fp16/bf16      | fp16/bf16              | fp16/bf16       | fp8             |
+    | attn_type     | self           | self/cross             | self            | self            |
+    | qkv_layout:   |                |                        |                 |                 |
+    |  - qkv        | NA             | qkv_interleaved        | qkv_interleaved | qkv_interleaved |
+    |  - (q, kv)    | NA             | kv_interleaved         |                 |                 |
+    | mask_type     | causal/no_mask | padding/causal/no_mask | causal/no_mask  | padding         |
+    | external mask | no             | no                     | no              | no              |
+    | bias_type     | no_bias        | pre/post_scale/no_bias | no_bias         | no_bias         |
+    | dropout       | yes            | yes                    | yes             | yes             |
+    | max_seqlen    | any            | <= 512                 | any             | <= 512          |
+    | head_dim      | 8, 16,...128   | 64                     | 64, 128         | 64              |
     """
 
     def __init__(
@@ -659,12 +683,13 @@ class FusedAttention(torch.nn.Module):
         query_layer: torch.Tensor,
         key_layer: torch.Tensor,
         value_layer: torch.Tensor,
+        fused_attention_backend: FusedAttnBackend,
         attention_mask: Optional[torch.Tensor] = None,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         set_zero: bool = True,
         fp8_meta: Optional[Dict[str, Any]] = None,
-        fused_attention_backend: int = 3,
+        #fused_attention_backend: int = 3,
     ) -> torch.Tensor:
         """fused attention fprop"""
 
@@ -680,7 +705,7 @@ class FusedAttention(torch.nn.Module):
             attention_mask is None
             ), 'FusedAttention currently does not support external attention mask.'
 
-        if fused_attention_backend == FusedAttnBackends["FUSED_ATTN_FP8"]:
+        if fused_attention_backend == FusedAttnBackend["FP8"]:
             assert (fp8_meta is not None
                     ), "fp8_meta tensor is required for FP8 fused attention calculation."
             fp8_dtype_forward = fp8.get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
@@ -694,7 +719,7 @@ class FusedAttention(torch.nn.Module):
         max_seqlen_kv = seq_len_kv
 
         if self.attention_type == "self":
-            if _check_if_interleaved(query_layer, key_layer, value_layer):
+            if _check_if_interleaved_kv(key_layer, value_layer):
                 # TODO BF16/FP16 >512 fused attention supports (s,b,h,3,d)
                 # so no need for transposes/conversions
                 #if fused_attention_backend == FUSED_ATTN_FP16_BF16_arbitrary_seqlen:
@@ -1020,8 +1045,6 @@ class DotProductAttention(torch.nn.Module):
         # 4. FP8 fused attention, <=512 sequence length
         #    i.e. FUSED_ATTN_FP8
         use_fused_attention = self.use_fused_attention
-        # TODO testing
-        fused_attention_backend = 0
 
         # prohibitive conditions for FlashAttention
         if (query_layer.dtype not in [torch.bfloat16, torch.float16]
@@ -1046,7 +1069,7 @@ class DotProductAttention(torch.nn.Module):
             use_fused_attention = True and use_fused_attention
             if use_fused_attention:
                 if os.getenv("NVTE_FUSED_ATTN_BACKEND", "4") == "4":
-                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP8"]
+                    fused_attention_backend = FusedAttnBackend["FP8"]
                 else:
                     assert False, "NVTE_FUSED_ATTN_BACKEND must be 4 for the provided inputs."
         elif (query_layer.dtype in [torch.bfloat16, torch.float16]
@@ -1063,9 +1086,9 @@ class DotProductAttention(torch.nn.Module):
             #if use_fused_attention:
             if use_fused_attention:
                 if os.getenv("NVTE_FUSED_ATTN_BACKEND", "2") == "2":
-                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_max_seqlen_512"]
+                    fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
                 elif os.getenv("NVTE_FUSED_ATTN_BACKEND", "2") == "3":
-                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+                    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
                 else:
                     assert False, "NVTE_FUSED_ATTN_BACKEND must be 2 or 3 for the provided inputs."
         elif (query_layer.dtype in [torch.bfloat16, torch.float16]
@@ -1089,32 +1112,23 @@ class DotProductAttention(torch.nn.Module):
             #        # TODO what about the "no mask" case, i.e. is_causal = False
             #        use_fused_attention = True and use_fused_attention
             #        fused_attention_backend =
-            #           FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+            #           FusedAttnBackend["F16_arbitrary_seqlen"]
 
             # TODO testing fused attn v2
             #use_flash_attention = False
             use_fused_attention = True and use_fused_attention
             #if use_fused_attention:
             #if use_fused_attention and os.getenv("NVTE_FUSED_ATTN_BACKEND", "3") == "3":
-            #    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+            #    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
             if use_fused_attention:
                 if os.getenv("NVTE_FUSED_ATTN_BACKEND", "3") == "3":
-                    fused_attention_backend = FusedAttnBackends["FUSED_ATTN_FP16_BF16_arbitrary_seqlen"]
+                    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
                 else:
                     assert False, "NVTE_FUSED_ATTN_BACKEND must be 3 for the provided inputs."
         else:
             # disable FlashAttention and FusedAttention outside their support matrix
             use_flash_attention = False
             use_fused_attention = False
-
-        ## TODO testing
-        #print("DotProductAttention backend: ")
-        #print("  before applying envvar control: FlashAttention ", use_flash_attention,
-        #        "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
-        #use_flash_attention = False if int(os.getenv("NVTE_FLASH_ATTN")) == 0 else True
-        #use_fused_attention = False if int(os.getenv("NVTE_FUSED_ATTN")) == 0 else True
-        #print("  after applying envvar control: FlashAttention ", use_flash_attention,
-        #        "FusedAttention ", use_fused_attention, 'backend', fused_attention_backend)
 
         # if FlashAttention is selected
         if use_flash_attention:
@@ -1132,19 +1146,20 @@ class DotProductAttention(torch.nn.Module):
                                                             query_layer,
                                                             key_layer,
                                                             value_layer,
+                                                            fused_attention_backend,
                                                             attention_mask,
                                                             core_attention_bias_type,
                                                             core_attention_bias,
                                                             set_zero,
-                                                            fp8_meta,
-                                                            fused_attention_backend)
+                                                            fp8_meta)
             return self.fused_attention(query_layer, key_layer, value_layer,
+                                                            fused_attention_backend,
                                                             attention_mask,
                                                             core_attention_bias_type,
                                                             core_attention_bias,
                                                             set_zero,
-                                                            fp8_meta,
-                                                            fused_attention_backend)
+                                                            fp8_meta) #,
+                                                            #fused_attention_backend)
 
         # if neither FlashAttention or FusedAttention is applicable,
         # fall back to UnfusedDotProductAttention
