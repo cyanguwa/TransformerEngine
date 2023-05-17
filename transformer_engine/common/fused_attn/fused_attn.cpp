@@ -28,7 +28,7 @@ void nvte_fused_attn_fwd_qkvpacked(
             cudaStream_t stream,
             bool return_softmax,
             int num_split,
-            int fused_attention_backend) {
+            NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_fwd_qkvpacked);
   using namespace transformer_engine;
 
@@ -121,7 +121,7 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTETensor workspace,
             cudaStream_t stream,
             int num_split,
-            int fused_attention_backend) {
+            NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_bwd_qkvpacked);
   using namespace transformer_engine;
 
@@ -230,7 +230,7 @@ void nvte_fused_attn_fwd_kvpacked(
             cudaStream_t stream,
             bool return_softmax,
             int num_split,
-            int fused_attention_backend) {
+            NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_fwd_kvpacked);
   using namespace transformer_engine;
   const Tensor *input_cu_seqlens_q = reinterpret_cast<const Tensor*>(cu_seqlens_q);
@@ -303,7 +303,7 @@ void nvte_fused_attn_bwd_kvpacked(
             NVTETensor workspace,
             cudaStream_t stream,
             int num_split,
-            int fused_attention_backend) {
+            NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_bwd_kvpacked);
   using namespace transformer_engine;
   const Tensor *input_cu_seqlens_q = reinterpret_cast<const Tensor*>(cu_seqlens_q);

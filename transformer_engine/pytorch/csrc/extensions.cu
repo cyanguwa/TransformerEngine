@@ -12,45 +12,6 @@
 constexpr int block_size = 512;
 constexpr int ctas_per_sm = 4;
 
-//// convert QKV layout to enum
-//NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout) {
-//  if (qkv_layout == "not_interleaved") {
-//      return NVTE_QKV_Layout::NVTE_NOT_INTERLEAVED;
-//  } else if (qkv_layout == "qkv_interleaved") {
-//      return NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED;
-//  } else if (qkv_layout == "kv_interleaved") {
-//      return NVTE_QKV_Layout::NVTE_KV_INTERLEAVED;
-//  } else {
-//      NVTE_ERROR("Invalid QKV layout. \n");
-//  }
-//}
-//
-//// convert bias type to enum
-//NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type) {
-//  if (bias_type == "no_bias") {
-//      return NVTE_Bias_Type::NVTE_NO_BIAS;
-//  } else if (bias_type == "pre_scale_bias") {
-//      return NVTE_Bias_Type::NVTE_PRE_SCALE_BIAS;
-//  } else if (bias_type == "post_scale_bias") {
-//      return NVTE_Bias_Type::NVTE_POST_SCALE_BIAS;
-//  } else {
-//      NVTE_ERROR("Invalid bias type. \n");
-//  }
-//}
-//
-//// convert attn mask type to enum
-//NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type) {
-//  if (mask_type == "padding") {
-//      return NVTE_Mask_Type::NVTE_PADDING_MASK;
-//  } else if (mask_type == "causal") {
-//      return NVTE_Mask_Type::NVTE_CAUSAL_MASK;
-//  } else if (mask_type == "no_mask") {
-//      return NVTE_Mask_Type::NVTE_NO_MASK;
-//  } else {
-//      NVTE_ERROR("Invalid attention mask type. \n");
-//  }
-//}
-
 // fast zero-fills of tensors
 template <typename scalar_t>
 __global__ void __launch_bounds__(block_size) mha_fill_kernel(scalar_t* out_tensor,
@@ -117,7 +78,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
                 size_t h, size_t d,
                 bool is_training, float attn_scale, float p_dropout, bool set_zero,
-                //std::string qkv_layout, std::string bias_type, std::string attn_mask_type,
                 NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,
@@ -179,11 +139,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   te_cu_seqlens = makeTransformerEngineTensor(cu_seqlens.data_ptr(), {b+1},
                     DType::kInt32, nullptr, nullptr, nullptr);
 
-//  // convert strings to enums
-//  NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
-//  NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
-//  NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
-
   // extract random number generator seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
@@ -214,7 +169,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   te_rng_state.data(),
                   max_seqlen,
                   is_training, attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -258,7 +212,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   te_rng_state.data(),
                   max_seqlen,
                   is_training, attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -278,7 +231,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
                 size_t h, size_t d,
                 float attn_scale, float p_dropout, bool set_zero,
-                //std::string qkv_layout, std::string bias_type, std::string attn_mask_type,
                 NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,
@@ -361,11 +313,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
     NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
   }
 
-  //// convert strings to enums
-  //NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
-  //NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
-  //NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
-
   // convert auxiliary tensors from forward into NVTETensors
   // aux_ctx_tensors are [M, ZInv, rng_state]
   NVTETensorPack nvte_aux_tensor_pack;
@@ -400,7 +347,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   te_cu_seqlens.data(),
                   max_seqlen,
                   attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -426,7 +372,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   te_cu_seqlens.data(),
                   max_seqlen,
                   attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -445,7 +390,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 size_t total_seqs_q, size_t total_seqs_kv,
                 size_t h, size_t d,
                 bool is_training, float attn_scale, float p_dropout, bool set_zero,
-                //std::string qkv_layout, std::string bias_type, std::string attn_mask_type,
                 NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens_q,
                 const at::Tensor cu_seqlens_kv,
@@ -515,11 +459,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   te_cu_seqlens_kv = makeTransformerEngineTensor(cu_seqlens_kv.data_ptr(), {b+1},
                     DType::kInt32, nullptr, nullptr, nullptr);
 
-  //// convert strings to enums
-  //NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
-  //NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
-  //NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
-
   // extract rng seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
@@ -552,7 +491,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   te_rng_state.data(),
                   max_seqlen_q, max_seqlen_kv,
                   is_training, attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -594,7 +532,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   te_rng_state.data(),
                   max_seqlen_q, max_seqlen_kv,
                   is_training, attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -615,7 +552,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 size_t total_seqs_q, size_t total_seqs_kv,
                 size_t h, size_t d,
                 float attn_scale, float p_dropout, bool set_zero,
-                //std::string qkv_layout, std::string bias_type, std::string attn_mask_type,
                 NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens_q,
                 const at::Tensor cu_seqlens_kv,
@@ -715,11 +651,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
   te_cu_seqlens_kv = makeTransformerEngineTensor(cu_seqlens_kv.data_ptr(), {b+1},
                     DType::kInt32, nullptr, nullptr, nullptr);
 
-  //// convert strings to enums
-  //NVTE_QKV_Layout qkv_layout_enum = get_nvte_qkv_layout(qkv_layout);
-  //NVTE_Bias_Type bias_type_enum = get_nvte_bias_type(bias_type);
-  //NVTE_Mask_Type attn_mask_type_enum = get_nvte_mask_type(attn_mask_type);
-
   // convert auxiliary tensors from forward to NVTETensors
   // aux_ctx_tensors are [M, ZInv, rng_state]
   NVTETensorPack nvte_aux_tensor_pack;
@@ -752,7 +683,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   te_cu_seqlens_kv.data(),
                   max_seqlen_q, max_seqlen_kv,
                   attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
@@ -781,7 +711,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   te_cu_seqlens_kv.data(),
                   max_seqlen_q, max_seqlen_kv,
                   attn_scale, p_dropout,
-                  //qkv_layout_enum, bias_type_enum, attn_mask_type_enum,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),

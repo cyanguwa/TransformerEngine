@@ -208,7 +208,6 @@ def fused_attn_fwd_qkvpacked(
     rng_gen: torch.Generator = None,
     return_softmax: bool = False,
     num_splits: int = 1,
-    #fused_attention_backend: int = 3,
     fused_attention_backend: FusedAttnBackend = FusedAttnBackend["F16_arbitrary_seqlen"],
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for packed QKV input.
@@ -267,7 +266,7 @@ def fused_attn_fwd_qkvpacked(
                 num_splits > 1 means yes, and any value above 1 is equivalent to num_splits = 2.
                 num_splits = 0 means it will be set by an internal heuristic.
                 This parameter is only used by the FusedAttnBackend["F16_FlashAttn"] backend.
-    fused_attention_backend: int, default = 3
+    fused_attention_backend: FusedAttnBackend, default = FusedAttnBackend["F16_arbitrary_seqlen"]
                 supported backends:
                 1. HazyResearch FlashAttention C API
                    i.e. FusedAttnBackend["F16_FlashAttn"]
@@ -434,7 +433,6 @@ def fused_attn_bwd_qkvpacked(
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
     num_splits: int = 1,
-    #fused_attention_backend: int = 3,
     fused_attention_backend: FusedAttnBackend = FusedAttnBackend["F16_arbitrary_seqlen"],
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention BWD for packed QKV input.
@@ -498,7 +496,7 @@ def fused_attn_bwd_qkvpacked(
                 num_splits > 1 means yes, and any value above 1 is equivalent to num_splits = 2.
                 num_splits = 0 means it will be set by an internal heuristic.
                 This parameter is only used by the FusedAttnBackend["F16_FlashAttn"] backend.
-    fused_attention_backend: int, default = 3
+    fused_attention_backend: FusedAttnBackend, default = FusedAttnBackend["F16_arbitrary_seqlen"]
                 supported backends:
                 1. HazyResearch FlashAttention C API
                    i.e. FusedAttnBackend["F16_FlashAttn"]
@@ -630,7 +628,6 @@ def fused_attn_fwd_kvpacked(
     rng_gen: torch.Generator = None,
     return_softmax: bool = False,
     num_splits: int = 1,
-    #fused_attention_backend: int = 3,
     fused_attention_backend: FusedAttnBackend = FusedAttnBackend["F16_arbitrary_seqlen"],
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for packed KV input.
@@ -697,7 +694,7 @@ def fused_attn_fwd_kvpacked(
                 num_splits > 1 means yes, and any value above 1 is equivalent to num_splits = 2.
                 num_splits = 0 means it will be set by an internal heuristic.
                 This parameter is only used by the FusedAttnBackend["F16_FlashAttn"] backend.
-    fused_attention_backend: int, default = 3
+    fused_attention_backend: FusedAttnBackend, default = FusedAttnBackend["F16_arbitrary_seqlen"]
                 supported backends:
                 1. HazyResearch FlashAttention C API
                    i.e. FusedAttnBackend["F16_FlashAttn"]
@@ -859,7 +856,6 @@ def fused_attn_bwd_kvpacked(
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
     num_splits: int = 1,
-    #fused_attention_backend: int = 3,
     fused_attention_backend: FusedAttnBackend = FusedAttnBackend["F16_arbitrary_seqlen"],
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention BWD for packed KV input.
@@ -932,7 +928,7 @@ def fused_attn_bwd_kvpacked(
                 num_splits > 1 means yes, and any value above 1 is equivalent to num_splits = 2.
                 num_splits = 0 means it will be set by an internal heuristic.
                 This parameter is only used by the FusedAttnBackend["F16_FlashAttn"] backend.
-    fused_attention_backend: int, default = 3
+    fused_attention_backend: FusedAttnBackend, default = FusedAttnBackend["F16_arbitrary_seqlen"]
                 supported backends:
                 1. HazyResearch FlashAttention C API
                    i.e. FusedAttnBackend["F16_FlashAttn"]

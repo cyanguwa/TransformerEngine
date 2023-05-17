@@ -139,7 +139,7 @@ void nvte_fused_attn_fwd_qkvpacked(
             cudaStream_t stream,
             bool return_softmax,
             int num_split,
-            int fused_attention_backend);
+            NVTE_Fused_Attn_Backend fused_attention_backend);
 
 /*! \brief Compute the backward of the dot product attention with packed QKV input.
  *
@@ -191,7 +191,7 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTETensor workspace,
             cudaStream_t stream,
             int num_split,
-            int fused_attention_backend);
+            NVTE_Fused_Attn_Backend fused_attention_backend);
 
 /*! \brief Compute dot product attention with packed KV input.
  *
@@ -247,7 +247,7 @@ void nvte_fused_attn_fwd_kvpacked(
             cudaStream_t stream,
             bool return_softmax,
             int num_split,
-            int fused_attention_backend);
+            NVTE_Fused_Attn_Backend fused_attention_backend);
 
 /*! \brief Compute the backward of the dot product attention with packed KV input.
  *
@@ -304,7 +304,7 @@ void nvte_fused_attn_bwd_kvpacked(
             NVTETensor workspace,
             cudaStream_t stream,
             int num_split,
-            int fused_attention_backend);
+            NVTE_Fused_Attn_Backend fused_attention_backend);
 
 #ifdef __cplusplus
 }  // extern "C"
