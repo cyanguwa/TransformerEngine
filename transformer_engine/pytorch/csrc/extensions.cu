@@ -64,10 +64,11 @@ __global__ void unpack(at::PhiloxCudaState arg, int64_t* rng_state_ptr) {
 // extract PhiloxCudaState from CUDA random number generator
 at::PhiloxCudaState init_philox_state(
                 at::CUDAGeneratorImpl* gen,
-                size_t max_seq_len,
-                size_t threads_per_cta) {
+                size_t elts_per_thread) {
+//                size_t max_seq_len,
+//                size_t threads_per_cta) {
   at::PhiloxCudaState philox_args;
-  size_t elts_per_thread = (max_seq_len * max_seq_len + threads_per_cta - 1)/threads_per_cta;
+//  size_t elts_per_thread = (max_seq_len * max_seq_len + threads_per_cta - 1)/threads_per_cta;
   std::lock_guard<std::mutex> lock(gen->mutex_);
   philox_args = gen->philox_cuda_state(elts_per_thread);
   return philox_args;
@@ -143,8 +144,15 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
   // TODO different values for v1 and v2
-  size_t threads_per_cta = 16;  // 128;
-  at::PhiloxCudaState philox_args = init_philox_state(gen, max_seqlen, threads_per_cta);
+  size_t elts_per_thread = 0;
+  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8
+      || fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+    size_t threads_per_cta = 128;
+    elts_per_thread = (max_seqlen * max_seqlen + threads_per_cta - 1)/threads_per_cta;
+  } else {
+    elts_per_thread = 16;
+  }
+  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread); //max_seqlen, threads_per_cta);
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
@@ -462,9 +470,21 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   // extract rng seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
-  size_t threads_per_cta = 128;
-  at::PhiloxCudaState philox_args = init_philox_state(
-                  gen, max(max_seqlen_q, max_seqlen_kv), threads_per_cta);
+//  size_t threads_per_cta = 128;
+//  at::PhiloxCudaState philox_args = init_philox_state(
+//                  gen, max(max_seqlen_q, max_seqlen_kv), threads_per_cta);
+  // TODO different values for v1 and v2
+  size_t elts_per_thread = 0;
+  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8
+      || fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+    size_t threads_per_cta = 128;
+    size_t max_seqlen = max(max_seqlen_q, max_seqlen_kv);
+    elts_per_thread = (max_seqlen * max_seqlen + threads_per_cta - 1)/threads_per_cta;
+  } else {
+    elts_per_thread = 16;
+  }
+  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread); //max_seqlen, threads_per_cta);
+
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
