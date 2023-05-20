@@ -26,69 +26,31 @@ class ModelConfig:
         self.attn_mask_type  = attn_mask_type
 
 model_configs = {
-    #"test1": ModelConfig(1, 1024, 16, 64, 512, 0.1, "causal"),
-    "test2": ModelConfig(1, 1024, 16, 64, 2048, 0.1, "causal"),
+    "test1": ModelConfig(1, 1024, 16, 64, 512, 0.0, "causal"),
+    "test2": ModelConfig(1, 1024, 16, 64, 2048, 0.0, "causal"),
+    #"test2": ModelConfig(1, 1024, 16, 64, 2048, 0.1, "causal"),
 }
 
-#param_types = [torch.float16]
-param_types = [torch.bfloat16]
-#if torch.cuda.is_bf16_supported():
-#    param_types.append(torch.bfloat16)
+param_types = [torch.float16]
+if torch.cuda.is_bf16_supported():
+    param_types.append(torch.bfloat16)
 
-batch_sizes = [2] #[2, 48]
-
-def _test_sanity_e2e(block, bs, dtype, config, backend):
-
-    seq_len = config.seq_len
-    h = config.num_attention_heads
-    d = config.head_dim
-    dropout_p = config.dropout_p
-
-    torch.manual_seed(1234)
-    torch.cuda.manual_seed(1234)
-    os.environ["NVTE_FLASH_ATTN"] = "0"
-    os.environ["NVTE_FUSED_ATTN"] = "0"
-    if backend == "FlashAttention":
-        os.environ["NVTE_FLASH_ATTN"] = "1"
-    if backend == "FusedAttention":
-        os.environ["NVTE_FUSED_ATTN"] = "1"
-        #os.environ["NVTE_FUSED_ATTN_BACKEND"] = "3"
-    #print('flash',os.environ["NVTE_FLASH_ATTN"],'fused',os.environ["NVTE_FUSED_ATTN"])
-    print('>>> backend: ', backend)
-
-    inp_mha = 0.1*torch.randn(seq_len, bs, h*d, dtype=dtype).cuda()
-    seqlens = torch.empty(bs, dtype = torch.int32).cuda()
-
-    seqlens.fill_(seq_len)
-    cu_seqlens = torch.zeros(bs+1, device = inp_mha.device, dtype = torch.int32)
-    cu_seqlens[1:] = torch.cumsum(seqlens, dim = 0)
-    
-    op_grad = 0.001*torch.randint(0,200,(seq_len, bs, h*d), dtype = dtype).cuda()
-    
-    #mha = block() #bs, seq_len, h, d, dropout_p, "causal", True, data_type = dtype)
-    #old_times = []
-    #for i in range(num_iters):
-    #    #torch.cuda.synchronize()
-    #    #start_old = time.time()
-    #    op_old = block(inp_mha)
-    #    op_old.backward(op_grad)
-    #    #torch.cuda.synchronize()
-    #    #end_old = time.time()
-    #    #old_times.append(end_old - start_old)
-    ##old_time = sum(old_times[10:])/num_iters
-    op_old = block(inp_mha)
-    op_old.backward(op_grad)
-    name = 'flash_attn.pt' if int(os.getenv("NVTE_FLASH_ATTN")) == 1 else 'fused_attn.pt'
-    torch.save(op_old,name)
-    #torch.cuda.synchronize()
-
+batch_sizes = [2, 48]
 
 @pytest.mark.parametrize("dtype", param_types)
 @pytest.mark.parametrize("bs", batch_sizes)
 @pytest.mark.parametrize("model", model_configs.keys())
-def test_sanity_gpt(dtype, bs, model):
+def test_fused_against_flash_attn(dtype, bs, model):
 
     config = model_configs[model]
+    flash_attn = _core_attn(dtype, bs, config, "FlashAttention")
+    fused_attn = _core_attn(dtype, bs, config, "FusedAttention")
+
+    #print('flash_attn: min',flash_attn.min().item(),'max',flash_attn.max().item())
+    #print('fused_attn: min',fused_attn.min().item(),'max',fused_attn.max().item())
+    assert torch.allclose(fused_attn, flash_attn, atol=1e-2, rtol=1e-2)
+    
+def _te_layer(dtype, bs, config):
 
     sigma = 0.02
     init_method = init_method_normal(sigma)
@@ -134,12 +96,37 @@ def test_sanity_gpt(dtype, bs, model):
         .cuda()
     )
 
-    _test_sanity_e2e(block, bs, dtype, config, "FlashAttention")
-    _test_sanity_e2e(block, bs, dtype, config, "FusedAttention")
-    flash_attn_pt = torch.load('flash_attn.pt')
-    fused_attn_pt = torch.load('fused_attn.pt')
-    print('flash_attn_pt: min',flash_attn_pt.min().item(),'max',flash_attn_pt.max().item())
-    print('fused_attn_pt: min',fused_attn_pt.min().item(),'max',fused_attn_pt.max().item())
-    print('flash_attn_pt == fused_attn_pt (atol=0.02): ', torch.allclose(flash_attn_pt, fused_attn_pt, atol=0.02))
-    print('flash_attn_pt == fused_attn_pt (atol=0.04): ', torch.allclose(flash_attn_pt, fused_attn_pt, atol=0.04))
+    return block
 
+def _core_attn(dtype, bs, config, backend):
+
+    seq_len = config.seq_len
+    h = config.num_attention_heads
+    d = config.head_dim
+    dropout_p = config.dropout_p
+
+    torch.manual_seed(1234)
+    torch.cuda.manual_seed(1234)
+    os.environ["NVTE_FLASH_ATTN"] = "0"
+    os.environ["NVTE_FUSED_ATTN"] = "0"
+    if backend == "FlashAttention":
+        os.environ["NVTE_FLASH_ATTN"] = "1"
+    if backend == "FusedAttention":
+        os.environ["NVTE_FUSED_ATTN"] = "1"
+        #os.environ["NVTE_FUSED_ATTN_BACKEND"] = "3"
+    #print('flash',os.environ["NVTE_FLASH_ATTN"],'fused',os.environ["NVTE_FUSED_ATTN"])
+    #print('>>> backend: ', backend)
+
+    inp_mha = 0.1*torch.randn(seq_len, bs, h*d, dtype=dtype).cuda()
+    seqlens = torch.empty(bs, dtype = torch.int32).cuda()
+
+    seqlens.fill_(seq_len)
+    cu_seqlens = torch.zeros(bs+1, device = inp_mha.device, dtype = torch.int32)
+    cu_seqlens[1:] = torch.cumsum(seqlens, dim = 0)
+    
+    op_grad = 0.001*torch.randint(0,200,(seq_len, bs, h*d), dtype = dtype).cuda()
+
+    block = _te_layer(dtype, bs, config)
+    op_old = block(inp_mha)
+    op_old.backward(op_grad)
+    return op_old
