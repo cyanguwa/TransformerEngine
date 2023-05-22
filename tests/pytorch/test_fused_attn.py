@@ -46,8 +46,6 @@ def test_fused_against_flash_attn(dtype, bs, model):
     flash_attn = _core_attn(dtype, bs, config, "FlashAttention")
     fused_attn = _core_attn(dtype, bs, config, "FusedAttention")
 
-    #print('flash_attn: min',flash_attn.min().item(),'max',flash_attn.max().item())
-    #print('fused_attn: min',fused_attn.min().item(),'max',fused_attn.max().item())
     assert torch.allclose(fused_attn, flash_attn, atol=1e-2, rtol=1e-2)
     
 def _te_layer(dtype, bs, config):
@@ -114,8 +112,6 @@ def _core_attn(dtype, bs, config, backend):
     if backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
         #os.environ["NVTE_FUSED_ATTN_BACKEND"] = "3"
-    #print('flash',os.environ["NVTE_FLASH_ATTN"],'fused',os.environ["NVTE_FUSED_ATTN"])
-    #print('>>> backend: ', backend)
 
     inp_mha = 0.1*torch.randn(seq_len, bs, h*d, dtype=dtype).cuda()
     seqlens = torch.empty(bs, dtype = torch.int32).cuda()
