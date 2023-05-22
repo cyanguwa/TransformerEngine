@@ -298,12 +298,12 @@ def fused_attn_fwd_qkvpacked(
                 rng_state: torch.Tensor
                     state of the random number generator;
                     [seed, offset], dtype uint64
-    rest: List[torch.Tensor]
+    rest: List[torch.Tensor], optional
                 if fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]
-                    softmax: torch.Tensor, optional if return_softmax is True
-                        Softmax(Q*K.T)
+                and return_softmax is True
+                    S_dmask: torch.Tensor
+                        full softmax tensor with dropout mask as the sign bit
                         shape [batch_size, num_heads, max_seqlen, max_seqlen], dtype float32
-                other fused attention backends return None
     """
 
     check_cu_seqlens(cu_seqlens)
@@ -374,12 +374,11 @@ def fused_attn_fwd_qkvpacked(
             rng_gen, return_softmax, num_splits, fused_attention_backend,
     )
 
-    if (return_softmax
-        and fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]):
-        # out, [softmax_lse, rng_state], S_dmask
+    if return_softmax:
+        # out, [softmax-related tensors, rng_state], S_dmask
         return output_tensors[0], output_tensors[1:-1], output_tensors[-1]
-    # out, [softmax_lse, rng_state], None
-    return output_tensors[0], output_tensors[1:], None
+    # out, [softmax-related tensors, rng_state]
+    return output_tensors[0], output_tensors[1:]
 
 
 def fused_attn_bwd_qkvpacked(
@@ -668,22 +667,18 @@ def fused_attn_fwd_kvpacked(
 
                 softmax-related tensors:
                     1. if fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]
-                       # HazyResearch FlashAttention C API
                        softmax_lse: torch.Tensor
                            log(sum(e^(x - max(x)))), where x=Q*K.T
                            shape [batch_size, num_heads, max_seqlen_q, 1], dtype float32
                     2. if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]
-                       # FP16/BF16 fused attention, <=512 sequence length
                        softmax: torch.Tensor
                            Softmax(Q*K.T)
                            shape [batch_size, num_heads, max_seqlen_q, max_seqlen_kv], dtype float32
                     3. if fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]
-                       # FP16/BF16 fused attention, any sequence length
                        softmaxStats: torch.Tensor
                            log(sum(e^(x - max(x)))), where x=Q*K.T
                            shape [batch_size, num_heads, max_seqlen_q, 1], dtype float32
                     4. if fused_attention_backend == FusedAttnBackend["FP8"]
-                       # FP8 fused attention, <=512 sequence length
                        M: torch.Tensor
                            max(Q*K.T)
                            shape [batch_size, num_heads, max_seqlen_q, 1], dtype float32
@@ -693,13 +688,12 @@ def fused_attn_fwd_kvpacked(
                 rng_state: torch.Tensor
                     state of the random number generator;
                     [seed, offset], dtype uint64
-    rest: List[torch.Tensor]
+    rest: List[torch.Tensor], optional
                 if fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]
-                # HazyResearch FlashAttention C API
-                    softmax: torch.Tensor, optional if return_softmax is True
-                        Softmax(Q*K.T)
+                and return_softmax is True
+                    S_dmask: torch.Tensor
+                        full softmax tensor with dropout mask as the sign bit
                         shape [batch_size, num_heads, max_seqlen_q, max_seqlen_kv], dtype float32
-                other fused attention backends return None
     """
 
     check_cu_seqlens(cu_seqlens_q)
@@ -762,12 +756,11 @@ def fused_attn_fwd_kvpacked(
             attn_bias, rng_gen, return_softmax, num_splits, fused_attention_backend,
     )
 
-    if (return_softmax
-        and fused_attention_backend == FusedAttnBackend["F16_FlashAttn"]):
-        # out, [softmax_lse, rng_state], S_dmask
+    if return_softmax:
+        # out, [softmax-related tensors, rng_state], S_dmask
         return output_tensors[0], output_tensors[1:-1], output_tensors[-1]
-    # out, [softmax_lse, rng_state]
-    return output_tensors[0], output_tensors[1:], None
+    # out, [softmax-related tensors, rng_state]
+    return output_tensors[0], output_tensors[1:]
 
 
 def fused_attn_bwd_kvpacked(

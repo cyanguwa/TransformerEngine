@@ -421,10 +421,6 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 rng_gen, fused_attention_backend=fused_attention_backend,
                 return_softmax=return_softmax, num_splits=1 if deterministic else 0)
 
-        # only used by FusedAttnBackend["F16_FlashAttn"]
-        # softmax tensor with the dropout as its sign bit
-        S_dmask = rest[0] if return_softmax else None
-
         ctx.save_for_backward(qkv, out, cu_seqlens)
         ctx.aux_ctx_tensors = aux_ctx_tensors
         ctx.fp8_meta = fp8_meta
@@ -441,15 +437,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
         ctx.fused_attention_backend = fused_attention_backend
         ctx.deterministic = deterministic
 
-        # if return_softmax, return:
-        #   FusedAttnBackend.F16_FlashAttn:         (out, softmax_lse, S_dmask)
-        #   FusedAttnBackend.F16_max512_seqlen:     (out, softmax, None)
-        #   FusedAttnBackend.F16_arbitrary_seqlen:  (out, softmax_stats, None)
-        #   FusedAttnBackend.FP8:                   (out, M, ZInv, None)
-        # else, return (out, None, None)
-        if not return_softmax:
-            return (out, None, None)
-        return (out, aux_ctx_tensors[:-1], S_dmask)
+        return out
 
     @staticmethod
     def backward(ctx, d_out, *args):
@@ -527,10 +515,6 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
                 rng_gen, fused_attention_backend=fused_attention_backend,
                 return_softmax=return_softmax, num_splits=1 if deterministic else 0)
 
-        # only used by FusedAttnBackend["F16_FlashAttn"]
-        # softmax tensor with the dropout as its sign bit
-        S_dmask = rest[0] if return_softmax else None
-
         ctx.save_for_backward(q, kv, out, cu_seqlens_q, cu_seqlens_kv)
         ctx.aux_ctx_tensors = aux_ctx_tensors
         ctx.fp8_meta = fp8_meta
@@ -548,15 +532,7 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
         ctx.fused_attention_backend = fused_attention_backend
         ctx.deterministic = deterministic
 
-        # if return_softmax, return:
-        #   FusedAttnBackend.F16_FlashAttn:         (out, softmax_lse, S_dmask)
-        #   FusedAttnBackend.F16_max512_seqlen:     (out, softmax, None)
-        #   FusedAttnBackend.F16_arbitrary_seqlen:  (out, softmax_stats, None)
-        #   FusedAttnBackend.FP8:                   (out, M, ZInv, None)
-        # else, return (out, None, None)
-        if not return_softmax:
-            return (out, None, None)
-        return (out, aux_ctx_tensors[:-1], S_dmask)
+        return out
 
     @staticmethod
     def backward(ctx, d_out, *args):
@@ -740,7 +716,7 @@ class FusedAttention(torch.nn.Module):
                 device=query_layer.device)
 
             with self.attention_dropout_ctx():
-                output, *rest = FusedAttnFunc_qkvpacked.apply(
+                output = FusedAttnFunc_qkvpacked.apply(
                     self.training,
                     max_seqlen,
                     cu_seqlens,
@@ -801,7 +777,7 @@ class FusedAttention(torch.nn.Module):
                 device=key_layer.device)
 
             with self.attention_dropout_ctx():
-                output, *rest = FusedAttnFunc_kvpacked.apply(
+                output = FusedAttnFunc_kvpacked.apply(
                     self.training,
                     max_seqlen_q, max_seqlen_kv,
                     cu_seqlens_q, cu_seqlens_kv,
