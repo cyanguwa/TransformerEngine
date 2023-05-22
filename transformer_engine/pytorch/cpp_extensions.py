@@ -188,6 +188,7 @@ def fused_attn_fwd_qkvpacked(
     cu_seqlens: torch.Tensor,
     qkv: torch.Tensor,
     qkv_dtype: tex.DType,
+    fused_attention_backend: Enum,
     attn_bias: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     q_scale_s: torch.Tensor = None,
@@ -201,7 +202,6 @@ def fused_attn_fwd_qkvpacked(
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
     rng_gen: torch.Generator = None,
-    fused_attention_backend: Enum = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for packed QKV input.
 
@@ -219,6 +219,8 @@ def fused_attn_fwd_qkvpacked(
                 shape [total_seqs, 3, num_heads, head_dim], where total_seqs = cu_seqlens[-1]
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
+    fused_attention_backend: Enum
+                please see FusedAttention for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
                 shape [1, num_heads, max_seqlen, max_seqlen], same data type as qkv
@@ -250,8 +252,6 @@ def fused_attn_fwd_qkvpacked(
     rng_gen: torch.Generator, default = None
                 random number generator;
                 if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
-    fused_attention_backend: Enum, default = None
-                please see FusedAttention for details on supported backends.
 
     Returns
     ----------
@@ -359,7 +359,8 @@ def fused_attn_bwd_qkvpacked(
     o: torch.Tensor,
     d_o: torch.Tensor,
     qkv_dtype: tex.DType,
-    aux_ctx_tensors: List[torch.Tensor] = None,
+    aux_ctx_tensors: List[torch.Tensor],
+    fused_attention_backend: Enum,
     d_scale_qkv: torch.Tensor = None,
     d_scale_s: torch.Tensor = None,
     d_scale_o: torch.Tensor = None,
@@ -375,7 +376,6 @@ def fused_attn_bwd_qkvpacked(
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
-    fused_attention_backend: Enum = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention BWD for packed QKV input.
 
@@ -399,6 +399,8 @@ def fused_attn_bwd_qkvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
+    fused_attention_backend: Enum
+                please see FusedAttention for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     d_scale_s: torch.Tensor, default = None
@@ -432,8 +434,6 @@ def fused_attn_bwd_qkvpacked(
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
-    fused_attention_backend: Enum, default = None
-                please see FusedAttention for details on supported backends.
 
     Returns
     ----------
@@ -531,6 +531,7 @@ def fused_attn_fwd_kvpacked(
     q: torch.Tensor,
     kv: torch.Tensor,
     qkv_dtype: tex.DType,
+    fused_attention_backend: Enum,
     attn_bias: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     q_scale_s: torch.Tensor = None,
@@ -544,7 +545,6 @@ def fused_attn_fwd_kvpacked(
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
     rng_gen: torch.Generator = None,
-    fused_attention_backend: Enum = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for packed KV input.
 
@@ -570,6 +570,8 @@ def fused_attn_fwd_kvpacked(
                 where total_seqs_kv = cu_seqlens_kv[-1]
     qkv_dtype: tex.DType
                 data type of Q and KV; in tex.DType, not torch.dtype
+    fused_attention_backend: Enum
+                please see FusedAttention for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
                 shape [1, num_heads, max_seqlen_q, max_seqlen_kv], same data type as q and kv
@@ -601,8 +603,6 @@ def fused_attn_fwd_kvpacked(
     rng_gen: torch.Generator, default = None
                 random number generator;
                 if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
-    fused_attention_backend: Enum, default = None
-                please see FusedAttention for details on supported backends.
 
     Returns
     ----------
@@ -705,7 +705,8 @@ def fused_attn_bwd_kvpacked(
     o: torch.Tensor,
     d_o: torch.Tensor,
     qkv_dtype: tex.DType,
-    aux_ctx_tensors: List[torch.Tensor] = None,
+    aux_ctx_tensors: List[torch.Tensor],
+    fused_attention_backend: Enum,
     d_scale_qkv: torch.Tensor = None,
     d_scale_s: torch.Tensor = None,
     d_scale_o: torch.Tensor = None,
@@ -721,7 +722,6 @@ def fused_attn_bwd_kvpacked(
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
-    fused_attention_backend: Enum = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention BWD for packed KV input.
 
@@ -753,6 +753,8 @@ def fused_attn_bwd_kvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
+    fused_attention_backend: Enum
+                please see FusedAttention for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     d_scale_s: torch.Tensor, default = None
@@ -787,8 +789,6 @@ def fused_attn_bwd_kvpacked(
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
-    fused_attention_backend: Enum, default = None
-                please see FusedAttention for details on supported backends.
 
     Returns
     ----------
