@@ -6,7 +6,7 @@
 import os
 import warnings
 from contextlib import nullcontext
-from typing import Any, Callable, Optional, Union 
+from typing import Any, Callable, Optional, Union
 
 import torch
 
