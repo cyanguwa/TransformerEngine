@@ -1866,7 +1866,7 @@ void fused_attn_fp8_fwd_qkvpacked(
             const Tensor *input_QKV,
             Tensor *input_output_S,
             Tensor *output_O,
-            NVTETensorPack* Aux_Output_Tensors,
+            NVTETensorPack* Aux_CTX_Tensors,
             const Tensor *cu_seqlens,
             const Tensor *rng_state,
             Tensor *workspace,
@@ -1888,23 +1888,29 @@ void fused_attn_fp8_fwd_qkvpacked(
 
   void* devPtrM = nullptr;
   void* devPtrZInv = nullptr;
-  if (Aux_Output_Tensors->size == 0) {
+  if (Aux_CTX_Tensors->size == 0) {
     if (is_training) {
-      Aux_Output_Tensors->size = 2;
-      Tensor *output_M = reinterpret_cast<Tensor*>(Aux_Output_Tensors->tensors[0]);
-      Tensor *output_ZInv = reinterpret_cast<Tensor*>(Aux_Output_Tensors->tensors[1]);
+      Aux_CTX_Tensors->size = 3;
+      Tensor *output_M = reinterpret_cast<Tensor*>(Aux_CTX_Tensors->tensors[0]);
+      Tensor *output_ZInv = reinterpret_cast<Tensor*>(Aux_CTX_Tensors->tensors[1]);
+      Tensor *output_rng_state = reinterpret_cast<Tensor*>(Aux_CTX_Tensors->tensors[2]);
       output_M->data.dptr = nullptr;
       output_M->data.shape = {b, h, max_seqlen, 1};
       output_M->data.dtype = DType::kFloat32;
       output_ZInv->data.dptr = nullptr;
       output_ZInv->data.shape = {b, h, max_seqlen, 1};
       output_ZInv->data.dtype = DType::kFloat32;
+      output_rng_state->data.dptr = nullptr;
+      output_rng_state->data.shape = {2};
+      output_rng_state->data.dtype = DType::kInt64;
     }
-  } else if (Aux_Output_Tensors->size == 2) {
-    Tensor *output_M = reinterpret_cast<Tensor*>(Aux_Output_Tensors->tensors[0]);
-    Tensor *output_ZInv = reinterpret_cast<Tensor*>(Aux_Output_Tensors->tensors[1]);
+  } else if (Aux_CTX_Tensors->size == 3) {
+    Tensor *output_M = reinterpret_cast<Tensor*>(Aux_CTX_Tensors->tensors[0]);
+    Tensor *output_ZInv = reinterpret_cast<Tensor*>(Aux_CTX_Tensors->tensors[1]);
+    Tensor *output_rng_state = reinterpret_cast<Tensor*>(Aux_CTX_Tensors->tensors[2]);
     devPtrM = output_M->data.dptr;
     devPtrZInv = output_ZInv->data.dptr;
+    output_rng_state->data.dptr = rng_state->data.dptr;
   }
 
   void* devPtrAmaxS = input_output_S->amax.dptr;

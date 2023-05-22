@@ -17,7 +17,7 @@ void fused_attn_fp8_fwd_qkvpacked(
             const Tensor *input_QKV,
             Tensor *input_output_S,
             Tensor *output_O,
-            NVTETensorPack* Aux_Output_Tensors,
+            NVTETensorPack* Aux_CTX_Tensors,
             const Tensor *cu_seqlens,
             const Tensor *rng_state,
             Tensor *workspace,

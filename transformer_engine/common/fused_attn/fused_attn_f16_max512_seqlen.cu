@@ -1212,7 +1212,7 @@ void fused_attn_max_512_fwd_qkvpacked(
     size_t batch, size_t max_seqlen, size_t num_head, size_t head_dim, bool is_training,
     float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
     NVTE_Mask_Type mask_type, const Tensor *input_QKV, const Tensor *input_Bias, Tensor *output_O,
-    NVTETensorPack *Aux_Output_Tensors, const Tensor *cu_seqlens, const Tensor *rng_state,
+    NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens, const Tensor *rng_state,
     Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle) {
     using namespace transformer_engine;
 
@@ -1235,15 +1235,21 @@ void fused_attn_max_512_fwd_qkvpacked(
 
     void *devPtrS = nullptr;
 
-    if (Aux_Output_Tensors->size == 0) {
-        Aux_Output_Tensors->size = 1;
-        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_Output_Tensors->tensors[0]);
+    if (Aux_CTX_Tensors->size == 0) {
+        Aux_CTX_Tensors->size = 2;
+        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
         output_S->data.dptr = nullptr;
         output_S->data.shape = {batch, num_head, max_seqlen, max_seqlen};
         output_S->data.dtype = input_QKV->data.dtype;
-    } else if (Aux_Output_Tensors->size == 1) {
-        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_Output_Tensors->tensors[0]);
+        Tensor *output_rng_state = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[1]);
+        output_rng_state->data.dptr = nullptr;
+        output_rng_state->data.shape = {2};
+        output_rng_state->data.dtype = DType::kInt64;
+    } else if (Aux_CTX_Tensors->size == 2) {
+        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
         devPtrS = output_S->data.dptr;
+        Tensor *output_rng_state = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[1]);
+        output_rng_state->data.dptr = rng_state->data.dptr;
     }
 
     void *devCuSeqlen = cu_seqlens->data.dptr;
@@ -1283,7 +1289,7 @@ void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t q_max_seqlen, size_t k
                                      NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                      const Tensor *input_Q, const Tensor *input_KV,
                                      const Tensor *input_Bias, Tensor *output_O,
-                                     NVTETensorPack *Aux_Output_Tensors, const Tensor *q_cu_seqlens,
+                                     NVTETensorPack *Aux_CTX_Tensors, const Tensor *q_cu_seqlens,
                                      const Tensor *kv_cu_seqlens, const Tensor *rng_state,
                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle) {
     using namespace transformer_engine;
@@ -1314,15 +1320,21 @@ void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t q_max_seqlen, size_t k
     const DType kv_type = input_KV->data.dtype;
     NVTE_CHECK(q_type == kv_type, "data type of Q must be equal to data type of KV.");
 
-    if (Aux_Output_Tensors->size == 0) {
-        Aux_Output_Tensors->size = 1;
-        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_Output_Tensors->tensors[0]);
+    if (Aux_CTX_Tensors->size == 0) {
+        Aux_CTX_Tensors->size = 2;
+        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
         output_S->data.dptr = nullptr;
         output_S->data.shape = {batch, num_head, q_max_seqlen, kv_max_seqlen};
         output_S->data.dtype = q_type;
-    } else if (Aux_Output_Tensors->size == 1) {
-        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_Output_Tensors->tensors[0]);
+        Tensor *output_rng_state = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[1]);
+        output_rng_state->data.dptr = nullptr;
+        output_rng_state->data.shape = {2};
+        output_rng_state->data.dtype = DType::kInt64;
+    } else if (Aux_CTX_Tensors->size == 2) {
+        Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
         devPtrS = output_S->data.dptr;
+        Tensor *output_rng_state = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[1]);
+        output_rng_state->data.dptr = rng_state->data.dptr;
     }
 
     void *devQCuSeqlen = q_cu_seqlens->data.dptr;

@@ -201,9 +201,9 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
     output_tensors.push_back(output_tensor);
     tensor->data.dptr = output_tensor.data_ptr();
   }
-  if (is_training) {
-    output_tensors.push_back(rng_state);
-  }
+  //if (is_training) {
+  //  output_tensors.push_back(rng_state);
+  //}
   // TODO None or empty? cpp_extensions.py, kvpacked funcs
   //else {
   //  output_tensors.push_back(torch::indexing::None);
@@ -535,9 +535,9 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
     output_tensors.push_back(output_tensor);
     tensor->data.dptr = output_tensor.data_ptr();
   }
-  if (is_training) {
-    output_tensors.push_back(rng_state);
-  }
+  //if (is_training) {
+  //  output_tensors.push_back(rng_state);
+  //}
 
   // execute the kernel
   nvte_fused_attn_fwd_kvpacked(

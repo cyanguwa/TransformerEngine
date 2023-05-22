@@ -24,7 +24,7 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(size_t batch, size_t max_seqlen, 
                                       float p_dropout, NVTE_QKV_Layout qkv_layout,
                                       NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                       const Tensor *input_QKV, const Tensor *input_Bias,
-                                      Tensor *output_O, NVTETensorPack *Aux_Output_Tensors,
+                                      Tensor *output_O, NVTETensorPack *Aux_CTX_Tensors,
                                       const Tensor *cu_seqlens, const Tensor *rng_state,
                                       Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 

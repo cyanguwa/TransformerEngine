@@ -627,16 +627,17 @@ class FusedAttention(torch.nn.Module):
     | backend       | 1              | 2                      | 3               | 4               |
     | flash based   | yes            | no                     | yes             | yes             |
     | cuDNN based   | no             | yes                    | yes             | yes             |
-    | precision     | fp16/bf16      | fp16/bf16              | fp16/bf16       | fp8             |
+    | qkv dtype     | fp16/bf16      | fp16/bf16              | fp16/bf16       | fp8             |
     | attn_type     | self           | self/cross             | self            | self            |
     | qkv_layout    |                |                        |                 |                 |
     |  - qkv        | NA             | qkv_interleaved        | qkv_interleaved | qkv_interleaved |
     |  - (q,kv)     | NA             | kv_interleaved         |                 |                 |
     | mask_type     | causal         | padding/causal         | causal          | padding         |
     | bias_type     | no_bias        | no/post_scale_bias     | no_bias         | no_bias         |
-    | dropout       | yes            | yes                    | yes             | yes             |
+    | dropout       | yes            | no                     | yes             | yes             |
     | max_seqlen    | any            | <=512                  | any             | <=512           |
     | head_dim      | 8,16,...128    | 64                     | 64,128          | 64              |
+    | output dtype  | qkv dtype      | qkv dtype              | qkv dtype       | qkv dtype       |
     """
 
     def __init__(

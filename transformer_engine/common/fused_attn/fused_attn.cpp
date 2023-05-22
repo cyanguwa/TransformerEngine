@@ -17,7 +17,7 @@ void nvte_fused_attn_fwd_qkvpacked(
             const NVTETensor Bias,
             NVTETensor S,
             NVTETensor O,
-            NVTETensorPack* Aux_Output_Tensors,
+            NVTETensorPack* Aux_CTX_Tensors,
             const NVTETensor cu_seqlens,
             const NVTETensor rng_state,
             size_t max_seqlen,
@@ -64,7 +64,7 @@ void nvte_fused_attn_fwd_qkvpacked(
           b, max_seqlen, h, d,
           is_training, attn_scale, dropout, qkv_layout, bias_type, attn_mask_type,
           input_QKV, input_Bias, output_O,
-          Aux_Output_Tensors,
+          Aux_CTX_Tensors,
           input_cu_seqlens,
           input_rng_state,
           wkspace, stream, handle);
@@ -77,7 +77,7 @@ void nvte_fused_attn_fwd_qkvpacked(
           b, max_seqlen, h, d,
           is_training, attn_scale, dropout, qkv_layout, bias_type, attn_mask_type,
           input_QKV, input_Bias, output_O,
-          Aux_Output_Tensors,
+          Aux_CTX_Tensors,
           input_cu_seqlens,
           input_rng_state,
           wkspace, stream, handle);
@@ -92,7 +92,7 @@ void nvte_fused_attn_fwd_qkvpacked(
             b, max_seqlen, h, d,
             is_training, attn_scale, dropout, qkv_layout,
             input_QKV, input_output_S, output_O,
-            Aux_Output_Tensors,
+            Aux_CTX_Tensors,
             input_cu_seqlens,
             input_rng_state,
             wkspace, stream, handle);
@@ -218,7 +218,7 @@ void nvte_fused_attn_fwd_kvpacked(
             const NVTETensor Bias,
             NVTETensor S,
             NVTETensor O,
-            NVTETensorPack* Aux_Output_Tensors,
+            NVTETensorPack* Aux_CTX_Tensors,
             const NVTETensor cu_seqlens_q,
             const NVTETensor cu_seqlens_kv,
             const NVTETensor rng_state,
@@ -264,7 +264,7 @@ void nvte_fused_attn_fwd_kvpacked(
           b, max_seqlen_q, max_seqlen_kv, h, d,
           is_training, attn_scale, dropout, qkv_layout, bias_type, attn_mask_type,
           input_Q, input_KV, input_Bias, output_O,
-          Aux_Output_Tensors,
+          Aux_CTX_Tensors,
           input_cu_seqlens_q, input_cu_seqlens_kv,
           input_rng_state,
           wkspace, stream, handle);
