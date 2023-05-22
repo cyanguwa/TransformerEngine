@@ -321,8 +321,6 @@ class FlashAttention(torch.nn.Module):
         assert (
             _flash_attn_version >= _flash_attn_version_required
         ), f"FlashAttention minimum version {_flash_attn_version_required} is required."
-        # TODO if this is always causal, wouldn't self.attn_causal_mask always be true
-        # what about the no mask case
         assert (
             attn_mask_type == "causal"
         ), 'FlashAttention currently only supports causal attention mask.'

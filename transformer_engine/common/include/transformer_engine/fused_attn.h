@@ -95,9 +95,10 @@ enum NVTE_Fused_Attn_Backend {
  *  - O = D * V.T
  *
  * Support Matrix:
- *  | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
- *  | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+ *  | 1       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
+ *  | 2       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 3       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
  *
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -144,9 +145,10 @@ void nvte_fused_attn_fwd_qkvpacked(
 /*! \brief Compute the backward of the dot product attention with packed QKV input.
  *
  * Support Matrix:
- *  | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
- *  | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+ *  | 1       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
+ *  | 2       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 3       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
  *
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -226,6 +228,8 @@ void nvte_fused_attn_bwd_qkvpacked(
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
  *  \param[in]     return_softmax           FlashAttention backend: Whether to return softmax tensor.
+ *  \param[in]     num_split                FlashAttention backend: Number of kernels.
+ *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_fwd_kvpacked(
             const NVTETensor Q,

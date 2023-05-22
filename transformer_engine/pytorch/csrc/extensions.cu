@@ -65,10 +65,7 @@ __global__ void unpack(at::PhiloxCudaState arg, int64_t* rng_state_ptr) {
 at::PhiloxCudaState init_philox_state(
                 at::CUDAGeneratorImpl* gen,
                 size_t elts_per_thread) {
-//                size_t max_seq_len,
-//                size_t threads_per_cta) {
   at::PhiloxCudaState philox_args;
-//  size_t elts_per_thread = (max_seq_len * max_seq_len + threads_per_cta - 1)/threads_per_cta;
   std::lock_guard<std::mutex> lock(gen->mutex_);
   philox_args = gen->philox_cuda_state(elts_per_thread);
   return philox_args;
@@ -143,7 +140,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   // extract random number generator seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
-  // TODO different values for v1 and v2
   size_t elts_per_thread = 0;
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8
       || fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
@@ -152,14 +148,13 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   } else {
     elts_per_thread = 16;
   }
-  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread); //max_seqlen, threads_per_cta);
+  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread);
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
   auto te_rng_state = makeTransformerEngineTensor(rng_state);
 
   // create auxiliary output tensors
-  // if training, tensors are [M, ZInv]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
 
@@ -190,10 +185,9 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   workspace_data.data_ptr(),
                   workspace.shape(), workspace.dtype());
 
-  // output_tensors = [O, nvte_aux_tensor_pack.tensors, rng_state]
+  // output_tensors = [O, nvte_aux_tensor_pack.tensors]
   std::vector<at::Tensor> output_tensors;
   output_tensors.push_back(O);
-  // nvte_aux_tensor_pack.size is 0 if inference
   for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
     auto tensor = reinterpret_cast<transformer_engine::Tensor*>(nvte_aux_tensor_pack.tensors[i]);
     // allocate memory for nvte_aux_tensor_pack.tensors
@@ -201,13 +195,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
     output_tensors.push_back(output_tensor);
     tensor->data.dptr = output_tensor.data_ptr();
   }
-  //if (is_training) {
-  //  output_tensors.push_back(rng_state);
-  //}
-  // TODO None or empty? cpp_extensions.py, kvpacked funcs
-  //else {
-  //  output_tensors.push_back(torch::indexing::None);
-  //}
 
   // execute the kernel
   nvte_fused_attn_fwd_qkvpacked(
@@ -230,7 +217,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
 
-  // if training, [O, M, ZInv, rng_state]; if inference, [O]
+  // if training, [O, softmax-related tensors, rng_state]; if inference, [O]
   return output_tensors;
 }
 
@@ -322,7 +309,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
   }
 
   // convert auxiliary tensors from forward into NVTETensors
-  // aux_ctx_tensors are [M, ZInv, rng_state]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
   nvte_aux_tensor_pack.size = Aux_CTX_Tensors.size();
@@ -470,10 +456,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   // extract rng seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
-//  size_t threads_per_cta = 128;
-//  at::PhiloxCudaState philox_args = init_philox_state(
-//                  gen, max(max_seqlen_q, max_seqlen_kv), threads_per_cta);
-  // TODO different values for v1 and v2
   size_t elts_per_thread = 0;
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8
       || fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
@@ -483,15 +465,13 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   } else {
     elts_per_thread = 16;
   }
-  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread); //max_seqlen, threads_per_cta);
-
+  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread);
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
   auto te_rng_state = makeTransformerEngineTensor(rng_state);
 
   // create auxiliary output tensors
-  // if training, tensors are [M, ZInv]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
 
@@ -524,10 +504,9 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   workspace_data.data_ptr(),
                   workspace.shape(), workspace.dtype());
 
-  // output_tensors = [O, nvte_aux_tensor_pack.tensors, rng_state]
+  // output_tensors = [O, nvte_aux_tensor_pack.tensors]
   std::vector<at::Tensor> output_tensors;
   output_tensors.push_back(O);
-  // nvte_aux_tensor_pack.size is 0 if inference
   for (size_t i = 0; i < nvte_aux_tensor_pack.size; ++i) {
     auto tensor = reinterpret_cast<transformer_engine::Tensor*>(nvte_aux_tensor_pack.tensors[i]);
     // allocate memory for nvte_aux_tensor_pack.tensors
@@ -535,9 +514,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
     output_tensors.push_back(output_tensor);
     tensor->data.dptr = output_tensor.data_ptr();
   }
-  //if (is_training) {
-  //  output_tensors.push_back(rng_state);
-  //}
 
   // execute the kernel
   nvte_fused_attn_fwd_kvpacked(
@@ -562,7 +538,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
 
-  // if training, [O, M, ZInv, rng_state]; if inference, [O]
+  // if training, [O, softmax-related tensors, rng_state]; if inference, [O]
   return output_tensors;
 }
 
@@ -672,7 +648,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                     DType::kInt32, nullptr, nullptr, nullptr);
 
   // convert auxiliary tensors from forward to NVTETensors
-  // aux_ctx_tensors are [M, ZInv, rng_state]
   NVTETensorPack nvte_aux_tensor_pack;
   nvte_tensor_pack_create(&nvte_aux_tensor_pack);
   nvte_aux_tensor_pack.size = Aux_CTX_Tensors.size();

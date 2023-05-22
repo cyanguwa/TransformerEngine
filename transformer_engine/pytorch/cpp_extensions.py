@@ -256,8 +256,7 @@ def fused_attn_fwd_qkvpacked(
     fused_attention_backend: Enum, default = None
                 please see FusedAttention for details on supported backends.
     return_softmax: bool, default = False
-                whether to return the softmax tensor or not, [b, h, s, s].
-                This parameter is only used by the FusedAttnBackend["F16_FlashAttn"] backend.
+                whether to return the S_dmask tensor or not, [b, h, s, s].
     num_splits: int, default = 1
                 whether to parallelize over the seqlen_q dimension.
                 num_splits = 1 means no, and this guarantees determinism. 
@@ -646,8 +645,7 @@ def fused_attn_fwd_kvpacked(
     fused_attention_backend: Enum, default = None
                 please see FusedAttention for details on supported backends.
     return_softmax: bool, default = False
-                whether to return the softmax tensor or not, [b, h, s, s].
-                This parameter is only used by the FusedAttnBackend["F16_FlashAttn"] backend.
+                whether to return the S_dmask tensor or not, [b, h, s, s].
     num_splits: int, default = 1
                 whether to parallelize over the seqlen_q dimension.
                 num_splits = 1 means no, and this guarantees determinism. 
