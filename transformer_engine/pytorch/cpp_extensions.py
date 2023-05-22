@@ -126,22 +126,20 @@ def check_fused_attn_f16_max512_seqlen(qkv_layout, attn_bias_type, attn_mask_typ
     assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
             ), """FP16/BF16 fused attention (max sequence length 512) only supports qkv_layout:
             qkv_interleaved, kv_interleaved."""
-    assert (attn_bias_type in ["no_bias", "pre_scale_bias", "post_scale_bias"]
+    assert (attn_bias_type in ["no_bias", "post_scale_bias"]
             ), """FP16/BF16 fused attention (max sequence length 512) only supports attn_bias_type:
-            no_bias, pre_scale_bias, post_scale_bias."""
-    assert (attn_mask_type in ["causal", "padding"]
+            no_bias, post_scale_bias."""
+    assert (attn_mask_type in ["padding", "causal"]
             ), """FP16/BF16 fused attention (max sequence length 512) only supports attn_mask_type:
             padding, causal."""
-    assert (qkv_type in [torch.bfloat16, torch.float16]
+    assert (qkv_type in [torch.float16, torch.bfloat16]
             ), """FP16/BF16 fused attention (max sequence length 512) only supports qkv_type:
-            torch.float16, torch.float16."""
-    if max_seqlen_kv is None:
-        assert (max_seqlen_q <= 512
-                ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
-                For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
-    else:
-        assert (max_seqlen_q <= 512
-                and max_seqlen_kv <= 512
+            torch.float16, torch.bfloat16."""
+    assert (max_seqlen_q <= 512
+            ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
+            For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
+    if max_seqlen_kv is not None:
+        assert (max_seqlen_kv <= 512
                 ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
                 For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
     assert (head_dim == 64
@@ -150,16 +148,16 @@ def check_fused_attn_f16_max512_seqlen(qkv_layout, attn_bias_type, attn_mask_typ
 def check_fused_attn_f16_arbitrary_seqlen(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
     head_dim):
     """Check input arguments."""
-    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved", "sbh_interleaved"]
+    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
             ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_layout:
-            qkv_interleaved, kv_interleaved, sbh_interleaved."""
+            qkv_interleaved, kv_interleaved."""
     assert (attn_bias_type == "no_bias"
             ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
-            attn_bias_type: no_bias, pre_scale_bias, post_scale_bias."""
+            attn_bias_type: no_bias."""
     assert (attn_mask_type == "causal"
             ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
-            attn_mask_type: padding, causal."""
-    assert (qkv_type in [torch.bfloat16, torch.float16]
+            attn_mask_type: causal."""
+    assert (qkv_type in [torch.float16, torch.bfloat16]
             ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_type:
             torch.float16, torch.bfloat16."""
     assert (head_dim in [64, 128]
@@ -177,12 +175,10 @@ def check_fused_attn_fp8(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
             ), "FP8 fused attention only supports attn_mask_type: padding."
     assert (qkv_type is torch.uint8
             ), "FP8 fused attention only supports qkv_type: torch.uint8."
-    if max_seqlen_kv is None:
-        assert (max_seqlen_q <= 512
-                ), "FP8 fused attention only supports sequence length <= 512."
-    else:
-        assert (max_seqlen_q <= 512
-                and max_seqlen_kv <= 512
+    assert (max_seqlen_q <= 512
+            ), "FP8 fused attention only supports sequence length <= 512."
+    if max_seqlen_kv is not None:
+        assert (max_seqlen_kv <= 512
                 ), "FP8 fused attention only supports sequence length <= 512."
     assert (head_dim == 64
             ), "FP8 fused attention only supports head_dim = 64."
