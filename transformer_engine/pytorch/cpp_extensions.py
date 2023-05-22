@@ -5,16 +5,16 @@
 """TE FP8 extensions and GEMMs"""
 import math
 from typing import Optional, Tuple, List, Union
+from enum import Enum
 import torch
 import transformer_engine_extensions as tex
-from .constants import TE_DType
-from enum import Enum
 from transformer_engine_extensions import (
     NVTE_QKV_Layout,
     NVTE_Bias_Type,
     NVTE_Mask_Type,
     NVTE_Fused_Attn_Backend
 )
+from .constants import TE_DType
 
 TORCH_DType = {
     tex.DType.kFloat8E4M3: torch.uint8,

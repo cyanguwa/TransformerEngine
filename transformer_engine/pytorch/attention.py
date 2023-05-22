@@ -8,8 +8,8 @@ import math
 from importlib.metadata import version
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Tuple, Union, Dict
-from pkg_resources import packaging
 from enum import Enum
+from pkg_resources import packaging
 
 import torch
 
@@ -436,7 +436,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
         return out
 
     @staticmethod
-    def backward(ctx, d_out, *args):
+    def backward(ctx, d_out):
         qkv, out, cu_seqlens = ctx.saved_tensors
         if ctx.fp8_meta is not None:
             with _prepare_backward(True, ctx.fp8_meta, ctx.tp_group, ctx.tp_size, name="_DPA"):
@@ -940,7 +940,7 @@ class DotProductAttention(torch.nn.Module):
         .. note::
 
             `DotProductAttention` supports three backends: 1) `FlashAttention` which uses
-            HazyResearch's FlashAttention PyTorch API, 2) `FusedAttention` which supports multiple 
+            HazyResearch's FlashAttention PyTorch API, 2) `FusedAttention` which supports multiple
             fused attention implementations (see `FusedAttention` for fused attention backends),
             and 3) `UnfusedDotProductAttention` which is the native PyTorch implementation
             with fused scaled masked softmax. Users can use environment variables

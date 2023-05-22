@@ -26,6 +26,7 @@
 
 #include <driver_types.h>
 #include <cuda_fp16.h>
+#include <stdint.h>
 
 // Necessary to ensure visibility of CUDART_VERSION macro
 #include <cuda_runtime_api.h>
