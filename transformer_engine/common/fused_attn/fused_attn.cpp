@@ -26,8 +26,6 @@ void nvte_fused_attn_fwd_qkvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            bool return_softmax,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_fwd_qkvpacked);
   using namespace transformer_engine;
@@ -49,13 +47,7 @@ void nvte_fused_attn_fwd_qkvpacked(
   auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
   const DType QKV_type = input_QKV->data.dtype;
 
-  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_FlashAttn) {
-    // return_softmax and num_split are used in backend 1
-    const char *err_msg =
-    "Fused attention backend 1 is currently a placeholder. "
-    "Please use one of the other backends instead. \n";
-    NVTE_ERROR(err_msg);
-  } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
       fused_attn_max_512_fwd_qkvpacked(
           b, max_seqlen, h, d,
@@ -116,7 +108,6 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_bwd_qkvpacked);
   using namespace transformer_engine;
@@ -140,13 +131,7 @@ void nvte_fused_attn_bwd_qkvpacked(
   auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
   const DType QKV_type = input_QKV->data.dtype;
 
-  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_FlashAttn) {
-    // return_softmax and num_split are used in backend 1
-    const char *err_msg =
-    "Fused attention backend 1 is currently a placeholder. "
-    "Please use one of the other backends instead. \n";
-    NVTE_ERROR(err_msg);
-  } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
       Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
       fused_attn_max_512_bwd_qkvpacked(
@@ -217,8 +202,6 @@ void nvte_fused_attn_fwd_kvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            bool return_softmax,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_fwd_kvpacked);
   using namespace transformer_engine;
@@ -242,12 +225,7 @@ void nvte_fused_attn_fwd_kvpacked(
   auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
   const DType QKV_type = input_Q->data.dtype;
 
-  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_FlashAttn) {
-    // return_softmax and num_split are used in backend 1
-    const char *err_msg =
-    "Fused attention backend 1 is currently a placeholder. "
-    "Please use one of the other backends instead. \n";
-  } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
       fused_attn_max_512_fwd_kvpacked(
           b, max_seqlen_q, max_seqlen_kv, h, d,
@@ -291,7 +269,6 @@ void nvte_fused_attn_bwd_kvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend) {
   NVTE_API_CALL(nvte_flash_attn_bwd_kvpacked);
   using namespace transformer_engine;
@@ -318,12 +295,7 @@ void nvte_fused_attn_bwd_kvpacked(
   auto handle = cudnnExecutionPlanManager::Instance().GetCudnnHandle();
   const DType QKV_type = input_Q->data.dtype;
 
-  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_FlashAttn) {
-    // return_softmax and num_split are used in backend 1
-    const char *err_msg =
-    "Fused attention backend 1 is currently a placeholder. "
-    "Please use one of the other backends instead. \n";
-  } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
       Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
       fused_attn_max_512_bwd_kvpacked(

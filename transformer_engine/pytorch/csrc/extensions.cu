@@ -87,8 +87,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                bool return_softmax,
-                int num_split,
                 NVTE_Fused_Attn_Backend fused_attention_backend) {
   using namespace transformer_engine;
 
@@ -175,8 +173,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  return_softmax,
-                  num_split,
                   fused_attention_backend);
 
   // allocate memory for workspace and auxiliary output tensors
@@ -210,8 +206,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  return_softmax,
-                  num_split,
                   fused_attention_backend);
 
   // destroy tensor wrappers, but not allocated memory
@@ -242,7 +236,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 const c10::optional<at::Tensor> scale_dQKV,
                 c10::optional<at::Tensor> amax_dP,
                 c10::optional<at::Tensor> amax_dQKV,
-                int num_split,
                 NVTE_Fused_Attn_Backend fused_attention_backend) {
   using namespace transformer_engine;
 
@@ -344,7 +337,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  num_split,
                   fused_attention_backend);
 
   // allocate memory for workspace
@@ -369,7 +361,6 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  num_split,
                   fused_attention_backend);
 
   // destroy tensor wrappers
@@ -397,8 +388,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                bool return_softmax,
-                int num_split,
                 NVTE_Fused_Attn_Backend fused_attention_backend) {
   using namespace transformer_engine;
 
@@ -494,8 +483,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  return_softmax,
-                  num_split,
                   fused_attention_backend);
 
   // allocate memory for workspace and auxiliary output tensors
@@ -531,8 +518,6 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  return_softmax,
-                  num_split,
                   fused_attention_backend);
 
   // destroy tensor wrappers, but not allocated memory
@@ -566,7 +551,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 const c10::optional<at::Tensor> scale_dQKV,
                 c10::optional<at::Tensor> amax_dP,
                 c10::optional<at::Tensor> amax_dQKV,
-                int num_split,
                 NVTE_Fused_Attn_Backend fused_attention_backend) {
   using namespace transformer_engine;
 
@@ -681,7 +665,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  num_split,
                   fused_attention_backend);
 
   // allocate memory for workspace
@@ -709,7 +692,6 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
                   at::cuda::getCurrentCUDAStream(),
-                  num_split,
                   fused_attention_backend);
 
   // destroy tensor wrappers
@@ -2032,7 +2014,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .value("NVTE_KV_INTERLEAVED", NVTE_QKV_Layout::NVTE_KV_INTERLEAVED);
 
   py::enum_<NVTE_Fused_Attn_Backend>(m, "NVTE_Fused_Attn_Backend")
-      .value("NVTE_F16_FlashAttn", NVTE_Fused_Attn_Backend::NVTE_F16_FlashAttn)
       .value("NVTE_F16_max512_seqlen", NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen)
       .value("NVTE_F16_arbitrary_seqlen", NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen)
       .value("NVTE_FP8", NVTE_Fused_Attn_Backend::NVTE_FP8);

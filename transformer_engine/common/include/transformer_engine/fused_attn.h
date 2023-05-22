@@ -76,14 +76,12 @@ enum NVTE_Mask_Type {
 };
 
 enum NVTE_Fused_Attn_Backend {
-    /*!< HazyResearch FlashAttention C API for FP16/BF16 and any sequence length */
-    NVTE_F16_FlashAttn = 1,
     /*!< cuDNN-based FP16/BF16 fused attention for <= 512 sequence length */
-    NVTE_F16_max512_seqlen = 2,
+    NVTE_F16_max512_seqlen = 1,
     /*!< cuDNN-based FP16/BF16 fused attention for any sequence length */
-    NVTE_F16_arbitrary_seqlen = 3,
+    NVTE_F16_arbitrary_seqlen = 2,
     /*!< cuDNN-based FP8 fused attention for <= 512 sequence length */
-    NVTE_FP8 = 4,
+    NVTE_FP8 = 3,
 };
 
 /*! \brief Compute dot product attention with packed QKV input.
@@ -96,9 +94,9 @@ enum NVTE_Fused_Attn_Backend {
  *
  * Support Matrix:
  *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 1       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
- *  | 2       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
- *  | 3       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+ *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 2       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+ *  | 3       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
  *
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -120,8 +118,6 @@ enum NVTE_Fused_Attn_Backend {
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     return_softmax           FlashAttention backend: Whether to return softmax tensor.
- *  \param[in]     num_split                FlashAttention backend: Number of kernels.
  *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_fwd_qkvpacked(
@@ -138,17 +134,15 @@ void nvte_fused_attn_fwd_qkvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            bool return_softmax,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend);
 
 /*! \brief Compute the backward of the dot product attention with packed QKV input.
  *
  * Support Matrix:
  *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 1       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
- *  | 2       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
- *  | 3       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+ *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 2       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+ *  | 3       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
  *
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -170,8 +164,6 @@ void nvte_fused_attn_fwd_qkvpacked(
  *  \param[in]     bias_type                Bias type.
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
- *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     num_split                FlashAttention backend: Number of kernels.
  *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_bwd_qkvpacked(
@@ -190,7 +182,6 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend);
 
 /*! \brief Compute dot product attention with packed KV input.
@@ -202,8 +193,8 @@ void nvte_fused_attn_bwd_qkvpacked(
  *  - O = D * V.T
  *
  * Support Matrix:
- *  | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+ *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
  *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
@@ -227,8 +218,6 @@ void nvte_fused_attn_bwd_qkvpacked(
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     return_softmax           FlashAttention backend: Whether to return softmax tensor.
- *  \param[in]     num_split                FlashAttention backend: Number of kernels.
  *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_fwd_kvpacked(
@@ -247,15 +236,13 @@ void nvte_fused_attn_fwd_kvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            bool return_softmax,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend);
 
 /*! \brief Compute the backward of the dot product attention with packed KV input.
  *
  * Support Matrix:
- *  | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+ *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
  *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
@@ -281,7 +268,6 @@ void nvte_fused_attn_fwd_kvpacked(
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     num_split                FlashAttention backend: Number of kernels.
  *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_bwd_kvpacked(
@@ -303,7 +289,6 @@ void nvte_fused_attn_bwd_kvpacked(
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
             cudaStream_t stream,
-            int num_split,
             NVTE_Fused_Attn_Backend fused_attention_backend);
 
 #ifdef __cplusplus
