@@ -17,8 +17,6 @@ list(APPEND transformer_engine_SOURCES
      fused_attn/fused_attn_fp8.cu
      fused_attn/fused_attn.cpp
      fused_attn/utils.cu
-     fused_attn/fp16_dev.cu
-     fused_attn/fp16_emu.cpp
      gemm/cublaslt_gemm.cu
      layer_norm/ln_api.cpp
      layer_norm/ln_bwd_semi_cuda_kernel.cu
