@@ -5,11 +5,7 @@
 import torch
 import pytest
 
-from transformer_engine.pytorch.utils import (
-    init_method_normal,
-    scaled_init_method_normal,
-)
-from transformer_engine.pytorch import TransformerLayer
+from transformer_engine.pytorch.attention import DotProductAttention 
 import os
 
 class ModelConfig:
@@ -43,60 +39,35 @@ batch_sizes = [2, 48]
 def test_fused_against_flash_attn(dtype, bs, model):
 
     config = model_configs[model]
-    flash_attn = _core_attn(dtype, bs, config, "FlashAttention")
-    fused_attn = _core_attn(dtype, bs, config, "FusedAttention")
+    flash_attn_fwd, flash_attn_bwd = _run_dpa(dtype, bs, config, "FlashAttention")
+    fused_attn_fwd, fused_attn_bwd = _run_dpa(dtype, bs, config, "FusedAttention")
+    unfused_attn_fwd, unfused_attn_bwd = _run_dpa(dtype, bs, config, "UnfusedDotProductAttention")
 
-    assert torch.allclose(fused_attn, flash_attn, atol=1e-2, rtol=1e-2)
+    assert torch.allclose(fused_attn_fwd, flash_attn_fwd, atol=1e-2, rtol=1e-3)
+    assert torch.allclose(fused_attn_bwd, flash_attn_bwd, atol=1e-2, rtol=1e-3)
+    assert torch.allclose(fused_attn_fwd, unfused_attn_fwd, atol=1e-2, rtol=1e-3)
+    assert torch.allclose(fused_attn_bwd, unfused_attn_bwd, atol=1e-2, rtol=1e-3)
     
-def _te_layer(dtype, bs, config):
-
-    sigma = 0.02
-    init_method = init_method_normal(sigma)
-    output_layer_init_method = scaled_init_method_normal(sigma, config.num_layers)
-
-    layer_number = 1
-    drop_path_rate = 0.0
-    drop_path_rates = [rate.item() for rate in torch.linspace(0, drop_path_rate, config.num_layers)]
+def _dot_product_attention(dtype, bs, config):
 
     block = (
-        TransformerLayer(
-            config.hidden_size,
-            4 * config.hidden_size,
-            config.num_attention_heads,
-            layernorm_epsilon = 1e-5,
-            hidden_dropout = 0.0,
-            attention_dropout = config.dropout_p,
-            init_method = init_method,
-            output_layer_init_method = output_layer_init_method,
-            layer_number = layer_number,
-            kv_channels = config.head_dim,
-            self_attn_mask_type = config.attn_mask_type,
-            tp_group = None,
-            tp_size =  1,
-            params_dtype = dtype,
-            get_rng_state_tracker = None,
-            fuse_wgrad_accumulation = False,
-            seq_length = config.seq_len,
-            micro_batch_size = bs,
-            sequence_parallel = False,
-            apply_residual_connection_post_layernorm = False,
-            output_layernorm = False,
-            layer_type = "encoder",
-            drop_path_rate = drop_path_rates[layer_number - 1],
-            set_parallel_mode = True,
-            fuse_qkv_params = True,
-            zero_centered_gamma = False,
-            qkv_weight_interleaved = False,
-            ub_tp_comm_overlap = False,
-            bias = True,
-        )
-        .to(dtype = dtype)
-        .cuda()
+         DotProductAttention(
+                config.num_attention_heads,
+                config.head_dim,
+                attention_dropout = config.dropout_p,
+                attn_mask_type = config.attn_mask_type,
+                sequence_parallel = False,
+                tp_size = 1,
+                get_rng_state_tracker = None,
+                tp_group = None,
+                layer_number = 1,
+                attention_type = "self"
+        ).to(dtype = dtype).cuda()
     )
 
     return block
 
-def _core_attn(dtype, bs, config, backend):
+def _run_dpa(dtype, bs, config, backend):
 
     seq_len = config.seq_len
     h = config.num_attention_heads
@@ -111,9 +82,11 @@ def _core_attn(dtype, bs, config, backend):
         os.environ["NVTE_FLASH_ATTN"] = "1"
     if backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
-        #os.environ["NVTE_FUSED_ATTN_BACKEND"] = "3"
+        #os.environ["NVTE_FUSED_ATTN_BACKEND"] = "2"
+    print('>>> backend: ', backend)
 
-    inp_mha = 0.1*torch.randn(seq_len, bs, h*d, dtype=dtype).cuda()
+    inp_mha = 0.1*torch.randn(seq_len, bs, 3, h, d, dtype=dtype).cuda()
+    inp_mha.requires_grad=True
     seqlens = torch.empty(bs, dtype = torch.int32).cuda()
 
     seqlens.fill_(seq_len)
@@ -122,7 +95,10 @@ def _core_attn(dtype, bs, config, backend):
     
     op_grad = 0.001*torch.randint(0,200,(seq_len, bs, h*d), dtype = dtype).cuda()
 
-    block = _te_layer(dtype, bs, config)
-    op_old = block(inp_mha)
+    block = _dot_product_attention(dtype, bs, config)
+    q = inp_mha[:, :,0,:,:]#.contiguous()
+    k = inp_mha[:, :,1,:,:]#.contiguous()
+    v = inp_mha[:, :,2,:,:]#.contiguous()
+    op_old = block(q, k, v)
     op_old.backward(op_grad)
-    return op_old
+    return op_old, inp_mha.grad

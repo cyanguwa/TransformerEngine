@@ -1139,7 +1139,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         void *devPtrSoftmaxSum = static_cast<int8_t *>(workspace) + plan_workspace_size;
         void *devPtrdQAccumulator = static_cast<int8_t *>(devPtrSoftmaxSum)
                                     + softmaxSum_workspace_size;
-	NVTE_CHECK_CUDA(cudaMemset(devPtrdQAccumulator, 0, dqAccum_workspace_size));
+        NVTE_CHECK_CUDA(cudaMemset(devPtrdQAccumulator, 0, dqAccum_workspace_size));
 
         std::set<std::pair<uint64_t, void *>> data_ptrs;
         // add all the data pointers to be used in the variant pack
