@@ -990,7 +990,9 @@ class DotProductAttention(torch.nn.Module):
                 fp8_backend = str(int(FusedAttnBackend["FP8"]))
                 if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
                     fused_attention_backend = FusedAttnBackend["FP8"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") != fp8_backend:
+                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == fp8_backend:
+                    fused_attention_backend = FusedAttnBackend["FP8"]
+                else:
                     assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {fp8_backend},
                     i.e. FusedAttnBackend["FP8"] for the provided inputs."""
         elif all(i.dtype in [torch.bfloat16, torch.float16]
@@ -1003,7 +1005,9 @@ class DotProductAttention(torch.nn.Module):
                     fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
                 elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend_arbitrary:
                     fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") != f16_backend_m512:
+                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend_m512:
+                    fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
+                else:
                     assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {f16_backend_m512} i.e.
                     FusedAttnBackend["F16_max512_seqlen"], or {f16_backend_arbitrary} i.e.
                     FusedAttnBackend["F16_arbitrary_seqlen"] for the provided inputs."""
@@ -1016,7 +1020,9 @@ class DotProductAttention(torch.nn.Module):
                 f16_backend = str(int(FusedAttnBackend["F16_arbitrary_seqlen"]))
                 if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
                     fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") != f16_backend:
+                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend:
+                    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
+                else:
                     assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {f16_backend}, i.e.
                     FusedAttnBackend["F16_arbitrary_seqlen"] for the provided inputs."""
         else:
