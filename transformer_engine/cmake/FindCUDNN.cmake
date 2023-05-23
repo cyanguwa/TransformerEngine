@@ -1,3 +1,9 @@
+# /*************************************************************************
+#  * Copyright (c) 2022-2023, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#  *
+#  * See LICENSE for license information.
+#  ************************************************************************/
+
 add_library(CUDNN::cudnn_all INTERFACE IMPORTED)
 
 find_path(

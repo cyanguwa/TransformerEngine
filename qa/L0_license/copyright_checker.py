@@ -70,6 +70,7 @@ def get_file_type(path):
            "cfg": ["cfg"],
            "sh":  ["sh"],
            "md":  ["md"],
+           "cmake": ["cmake"]
           }
     tmp = path.split(".")
     for filetype, ext_list in ext.items():
