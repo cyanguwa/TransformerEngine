@@ -153,9 +153,9 @@ def check_fused_attn_f16_arbitrary_seqlen(qkv_layout, attn_bias_type, attn_mask_
     assert (attn_bias_type == "no_bias"
             ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
             attn_bias_type: no_bias."""
-    assert (attn_mask_type == "causal"
-            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
-            attn_mask_type: causal."""
+    #assert (attn_mask_type == "causal"
+    #        ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
+    #        attn_mask_type: causal."""
     assert (qkv_type in [torch.float16, torch.bfloat16]
             ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_type:
             torch.float16, torch.bfloat16."""

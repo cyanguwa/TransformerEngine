@@ -642,9 +642,6 @@ class FusedAttention(torch.nn.Module):
         assert (
             query_layer.is_cuda and key_layer.is_cuda and value_layer.is_cuda
             ), 'FusedAttention only supports CUDA tensors.'
-        assert (
-            attention_mask is None
-            ), 'FusedAttention does not accept external attention mask.'
 
         if (query_layer.dtype == torch.uint8
             and key_layer.dtype == torch.uint8
@@ -980,6 +977,7 @@ class DotProductAttention(torch.nn.Module):
 
         if is_in_onnx_export_mode():
             use_flash_attention = False
+            use_fused_attention = False
 
         if (all(i.dtype is torch.uint8 for i in [query_layer, key_layer, value_layer])
             and self.device_compute_capability >= 9.0
