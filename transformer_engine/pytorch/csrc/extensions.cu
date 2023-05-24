@@ -94,8 +94,10 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
   auto O = torch::empty({static_cast<int64_t>(total_seqs),
                   static_cast<int64_t>(h), static_cast<int64_t>(d)}, options);
-  if (set_zero) {
+  if (set_zero && (h * d % block_size == 0)) {
     mha_fill(O, cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  } else {
+    O.fill_(0);
   }
 
   // construct NVTE tensors
@@ -241,8 +243,13 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
 
   // create output tensor dQKV
   at::Tensor dQKV = torch::empty_like(QKV);
-  if (set_zero) {
+  auto max_tokens = dQKV.size(0);
+  auto self_2d = dQKV.view({max_tokens, -1});
+  auto fcd_size = self_2d.size(1);
+  if (set_zero && (fcd_size % block_size == 0)) {
     mha_fill(dQKV, cu_seqlens.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  } else {
+    dQKV.fill_(0);
   }
   auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
   at::Tensor dBias;
@@ -395,8 +402,10 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
   auto O = torch::empty({static_cast<int64_t>(total_seqs_q),
                   static_cast<int64_t>(h), static_cast<int64_t>(d)}, options);
-  if (set_zero) {
+  if (set_zero && (h * d % block_size == 0)) {
     mha_fill(O, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  } else {
+    O.fill_(0);
   }
 
   // construct NVTE tensors
@@ -557,9 +566,18 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
   // create output tensors dQ and dKV
   at::Tensor dQ = torch::empty_like(Q);
   at::Tensor dKV = torch::empty_like(KV);
-  if (set_zero) {
+  auto max_tokens_q = dQ.size(0);
+  auto self_2d_q = dQ.view({max_tokens_q, -1});
+  auto fcd_size_q = self_2d_q.size(1);
+  auto max_tokens_kv = dQ.size(0);
+  auto self_2d_kv = dQ.view({max_tokens_kv, -1});
+  auto fcd_size_kv = self_2d_kv.size(1);
+  if (set_zero && (fcd_size_q % block_size == 0) && (fcd_size_kv % block_size == 0)) {
     mha_fill(dQ, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
     mha_fill(dKV, cu_seqlens_kv.index({torch::indexing::Slice(-1, torch::indexing::None)}));
+  } else {
+    dQ.fill_(0);
+    dKV.fill_(0);
   }
   auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
   at::Tensor dBias;
