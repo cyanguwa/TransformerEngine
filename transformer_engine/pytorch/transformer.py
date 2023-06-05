@@ -6,7 +6,7 @@
 import os
 import warnings
 from contextlib import nullcontext
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional, Tuple, Union
 
 import torch
 
@@ -60,6 +60,7 @@ class DropPath(torch.nn.Module):
         random_tensor.floor_()  # binarize
         output = hidden_state.div(keep_prob) * random_tensor
         return output
+
 
 class TransformerLayer(torch.nn.Module):
     r"""
@@ -390,6 +391,7 @@ class TransformerLayer(torch.nn.Module):
         is_first_microbatch: Optional[bool] = None,
         checkpoint_core_attention: bool = False,
         inference_params: Optional[Any] = None,
+        rotary_pos_emb: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         set_zero: bool = True,
@@ -432,6 +434,9 @@ class TransformerLayer(torch.nn.Module):
                                   during the backward pass in order to save memory that would
                                   otherwise be occupied to store the forward activations until
                                   backprop.
+        rotary_pos_emb: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], default = `None`
+                       Embeddings for query and key tensors for applying rotary position
+                       embedding. By default no input embedding is applied.
         core_attention_bias_type: str, default = `no_bias`
                     Bias type, {`no_bias`, `pre_scale_bias`, 'post_scale_bias`}
         core_attention_bias: Optional[torch.Tensor], default = `None`
@@ -465,6 +470,7 @@ class TransformerLayer(torch.nn.Module):
             inference_params=inference_params,
             is_first_microbatch=is_first_microbatch,
             checkpoint_core_attention=checkpoint_core_attention,
+            rotary_pos_emb=rotary_pos_emb,
             core_attention_bias_type=core_attention_bias_type,
             core_attention_bias=core_attention_bias,
             set_zero=set_zero,
