@@ -105,13 +105,6 @@ __global__ void cu_seqlens_to_actual_seqlens(size_t b,
 typedef __half half1;
 half1 cpu_float2half_rn(float f);
 
-//NVTE_Fused_Attn_Backend select_fused_attn_backend(
-//                DType q_dtype, DType kv_dtype,
-//                NVTE_QKV_Layout qkv_layout,
-//                NVTE_Bias_Type bias_type,
-//                NVTE_Mask_Type attn_mask_type,
-//                float dropout, size_t max_seqlen_q,
-//                size_t max_seqlen_kv, size_t d);
 }  // namespace fused_attn
 
 cudnnDataType_t get_cudnn_dtype(const transformer_engine::DType t);

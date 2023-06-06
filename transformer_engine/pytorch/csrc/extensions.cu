@@ -14,26 +14,18 @@ constexpr int ctas_per_sm = 4;
 
 // check if there is a fused attention backend available
 NVTE_Fused_Attn_Backend is_fused_attn_available(
-                const transformer_engine::DType q_type,
-                const transformer_engine::DType kv_type,
+                const transformer_engine::DType q_dtype,
+                const transformer_engine::DType kv_dtype,
                 NVTE_QKV_Layout qkv_layout,
                 NVTE_Bias_Type bias_type,
                 NVTE_Mask_Type attn_mask_type,
                 float p_dropout, size_t max_seqlen_q,
                 size_t max_seqlen_kv, size_t head_dim) {
-  //using namespace transformer_engine;
-          //transformer_engine::fused_attn::select_fused_attn_backend(
   NVTE_Fused_Attn_Backend fused_attention_backend =
-          select_fused_attn_backend(
-                          q_type, kv_type,
+          select_fused_attn_backend(q_dtype, kv_dtype,
                           qkv_layout, bias_type, attn_mask_type,
                           p_dropout, max_seqlen_q, max_seqlen_kv, head_dim);
   return fused_attention_backend;
-//  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_No_Backend) {
-//    return false;
-//  } else {
-//    return true;
-//  }
 }
 
 // fast zero-fills of tensors

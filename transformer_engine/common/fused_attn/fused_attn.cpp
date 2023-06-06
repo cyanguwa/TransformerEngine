@@ -110,8 +110,7 @@ void nvte_fused_attn_fwd_qkvpacked(
   const DType QKV_type = input_QKV->data.dtype;
 
   NVTE_Fused_Attn_Backend fused_attention_backend =
-//          transformer_engine::fused_attn::
-select_fused_attn_backend(
+              select_fused_attn_backend(
                           QKV_type, QKV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen, max_seqlen, d);
@@ -201,8 +200,7 @@ void nvte_fused_attn_bwd_qkvpacked(
   const DType QKV_type = input_QKV->data.dtype;
 
   NVTE_Fused_Attn_Backend fused_attention_backend =
-//          transformer_engine::fused_attn::
-select_fused_attn_backend(
+              select_fused_attn_backend(
                           QKV_type, QKV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen, max_seqlen, d);
@@ -303,8 +301,7 @@ void nvte_fused_attn_fwd_kvpacked(
   const DType KV_type = input_KV->data.dtype;
 
   NVTE_Fused_Attn_Backend fused_attention_backend =
-//          transformer_engine::fused_attn::
-select_fused_attn_backend(
+              select_fused_attn_backend(
                           Q_type, KV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen_q, max_seqlen_kv, d);
@@ -381,8 +378,7 @@ void nvte_fused_attn_bwd_kvpacked(
   const DType KV_type = input_KV->data.dtype;
 
   NVTE_Fused_Attn_Backend fused_attention_backend =
-//          transformer_engine::fused_attn::
-select_fused_attn_backend(
+              select_fused_attn_backend(
                           Q_type, KV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen_q, max_seqlen_kv, d);

@@ -8,8 +8,8 @@
 #include "../common.h"
 
 NVTE_Fused_Attn_Backend is_fused_attn_available(
-                const transformer_engine::DType q_type,
-                const transformer_engine::DType kv_type,
+                const transformer_engine::DType q_dtype,
+                const transformer_engine::DType kv_dtype,
                 NVTE_QKV_Layout qkv_layout,
                 NVTE_Bias_Type bias_type,
                 NVTE_Mask_Type attn_mask_type,
@@ -18,9 +18,11 @@ NVTE_Fused_Attn_Backend is_fused_attn_available(
 
 std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
-                size_t h, size_t d,
-                bool is_training, float attn_scale, float p_dropout, bool set_zero,
-                NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
+                size_t h, size_t d, bool is_training,
+                float attn_scale, float p_dropout, bool set_zero,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,
                 const transformer_engine::DType qkv_type,
@@ -35,9 +37,11 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
 
 std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
-                size_t h, size_t d,
-                float attn_scale, float p_dropout, bool set_zero,
-                NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
+                size_t h, size_t d, float attn_scale,
+                float p_dropout, bool set_zero,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,
                 const at::Tensor O,
@@ -57,9 +61,11 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
 std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
                 size_t total_seqs_q, size_t total_seqs_kv,
-                size_t h, size_t d,
-                bool is_training, float attn_scale, float p_dropout, bool set_zero,
-                NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
+                size_t h, size_t d, bool is_training,
+                float attn_scale, float p_dropout, bool set_zero,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens_q,
                 const at::Tensor cu_seqlens_kv,
                 const at::Tensor Q,
@@ -77,9 +83,11 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
 std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
                 size_t total_seqs_q, size_t total_seqs_kv,
-                size_t h, size_t d,
-                float attn_scale, float p_dropout, bool set_zero,
-                NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
+                size_t h, size_t d, float attn_scale,
+                float p_dropout, bool set_zero,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens_q,
                 const at::Tensor cu_seqlens_kv,
                 const at::Tensor Q,
