@@ -158,7 +158,7 @@ def fused_attn_fwd_qkvpacked(
                 shape [total_seqs, 3, num_heads, head_dim], where total_seqs = cu_seqlens[-1]
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
-    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend
                 please see FusedAttention for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
@@ -337,7 +337,7 @@ def fused_attn_bwd_qkvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
-    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend
                 please see FusedAttention for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
@@ -494,7 +494,7 @@ def fused_attn_fwd_kvpacked(
                 where total_seqs_kv = cu_seqlens_kv[-1]
     qkv_dtype: tex.DType
                 data type of Q and KV; in tex.DType, not torch.dtype
-    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend
                 please see FusedAttention for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
@@ -676,7 +676,7 @@ def fused_attn_bwd_kvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
-    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend
                 please see FusedAttention for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
@@ -776,8 +776,8 @@ def fused_attn_bwd_kvpacked(
         check_scalar(amax_dp)
         check_scalar(amax_dqkv)
         m, z_inv = aux_ctx_tensors[:2]
-        check_stats(m, b, h, max_seqlen)
-        check_stats(z_inv, b, h, max_seqlen)
+        check_stats(m, b, h, max_seqlen_q)
+        check_stats(z_inv, b, h, max_seqlen_q)
 
     # execute kernel
     output_tensors = tex.fused_attn_bwd_kvpacked(

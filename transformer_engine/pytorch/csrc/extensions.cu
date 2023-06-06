@@ -103,7 +103,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                size_t rng_elts_per_thread) { 
+                size_t rng_elts_per_thread) {
   using namespace transformer_engine;
 
   // create output tensor O

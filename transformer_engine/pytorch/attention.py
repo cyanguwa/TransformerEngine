@@ -21,7 +21,6 @@ from transformer_engine.pytorch.cpp_extensions import (
     fused_attn_bwd_qkvpacked,
     fused_attn_fwd_kvpacked,
     fused_attn_bwd_kvpacked,
-    FusedAttnBackend,
     QKVLayout,
     AttnBiasType,
     AttnMaskType,
@@ -652,7 +651,6 @@ class FusedAttention(torch.nn.Module):
         key_layer: torch.Tensor,
         value_layer: torch.Tensor,
         fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
-        attention_mask: Optional[torch.Tensor] = None,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         set_zero: bool = True,
@@ -1016,7 +1014,7 @@ class DotProductAttention(torch.nn.Module):
             self.attention_dropout,
             query_layer.shape[0], key_layer.shape[0],
             query_layer.shape[-1])
-        is_fused_attn_avail = False if int(fused_attention_backend) < 0 else True
+        is_fused_attn_avail = int(fused_attention_backend) >= 0
         use_fused_attention = use_fused_attention and is_fused_attn_avail
         print("fused_attention_backend: ",fused_attention_backend,
             "use_fused_attention: ",use_fused_attention)
@@ -1036,14 +1034,12 @@ class DotProductAttention(torch.nn.Module):
                                                             key_layer,
                                                             value_layer,
                                                             fused_attention_backend,
-                                                            attention_mask,
                                                             core_attention_bias_type,
                                                             core_attention_bias,
                                                             set_zero,
                                                             fp8_meta)
             return self.fused_attention(query_layer, key_layer, value_layer,
                                                             fused_attention_backend,
-                                                            attention_mask,
                                                             core_attention_bias_type,
                                                             core_attention_bias,
                                                             set_zero,

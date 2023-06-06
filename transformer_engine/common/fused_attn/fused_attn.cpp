@@ -13,13 +13,13 @@
 
 // select a backend for fused attention
 NVTE_Fused_Attn_Backend select_fused_attn_backend(
-		transformer_engine::DType q_dtype,
+        transformer_engine::DType q_dtype,
         transformer_engine::DType kv_dtype,
         NVTE_QKV_Layout qkv_layout,
-		NVTE_Bias_Type bias_type,
-		NVTE_Mask_Type attn_mask_type,
-		float dropout, size_t max_seqlen_q,
-		size_t max_seqlen_kv, size_t head_dim) {
+        NVTE_Bias_Type bias_type,
+        NVTE_Mask_Type attn_mask_type,
+        float dropout, size_t max_seqlen_q,
+        size_t max_seqlen_kv, size_t head_dim) {
   using namespace transformer_engine;
   NVTE_Fused_Attn_Backend backend;
   cudaDeviceProp deviceProp;
@@ -28,44 +28,44 @@ NVTE_Fused_Attn_Backend select_fused_attn_backend(
   cudaGetDeviceProperties(&deviceProp, dev);
   NVTE_CHECK(q_dtype == kv_dtype, "Q and KV must have the same data type.");
   if ((q_dtype == DType::kFloat8E4M3) || (q_dtype == DType::kFloat8E5M2)
-		  && (deviceProp.major >= 9)
-		  && (deviceProp.minor >= 0)
-		  && (max_seqlen_q == max_seqlen_kv)
-		  && (max_seqlen_q <= 512)
-		  && (head_dim == 64)
-		  && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
-		  && (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
-		  && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
+          && (deviceProp.major >= 9)
+          && (deviceProp.minor >= 0)
+          && (max_seqlen_q == max_seqlen_kv)
+          && (max_seqlen_q <= 512)
+          && (head_dim == 64)
+          && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
+          && (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
+          && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
     backend = NVTE_Fused_Attn_Backend::NVTE_FP8;
   } else if ((q_dtype == DType::kFloat16) || (q_dtype == DType::kBFloat16)) {
     if ((max_seqlen_q > 512) || (max_seqlen_kv > 512)
-		    && (deviceProp.major >= 8)
-		    && (deviceProp.minor >= 0)
-		    && (max_seqlen_q == max_seqlen_kv)
-		    && ((head_dim == 64) || (head_dim == 128))
-		    && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
-		    && (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
-		    && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
+            && (deviceProp.major >= 8)
+            && (deviceProp.minor >= 0)
+            && (max_seqlen_q == max_seqlen_kv)
+            && ((head_dim == 64) || (head_dim == 128))
+            && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
+            && (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+            && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
       backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
     }
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
-		    && (deviceProp.major >= 8)
-		    && (deviceProp.minor >= 0)
-		    && (head_dim == 64)
-		    && (dropout == 0.0)
-		    && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
-			    || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS))
-		    && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
-			    || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK))
-		    && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
-			    || (qkv_layout == NVTE_QKV_Layout::NVTE_KV_INTERLEAVED))) {
+            && (deviceProp.major >= 8)
+            && (deviceProp.minor >= 0)
+            && (head_dim == 64)
+            && (dropout == 0.0)
+            && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
+                || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS))
+            && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK))
+            && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
+                || (qkv_layout == NVTE_QKV_Layout::NVTE_KV_INTERLEAVED))) {
       backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
     }
     const char* env_backend = std::getenv("NVTE_FUSED_ATTN_BACKEND");
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
-		    && (env_backend != nullptr)
-		    && (std::string(env_backend) == std::to_string(
-				    NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))) {
+            && (env_backend != nullptr)
+            && (std::string(env_backend) == std::to_string(
+                    NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))) {
       backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
     }
   } else {
@@ -114,7 +114,8 @@ void nvte_fused_attn_fwd_qkvpacked(
                           QKV_type, QKV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen, max_seqlen, d);
-  std::cout << "Using fused attn backend: " << (int)fused_attention_backend << std::endl;
+  std::cout << "Using fused attn backend: "
+            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
@@ -204,7 +205,8 @@ void nvte_fused_attn_bwd_qkvpacked(
                           QKV_type, QKV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen, max_seqlen, d);
-  std::cout << "Using fused attn backend: " << (int)fused_attention_backend << std::endl;
+  std::cout << "Using fused attn backend: "
+            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
@@ -305,7 +307,8 @@ void nvte_fused_attn_fwd_kvpacked(
                           Q_type, KV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen_q, max_seqlen_kv, d);
-  std::cout << "Using fused attn backend: " << (int)fused_attention_backend << std::endl;
+  std::cout << "Using fused attn backend: "
+            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
@@ -382,7 +385,8 @@ void nvte_fused_attn_bwd_kvpacked(
                           Q_type, KV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen_q, max_seqlen_kv, d);
-  std::cout << "Using fused attn backend: " << (int)fused_attention_backend << std::endl;
+  std::cout << "Using fused attn backend: "
+            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
