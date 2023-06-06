@@ -8,7 +8,6 @@ import math
 from importlib.metadata import version
 from contextlib import nullcontext
 from typing import Any, Callable, Optional, Tuple, Union, Dict
-from enum import Enum
 from pkg_resources import packaging
 
 import torch
@@ -22,7 +21,10 @@ from transformer_engine.pytorch.cpp_extensions import (
     fused_attn_bwd_qkvpacked,
     fused_attn_fwd_kvpacked,
     fused_attn_bwd_kvpacked,
-    FusedAttnBackend
+    FusedAttnBackend,
+    QKVLayout,
+    AttnBiasType,
+    AttnMaskType,
 )
 from transformer_engine.pytorch.module import LayerNormLinear, Linear
 from transformer_engine.pytorch.module.base import _prepare_backward
@@ -649,7 +651,7 @@ class FusedAttention(torch.nn.Module):
         query_layer: torch.Tensor,
         key_layer: torch.Tensor,
         value_layer: torch.Tensor,
-        fused_attention_backend: Enum,
+        fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
         attention_mask: Optional[torch.Tensor] = None,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
@@ -683,7 +685,7 @@ class FusedAttention(torch.nn.Module):
         max_seqlen_kv = seqlen_kv
 
         if self.attention_type == "self":
-            if _check_if_interleaved_kv(key_layer, value_layer):
+            if _check_if_interleaved_qkv(query_layer, key_layer, value_layer):
                 query_layer = query_layer.unsqueeze(3)
                 key_layer = key_layer.unsqueeze(3)
                 value_layer = value_layer.unsqueeze(3)
@@ -889,6 +891,7 @@ class DotProductAttention(torch.nn.Module):
         }
         self.attention_type = attention_type
         self.attn_mask_type = attn_mask_type
+        self.attention_dropout = attention_dropout
 
         if self.use_flash_attention:
             self.flash_attention = FlashAttention(norm_factor, **attn_kwargs)
@@ -1003,52 +1006,68 @@ class DotProductAttention(torch.nn.Module):
             use_flash_attention = False
             use_fused_attention = False
 
-        if (all(i.dtype is torch.uint8 for i in [query_layer, key_layer, value_layer])
-            and self.device_compute_capability >= 9.0
-            and self.attention_type == "self"
-        ):
-            use_flash_attention = False
-            if use_fused_attention:
-                fp8_backend = str(int(FusedAttnBackend["FP8"]))
-                if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
-                    fused_attention_backend = FusedAttnBackend["FP8"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == fp8_backend:
-                    fused_attention_backend = FusedAttnBackend["FP8"]
-                else:
-                    assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {fp8_backend},
-                    i.e. FusedAttnBackend["FP8"] for the provided inputs."""
-        elif all(i.dtype in [torch.bfloat16, torch.float16]
-            and i.shape[0] <= 512 for i in [query_layer, key_layer, value_layer]
-        ):
-            if use_fused_attention:
-                f16_backend_m512 = str(int(FusedAttnBackend["F16_max512_seqlen"]))
-                f16_backend_arbitrary = str(int(FusedAttnBackend["F16_arbitrary_seqlen"]))
-                if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
-                    fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend_arbitrary:
-                    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend_m512:
-                    fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
-                else:
-                    assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {f16_backend_m512} i.e.
-                    FusedAttnBackend["F16_max512_seqlen"], or {f16_backend_arbitrary} i.e.
-                    FusedAttnBackend["F16_arbitrary_seqlen"] for the provided inputs."""
-        elif (all(i.dtype in [torch.bfloat16, torch.float16]
-            for i in [query_layer, key_layer, value_layer])
-            and any(i.shape[0] > 512
-            for i in [query_layer, key_layer, value_layer])
-        ):
-            if use_fused_attention:
-                f16_backend = str(int(FusedAttnBackend["F16_arbitrary_seqlen"]))
-                if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
-                    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
-                elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend:
-                    fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
-                else:
-                    assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {f16_backend}, i.e.
-                    FusedAttnBackend["F16_arbitrary_seqlen"] for the provided inputs."""
-        else:
-            use_fused_attention = False
+        qkv_layout = "qkv_interleaved" if self.attention_type == "self" else "kv_interleaved"
+        fused_attention_backend = tex.is_fused_attn_available(
+            TE_DType[query_layer.dtype],
+            TE_DType[key_layer.dtype],
+            QKVLayout[qkv_layout],
+            AttnBiasType[core_attention_bias_type],
+            AttnMaskType[self.attn_mask_type],
+            self.attention_dropout,
+            query_layer.shape[0], key_layer.shape[0],
+            query_layer.shape[-1])
+        is_fused_attn_avail = False if int(fused_attention_backend) < 0 else True
+        use_fused_attention = use_fused_attention and is_fused_attn_avail
+        print("use_fused_attention: ",use_fused_attention,
+            "is_fused_attn_avail: ",is_fused_attn_avail,
+            "fused_attention_backend: ",fused_attention_backend)
+
+        #if (all(i.dtype is torch.uint8 for i in [query_layer, key_layer, value_layer])
+        #    and self.device_compute_capability >= 9.0
+        #    and self.attention_type == "self"
+        #):
+        #    use_flash_attention = False
+        #    if use_fused_attention:
+        #        fp8_backend = str(int(FusedAttnBackend["FP8"]))
+        #        if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
+        #            fused_attention_backend = FusedAttnBackend["FP8"]
+        #        elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == fp8_backend:
+        #            fused_attention_backend = FusedAttnBackend["FP8"]
+        #        else:
+        #            assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {fp8_backend},
+        #            i.e. FusedAttnBackend["FP8"] for the provided inputs."""
+        #elif all(i.dtype in [torch.bfloat16, torch.float16]
+        #    and i.shape[0] <= 512 for i in [query_layer, key_layer, value_layer]
+        #):
+        #    if use_fused_attention:
+        #        f16_backend_m512 = str(int(FusedAttnBackend["F16_max512_seqlen"]))
+        #        f16_backend_arbitrary = str(int(FusedAttnBackend["F16_arbitrary_seqlen"]))
+        #        if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
+        #            fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
+        #        elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend_arbitrary:
+        #            fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
+        #        elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend_m512:
+        #            fused_attention_backend = FusedAttnBackend["F16_max512_seqlen"]
+        #        else:
+        #            assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {f16_backend_m512} i.e.
+        #            FusedAttnBackend["F16_max512_seqlen"], or {f16_backend_arbitrary} i.e.
+        #            FusedAttnBackend["F16_arbitrary_seqlen"] for the provided inputs."""
+        #elif (all(i.dtype in [torch.bfloat16, torch.float16]
+        #    for i in [query_layer, key_layer, value_layer])
+        #    and any(i.shape[0] > 512
+        #    for i in [query_layer, key_layer, value_layer])
+        #):
+        #    if use_fused_attention:
+        #        f16_backend = str(int(FusedAttnBackend["F16_arbitrary_seqlen"]))
+        #        if "NVTE_FUSED_ATTN_BACKEND" not in os.environ:
+        #            fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
+        #        elif os.getenv("NVTE_FUSED_ATTN_BACKEND") == f16_backend:
+        #            fused_attention_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
+        #        else:
+        #            assert False, f"""NVTE_FUSED_ATTN_BACKEND must be {f16_backend}, i.e.
+        #            FusedAttnBackend["F16_arbitrary_seqlen"] for the provided inputs."""
+        #else:
+        #    use_fused_attention = False
 
         if use_flash_attention:
             if checkpoint_core_attention:

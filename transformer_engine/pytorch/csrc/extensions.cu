@@ -12,6 +12,30 @@
 constexpr int block_size = 512;
 constexpr int ctas_per_sm = 4;
 
+// check if there is a fused attention backend available
+NVTE_Fused_Attn_Backend is_fused_attn_available(
+                const transformer_engine::DType q_type,
+                const transformer_engine::DType kv_type,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
+                float p_dropout, size_t max_seqlen_q,
+                size_t max_seqlen_kv, size_t head_dim) {
+  //using namespace transformer_engine;
+          //transformer_engine::fused_attn::select_fused_attn_backend(
+  NVTE_Fused_Attn_Backend fused_attention_backend =
+          select_fused_attn_backend(
+                          q_type, kv_type,
+                          qkv_layout, bias_type, attn_mask_type,
+                          p_dropout, max_seqlen_q, max_seqlen_kv, head_dim);
+  return fused_attention_backend;
+//  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_No_Backend) {
+//    return false;
+//  } else {
+//    return true;
+//  }
+}
+
 // fast zero-fills of tensors
 template <typename scalar_t>
 __global__ void __launch_bounds__(block_size) mha_fill_kernel(scalar_t* out_tensor,
@@ -87,7 +111,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                NVTE_Fused_Attn_Backend fused_attention_backend) {
+                size_t rng_elts_per_thread) { 
   using namespace transformer_engine;
 
   // create output tensor O
@@ -140,15 +164,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   // extract random number generator seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
-  size_t elts_per_thread = 0;
-  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8
-      || fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
-    size_t threads_per_cta = 128;
-    elts_per_thread = (max_seqlen * max_seqlen + threads_per_cta - 1)/threads_per_cta;
-  } else {
-    elts_per_thread = 16;
-  }
-  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread);
+  at::PhiloxCudaState philox_args = init_philox_state(gen, rng_elts_per_thread);
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
@@ -174,8 +190,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   is_training, attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // allocate memory for workspace and auxiliary output tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -207,8 +222,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   is_training, attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -237,8 +251,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 const c10::optional<at::Tensor> scale_dP,
                 const c10::optional<at::Tensor> scale_dQKV,
                 c10::optional<at::Tensor> amax_dP,
-                c10::optional<at::Tensor> amax_dQKV,
-                NVTE_Fused_Attn_Backend fused_attention_backend) {
+                c10::optional<at::Tensor> amax_dQKV) {
   using namespace transformer_engine;
 
   // create output tensor dQKV
@@ -343,8 +356,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // allocate memory for workspace
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -367,8 +379,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                   attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // destroy tensor wrappers
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -395,7 +406,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                NVTE_Fused_Attn_Backend fused_attention_backend) {
+                size_t rng_elts_per_thread) {
   using namespace transformer_engine;
 
   // create output tensor O
@@ -454,16 +465,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   // extract rng seed and offset
   auto gen = at::get_generator_or_default<at::CUDAGeneratorImpl>(
                   rng_gen, at::cuda::detail::getDefaultCUDAGenerator());
-  size_t elts_per_thread = 0;
-  if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8
-      || fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
-    size_t threads_per_cta = 128;
-    size_t max_seqlen = max(max_seqlen_q, max_seqlen_kv);
-    elts_per_thread = (max_seqlen * max_seqlen + threads_per_cta - 1)/threads_per_cta;
-  } else {
-    elts_per_thread = 16;
-  }
-  at::PhiloxCudaState philox_args = init_philox_state(gen, elts_per_thread);
+  at::PhiloxCudaState philox_args = init_philox_state(gen, rng_elts_per_thread);
   auto rng_state = torch::empty({2}, options.dtype(torch::kInt64));
   unpack<<<1, 1, 0, at::cuda::getCurrentCUDAStream()>>>(
                   philox_args, static_cast<int64_t*>(rng_state.data_ptr()));
@@ -491,8 +493,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   is_training, attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // allocate memory for workspace and auxiliary output tensors
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -526,8 +527,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                   is_training, attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -559,8 +559,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 const c10::optional<at::Tensor> scale_dP,
                 const c10::optional<at::Tensor> scale_dQKV,
                 c10::optional<at::Tensor> amax_dP,
-                c10::optional<at::Tensor> amax_dQKV,
-                NVTE_Fused_Attn_Backend fused_attention_backend) {
+                c10::optional<at::Tensor> amax_dQKV) {
   using namespace transformer_engine;
 
   // create output tensors dQ and dKV
@@ -682,8 +681,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // allocate memory for workspace
   auto workspace_data = allocateSpace(workspace.shape(), workspace.dtype());
@@ -709,8 +707,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                   attn_scale, p_dropout,
                   qkv_layout, bias_type, attn_mask_type,
                   workspace.data(),
-                  at::cuda::getCurrentCUDAStream(),
-                  fused_attention_backend);
+                  at::cuda::getCurrentCUDAStream());
 
   // destroy tensor wrappers
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
@@ -1956,6 +1953,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("fp8_gelu", &fp8_gelu, "GeLU with FP8 output");
   m.def("fa_prepare_fwd", &fa_prepare_fwd, "Prepare QKV for Flash Attention");
   m.def("fa_prepare_bwd", &fa_prepare_bwd, "Backward of QKV preparation for Flash Attention");
+  m.def("is_fused_attn_available", &is_fused_attn_available,
+                  "Check if there is a Fused Attention backend available");
 
   // Misc
   m.def("get_cublasLt_version", &get_cublasLt_version, "Get cublasLt version");

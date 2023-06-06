@@ -76,13 +76,36 @@ enum NVTE_Mask_Type {
 };
 
 enum NVTE_Fused_Attn_Backend {
+    /*!< No supported backend */
+    NVTE_No_Backend = -1,
     /*!< cuDNN-based FP16/BF16 fused attention for <= 512 sequence length */
-    NVTE_F16_max512_seqlen = 1,
+    NVTE_F16_max512_seqlen = 0,
     /*!< cuDNN-based FP16/BF16 fused attention for any sequence length */
-    NVTE_F16_arbitrary_seqlen = 2,
+    NVTE_F16_arbitrary_seqlen = 1,
     /*!< cuDNN-based FP8 fused attention for <= 512 sequence length */
-    NVTE_FP8 = 3,
+    NVTE_FP8 = 2,
 };
+
+/*! \brief Compute dot product attention with packed QKV input.
+ * 
+ *  \param[in]     q_dtype          The data type of Tensor Q.
+ *  \param[in]     kv_dtype         The data type of Tensors K, V.
+ *  \param[in]     qkv_layout       The layout of Tensors Q, K, V.
+ *  \param[in]     bias_type        The attention bias type.
+ *  \param[in]     attn_mask_type   The attention mask type.
+ *  \param[in]     dropout          The dropout probability.
+ *  \param[in]     max_seqlen_q     The sequence length of Q.
+ *  \param[in]     max_seqlen_kv    The sequence length of K, V.
+ *  \param[in]     head_dim         The head dimension of Q, K, V.
+ */
+NVTE_Fused_Attn_Backend select_fused_attn_backend(
+                transformer_engine::DType q_dtype,
+                transformer_engine::DType kv_dtype,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
+                float dropout, size_t max_seqlen_q,
+                size_t max_seqlen_kv, size_t head_dim);
 
 /*! \brief Compute dot product attention with packed QKV input.
  *
@@ -94,9 +117,9 @@ enum NVTE_Fused_Attn_Backend {
  *
  * Support Matrix:
  *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
- *  | 2       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
- *  | 3       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
+ *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 1       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+ *  | 2       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
  *
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -118,7 +141,6 @@ enum NVTE_Fused_Attn_Backend {
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_fwd_qkvpacked(
             const NVTETensor QKV,
@@ -133,16 +155,15 @@ void nvte_fused_attn_fwd_qkvpacked(
             NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
-            cudaStream_t stream,
-            NVTE_Fused_Attn_Backend fused_attention_backend);
+            cudaStream_t stream);
 
 /*! \brief Compute the backward of the dot product attention with packed QKV input.
  *
  * Support Matrix:
  *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
- *  | 2       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
- *  | 3       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
+ *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 1       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+ *  | 2       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
  *
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -164,7 +185,6 @@ void nvte_fused_attn_fwd_qkvpacked(
  *  \param[in]     bias_type                Bias type.
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
- *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_bwd_qkvpacked(
             const NVTETensor QKV,
@@ -181,8 +201,7 @@ void nvte_fused_attn_bwd_qkvpacked(
             NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
-            cudaStream_t stream,
-            NVTE_Fused_Attn_Backend fused_attention_backend);
+            cudaStream_t stream);
 
 /*! \brief Compute dot product attention with packed KV input.
  *
@@ -194,7 +213,7 @@ void nvte_fused_attn_bwd_qkvpacked(
  *
  * Support Matrix:
  *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
  *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
@@ -218,7 +237,6 @@ void nvte_fused_attn_bwd_qkvpacked(
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_fwd_kvpacked(
             const NVTETensor Q,
@@ -235,14 +253,13 @@ void nvte_fused_attn_fwd_kvpacked(
             NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
-            cudaStream_t stream,
-            NVTE_Fused_Attn_Backend fused_attention_backend);
+            cudaStream_t stream);
 
 /*! \brief Compute the backward of the dot product attention with packed KV input.
  *
  * Support Matrix:
  *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 1       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+ *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
  *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
@@ -268,7 +285,6 @@ void nvte_fused_attn_fwd_kvpacked(
  *  \param[in]     attn_mask_type           Attention mask type.
  *  \param[in]     workspace                Workspace tensor.
  *  \param[in]     stream                   CUDA stream used for this operation.
- *  \param[in]     fused_attention_backend  Which backend to use.
  */
 void nvte_fused_attn_bwd_kvpacked(
             const NVTETensor Q,
@@ -288,8 +304,7 @@ void nvte_fused_attn_bwd_kvpacked(
             NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
             NVTE_Mask_Type attn_mask_type,
             NVTETensor workspace,
-            cudaStream_t stream,
-            NVTE_Fused_Attn_Backend fused_attention_backend);
+            cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"

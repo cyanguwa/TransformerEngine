@@ -7,11 +7,14 @@
 #include "common.h"
 #include "../common.h"
 
-NVTE_QKV_Layout get_nvte_qkv_layout(const std::string qkv_layout);
-
-NVTE_Bias_Type get_nvte_bias_type(const std::string bias_type);
-
-NVTE_Mask_Type get_nvte_mask_type(const std::string mask_type);
+NVTE_Fused_Attn_Backend is_fused_attn_available(
+                const transformer_engine::DType q_type,
+                const transformer_engine::DType kv_type,
+                NVTE_QKV_Layout qkv_layout,
+                NVTE_Bias_Type bias_type,
+                NVTE_Mask_Type attn_mask_type,
+                float p_dropout, size_t max_seqlen_q,
+                size_t max_seqlen_kv, size_t head_dim);
 
 std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
@@ -28,7 +31,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                NVTE_Fused_Attn_Backend fused_attention_backend);
+                size_t rng_elts_per_thread);
 
 std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 size_t b, size_t max_seqlen, size_t total_seqs,
@@ -49,8 +52,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
                 const c10::optional<at::Tensor> scale_dP,
                 const c10::optional<at::Tensor> scale_dQKV,
                 c10::optional<at::Tensor> amax_dP,
-                c10::optional<at::Tensor> amax_dQKV,
-                NVTE_Fused_Attn_Backend fused_attention_backend);
+                c10::optional<at::Tensor> amax_dQKV);
 
 std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
@@ -70,7 +72,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
                 c10::optional<at::Tensor> amax_O,
                 const c10::optional<at::Tensor> Bias,
                 const c10::optional<at::Generator> rng_gen,
-                NVTE_Fused_Attn_Backend fused_attention_backend);
+                size_t rng_elts_per_thread);
 
 std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 size_t b, size_t max_seqlen_q, size_t max_seqlen_kv,
@@ -94,8 +96,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
                 const c10::optional<at::Tensor> scale_dP,
                 const c10::optional<at::Tensor> scale_dQKV,
                 c10::optional<at::Tensor> amax_dP,
-                c10::optional<at::Tensor> amax_dQKV,
-                NVTE_Fused_Attn_Backend fused_attention_backend);
+                c10::optional<at::Tensor> amax_dQKV);
 
 void te_gemm(at::Tensor A,
              at::Tensor A_scale_inverse,

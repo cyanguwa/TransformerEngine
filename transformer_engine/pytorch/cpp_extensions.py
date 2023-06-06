@@ -5,7 +5,6 @@
 """TE FP8 extensions and GEMMs"""
 import math
 from typing import Optional, Tuple, List, Union
-from enum import Enum
 import torch
 import transformer_engine_extensions as tex
 from transformer_engine_extensions import (
@@ -48,6 +47,9 @@ FusedAttnBackend = {
     "F16_arbitrary_seqlen": NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen,
     "FP8": NVTE_Fused_Attn_Backend.NVTE_FP8,
     }
+
+BACKEND_F16m512_FP8_THREADS_PER_CTA = 128
+BACKEND_F16arb_ELTS_PER_THREADS = 16
 
 def check_tensor(x: torch.Tensor):
     """Check tensor properties."""
@@ -119,68 +121,68 @@ def check_rng_state(rng_state: torch.Tensor):
             and rng_state.numel() == 2
             ), "rng_state should be [seed, offset] and in int64 dtype."
 
-def check_fused_attn_f16_max512_seqlen(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
-    head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
-    """Check input arguments."""
-    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
-            ), """FP16/BF16 fused attention (max sequence length 512) only supports qkv_layout:
-            qkv_interleaved, kv_interleaved."""
-    assert (attn_bias_type in ["no_bias", "post_scale_bias"]
-            ), """FP16/BF16 fused attention (max sequence length 512) only supports attn_bias_type:
-            no_bias, post_scale_bias."""
-    assert (attn_mask_type in ["padding", "causal"]
-            ), """FP16/BF16 fused attention (max sequence length 512) only supports attn_mask_type:
-            padding, causal."""
-    assert (qkv_type in [torch.float16, torch.bfloat16]
-            ), """FP16/BF16 fused attention (max sequence length 512) only supports qkv_type:
-            torch.float16, torch.bfloat16."""
-    assert (max_seqlen_q <= 512
-            ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
-            For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
-    if max_seqlen_kv is not None:
-        assert (max_seqlen_kv <= 512
-                ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
-                For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
-    assert (head_dim == 64
-            ), "FP16/BF16 fused attention (max sequence length 512) only supports head_dim = 64."
-
-def check_fused_attn_f16_arbitrary_seqlen(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
-    head_dim):
-    """Check input arguments."""
-    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
-            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_layout:
-            qkv_interleaved, kv_interleaved."""
-    assert (attn_bias_type == "no_bias"
-            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
-            attn_bias_type: no_bias."""
-    #assert (attn_mask_type == "causal"
-    #        ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
-    #        attn_mask_type: causal."""
-    assert (qkv_type in [torch.float16, torch.bfloat16]
-            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_type:
-            torch.float16, torch.bfloat16."""
-    assert (head_dim in [64, 128]
-            ), """FP16/BF16 fused attention (arbitrary sequence length) currently only supports
-            head_dim = 64, 128."""
-
-def check_fused_attn_fp8(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
-    head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
-    """Check input arguments."""
-    assert (qkv_layout == "qkv_interleaved"
-            ), "FP8 fused attention only supports qkv_layout: qkv_interleaved."
-    assert (attn_bias_type == "no_bias"
-            ), "FP8 fused attention only supports bias_type: no_bias."
-    assert (attn_mask_type == "padding"
-            ), "FP8 fused attention only supports attn_mask_type: padding."
-    assert (qkv_type is torch.uint8
-            ), "FP8 fused attention only supports qkv_type: torch.uint8."
-    assert (max_seqlen_q <= 512
-            ), "FP8 fused attention only supports sequence length <= 512."
-    if max_seqlen_kv is not None:
-        assert (max_seqlen_kv <= 512
-                ), "FP8 fused attention only supports sequence length <= 512."
-    assert (head_dim == 64
-            ), "FP8 fused attention only supports head_dim = 64."
+#def check_fused_attn_f16_max512_seqlen(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
+#    head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
+#    """Check input arguments."""
+#    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
+#            ), """FP16/BF16 fused attention (max sequence length 512) only supports qkv_layout:
+#            qkv_interleaved, kv_interleaved."""
+#    assert (attn_bias_type in ["no_bias", "post_scale_bias"]
+#            ), """FP16/BF16 fused attention (max sequence length 512) only supports attn_bias_type:
+#            no_bias, post_scale_bias."""
+#    assert (attn_mask_type in ["padding", "causal"]
+#            ), """FP16/BF16 fused attention (max sequence length 512) only supports attn_mask_type:
+#            padding, causal."""
+#    assert (qkv_type in [torch.float16, torch.bfloat16]
+#            ), """FP16/BF16 fused attention (max sequence length 512) only supports qkv_type:
+#            torch.float16, torch.bfloat16."""
+#    assert (max_seqlen_q <= 512
+#            ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
+#            For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
+#    if max_seqlen_kv is not None:
+#        assert (max_seqlen_kv <= 512
+#                ), """This FP16/BF16 fused attention backend only supports sequence length <= 512.
+#                For longer sequence support, please use FusedAttnBackend["F16_arbitrary_seqlen"]."""
+#    assert (head_dim == 64
+#            ), "FP16/BF16 fused attention (max sequence length 512) only supports head_dim = 64."
+#
+#def check_fused_attn_f16_arbitrary_seqlen(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
+#    head_dim):
+#    """Check input arguments."""
+#    assert (qkv_layout in ["qkv_interleaved", "kv_interleaved"]
+#            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_layout:
+#            qkv_interleaved, kv_interleaved."""
+#    assert (attn_bias_type == "no_bias"
+#            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
+#            attn_bias_type: no_bias."""
+#    #assert (attn_mask_type == "causal"
+#    #        ), """FP16/BF16 fused attention (arbitrary sequence length) only supports
+#    #        attn_mask_type: causal."""
+#    assert (qkv_type in [torch.float16, torch.bfloat16]
+#            ), """FP16/BF16 fused attention (arbitrary sequence length) only supports qkv_type:
+#            torch.float16, torch.bfloat16."""
+#    assert (head_dim in [64, 128]
+#            ), """FP16/BF16 fused attention (arbitrary sequence length) currently only supports
+#            head_dim = 64, 128."""
+#
+#def check_fused_attn_fp8(qkv_layout, attn_bias_type, attn_mask_type, qkv_type,
+#    head_dim, max_seqlen_q, max_seqlen_kv: Optional[int] = None):
+#    """Check input arguments."""
+#    assert (qkv_layout == "qkv_interleaved"
+#            ), "FP8 fused attention only supports qkv_layout: qkv_interleaved."
+#    assert (attn_bias_type == "no_bias"
+#            ), "FP8 fused attention only supports bias_type: no_bias."
+#    assert (attn_mask_type == "padding"
+#            ), "FP8 fused attention only supports attn_mask_type: padding."
+#    assert (qkv_type is torch.uint8
+#            ), "FP8 fused attention only supports qkv_type: torch.uint8."
+#    assert (max_seqlen_q <= 512
+#            ), "FP8 fused attention only supports sequence length <= 512."
+#    if max_seqlen_kv is not None:
+#        assert (max_seqlen_kv <= 512
+#                ), "FP8 fused attention only supports sequence length <= 512."
+#    assert (head_dim == 64
+#            ), "FP8 fused attention only supports head_dim = 64."
 
 def fused_attn_fwd_qkvpacked(
     is_training: bool,
@@ -188,7 +190,7 @@ def fused_attn_fwd_qkvpacked(
     cu_seqlens: torch.Tensor,
     qkv: torch.Tensor,
     qkv_dtype: tex.DType,
-    fused_attention_backend: Enum,
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
     attn_bias: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     q_scale_s: torch.Tensor = None,
@@ -219,7 +221,7 @@ def fused_attn_fwd_qkvpacked(
                 shape [total_seqs, 3, num_heads, head_dim], where total_seqs = cu_seqlens[-1]
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
-    fused_attention_backend: Enum
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
                 please see FusedAttention for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
@@ -304,20 +306,28 @@ def fused_attn_fwd_qkvpacked(
         assert (attn_bias.dtype == qkv.dtype
                 ), "attn_bias tensor must be in the same dtype as qkv."
 
+    assert (fused_attention_backend in FusedAttnBackend.values()
+            ), "Fused attention does not support this input combination."
+
     # BF16/FP16 fused attention API from fmha_v1 apex
     if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]:
-        check_fused_attn_f16_max512_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
+        #check_fused_attn_f16_max512_seqlen(
+        #    qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
+        rng_elts_per_thread = (max_seqlen * max_seqlen
+                + BACKEND_F16m512_FP8_THREADS_PER_CTA - 1)//BACKEND_F16m512_FP8_THREADS_PER_CTA
 
     # BF16/FP16 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
-        check_fused_attn_f16_arbitrary_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+    if fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
+        #check_fused_attn_f16_arbitrary_seqlen(
+        #    qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+        rng_elts_per_thread = BACKEND_F16arb_ELTS_PER_THREADS
 
     # FP8 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["FP8"]:
-        check_fused_attn_fp8(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
+    if fused_attention_backend == FusedAttnBackend["FP8"]:
+        #check_fused_attn_fp8(
+        #    qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
+        rng_elts_per_thread = (max_seqlen * max_seqlen
+                + BACKEND_F16m512_FP8_THREADS_PER_CTA - 1)//BACKEND_F16m512_FP8_THREADS_PER_CTA
 
         assert (d_scale_qkv is not None
                 ), "d_scale_qkv is required as an input for FP8 fused attention."
@@ -335,9 +345,6 @@ def fused_attn_fwd_qkvpacked(
         check_scalar(amax_s)
         check_scalar(amax_o)
 
-    else:
-        assert False, "No support for this dtype and max_seqlen combination."
-
     # execute kernel
     output_tensors = tex.fused_attn_fwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
@@ -345,7 +352,7 @@ def fused_attn_fwd_qkvpacked(
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens, qkv, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o, attn_bias,
-            rng_gen, fused_attention_backend,
+            rng_gen, rng_elts_per_thread,# fused_attention_backend,
     )
 
     # out, aux_ctx_tensors
@@ -360,7 +367,7 @@ def fused_attn_bwd_qkvpacked(
     d_o: torch.Tensor,
     qkv_dtype: tex.DType,
     aux_ctx_tensors: List[torch.Tensor],
-    fused_attention_backend: Enum,
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
     d_scale_qkv: torch.Tensor = None,
     d_scale_s: torch.Tensor = None,
     d_scale_o: torch.Tensor = None,
@@ -399,7 +406,7 @@ def fused_attn_bwd_qkvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
-    fused_attention_backend: Enum
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
                 please see FusedAttention for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
@@ -463,31 +470,35 @@ def fused_attn_bwd_qkvpacked(
     rng_state = aux_ctx_tensors[-1]
     check_rng_state(rng_state)
 
-    # BF16/FP16 fused attention API from fmha_v1 apex
-    if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]:
-        check_fused_attn_f16_max512_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
+    assert (fused_attention_backend in FusedAttnBackend.values()
+            ), "Fused attention does not support this input combination."
 
-    # BF16/FP16 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
-        check_fused_attn_f16_arbitrary_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+    ## BF16/FP16 fused attention API from fmha_v1 apex
+    #if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]:
+    #    check_fused_attn_f16_max512_seqlen(
+    #        qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
 
-    # FP8 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["FP8"]:
-        check_fused_attn_fp8(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
-        assert (d_scale_qkv is not None), "d_scale_qkv is required for the FP8 API."
-        assert (d_scale_s is not None), "d_scale_s is required for the FP8 API."
-        assert (d_scale_o is not None), "d_scale_o is required for the FP8 API."
-        assert (d_scale_do is not None), "d_scale_do is required for the FP8 API."
-        assert (q_scale_s is not None), "q_scale_s is required for the FP8 API."
-        assert (q_scale_dp is not None), "q_scale_dp is required for the FP8 API."
-        assert (q_scale_dqkv is not None), "q_scale_dqkv is required for the FP8 API."
-        assert (amax_dp is not None), "amax_dp is required for the FP8 API."
-        assert (amax_dqkv is not None), "amax_dqkv is required for the FP8 API."
+    ## BF16/FP16 fused attention API from fmha_v2
+    #elif fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
+    #    check_fused_attn_f16_arbitrary_seqlen(
+    #        qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+
+    ## FP8 fused attention API from fmha_v2
+    #elif fused_attention_backend == FusedAttnBackend["FP8"]:
+    #    check_fused_attn_fp8(
+    #        qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen)
+    if fused_attention_backend == FusedAttnBackend["FP8"]:
+        assert (d_scale_qkv is not None), "d_scale_qkv is required for FP8 fused attention."
+        assert (d_scale_s is not None), "d_scale_s is required for FP8 fused attention."
+        assert (d_scale_o is not None), "d_scale_o is required for FP8 fused attention."
+        assert (d_scale_do is not None), "d_scale_do is required for FP8 fused attention."
+        assert (q_scale_s is not None), "q_scale_s is required for FP8 fused attention."
+        assert (q_scale_dp is not None), "q_scale_dp is required for FP8 fused attention."
+        assert (q_scale_dqkv is not None), "q_scale_dqkv is required for FP8 fused attention."
+        assert (amax_dp is not None), "amax_dp is required for FP8 fused attention."
+        assert (amax_dqkv is not None), "amax_dqkv is required for FP8 fused attention."
         assert (len(aux_ctx_tensors) == 3
-                ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for the FP8 API."
+                ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for FP8 fused attention."
         check_scalar(d_scale_qkv)
         check_scalar(d_scale_s)
         check_scalar(d_scale_o)
@@ -501,8 +512,8 @@ def fused_attn_bwd_qkvpacked(
         check_stats(m, b, h, max_seqlen)
         check_stats(z_inv, b, h, max_seqlen)
 
-    else:
-        assert False, "No support for this dtype and max_seqlen combination."
+    #else:
+    #    assert False, "No support for this dtype and max_seqlen combination."
 
     # execute kernel
     output_tensors = tex.fused_attn_bwd_qkvpacked(
@@ -512,7 +523,7 @@ def fused_attn_bwd_qkvpacked(
             cu_seqlens, qkv, o, d_o, qkv_dtype, aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
             q_scale_s, q_scale_dp, q_scale_dqkv, amax_dp, amax_dqkv,
-            fused_attention_backend,
+            #fused_attention_backend,
     )
 
     if attn_bias_type == "no_bias":
@@ -531,7 +542,7 @@ def fused_attn_fwd_kvpacked(
     q: torch.Tensor,
     kv: torch.Tensor,
     qkv_dtype: tex.DType,
-    fused_attention_backend: Enum,
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
     attn_bias: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     q_scale_s: torch.Tensor = None,
@@ -570,7 +581,7 @@ def fused_attn_fwd_kvpacked(
                 where total_seqs_kv = cu_seqlens_kv[-1]
     qkv_dtype: tex.DType
                 data type of Q and KV; in tex.DType, not torch.dtype
-    fused_attention_backend: Enum
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
                 please see FusedAttention for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
@@ -663,23 +674,31 @@ def fused_attn_fwd_kvpacked(
         assert (attn_bias.dtype == q.dtype
                 ), "attn_bias tensor must be in the same dtype as q and kv."
 
+    assert (fused_attention_backend in FusedAttnBackend.values()
+            ), "Fused attention does not support this input combination."
+
     # BF16/FP16 fused attention API from fmha_v1 apex
     if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]:
-        check_fused_attn_f16_max512_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+        #check_fused_attn_f16_max512_seqlen(
+        #    qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+        rng_elts_per_thread = (max_seqlen_q * max_seqlen_q
+                + BACKEND_F16m512_FP8_THREADS_PER_CTA - 1)//BACKEND_F16m512_FP8_THREADS_PER_CTA
 
     # BF16/FP16 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
-        check_fused_attn_f16_arbitrary_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+    if fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
+        #check_fused_attn_f16_arbitrary_seqlen(
+        #    qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+        rng_elts_per_thread = BACKEND_F16arb_ELTS_PER_THREADS
 
     # FP8 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["FP8"]:
-        check_fused_attn_fp8(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+    if fused_attention_backend == FusedAttnBackend["FP8"]:
+        #check_fused_attn_fp8(
+        #    qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+        rng_elts_per_thread = (max_seqlen_q * max_seqlen_q
+                + BACKEND_F16m512_FP8_THREADS_PER_CTA - 1)//BACKEND_F16m512_FP8_THREADS_PER_CTA
 
-    else:
-        assert False, "No support for this dtype and max_seqlen combination."
+    #else:
+    #    assert False, "No support for this dtype and max_seqlen combination."
 
     # execute kernel
     output_tensors = tex.fused_attn_fwd_kvpacked(
@@ -688,7 +707,7 @@ def fused_attn_fwd_kvpacked(
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens_q, cu_seqlens_kv, q, kv, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o,
-            attn_bias, rng_gen, fused_attention_backend,
+            attn_bias, rng_gen, rng_elts_per_thread,# fused_attention_backend,
     )
 
     # out, aux_ctx_tensors
@@ -706,7 +725,7 @@ def fused_attn_bwd_kvpacked(
     d_o: torch.Tensor,
     qkv_dtype: tex.DType,
     aux_ctx_tensors: List[torch.Tensor],
-    fused_attention_backend: Enum,
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
     d_scale_qkv: torch.Tensor = None,
     d_scale_s: torch.Tensor = None,
     d_scale_o: torch.Tensor = None,
@@ -753,7 +772,7 @@ def fused_attn_bwd_kvpacked(
     aux_ctx_tensors: List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
-    fused_attention_backend: Enum
+    fused_attention_backend: tex.NVTE_Fused_Attn_Backend 
                 please see FusedAttention for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
@@ -828,23 +847,50 @@ def fused_attn_bwd_kvpacked(
     rng_state = aux_ctx_tensors[-1]
     check_rng_state(rng_state)
 
-    # BF16/FP16 fused attention API from fmha_v1 apex
-    if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]:
-        check_fused_attn_f16_max512_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+    assert (fused_attention_backend in FusedAttnBackend.values()
+            ), "Fused attention does not support this input combination."
 
-    # BF16/FP16 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
-        check_fused_attn_f16_arbitrary_seqlen(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
+    ## BF16/FP16 fused attention API from fmha_v1 apex
+    #if fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]:
+    #    check_fused_attn_f16_max512_seqlen(
+    #        qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
 
-    # FP8 fused attention API from fmha_v2
-    elif fused_attention_backend == FusedAttnBackend["FP8"]:
-        check_fused_attn_fp8(
-            qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+    ## BF16/FP16 fused attention API from fmha_v2
+    #elif fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]:
+    #    check_fused_attn_f16_arbitrary_seqlen(
+    #        qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d)
 
-    else:
-        assert False, "No support for this dtype and max_seqlen combination."
+    ## FP8 fused attention API from fmha_v2
+    #elif fused_attention_backend == FusedAttnBackend["FP8"]:
+    #    check_fused_attn_fp8(
+    #        qkv_layout, attn_bias_type, attn_mask_type, qkv_type, d, max_seqlen_q, max_seqlen_kv)
+    if fused_attention_backend == FusedAttnBackend["FP8"]:
+        assert (d_scale_qkv is not None), "d_scale_qkv is required for FP8 fused attention."
+        assert (d_scale_s is not None), "d_scale_s is required for FP8 fused attention."
+        assert (d_scale_o is not None), "d_scale_o is required for FP8 fused attention."
+        assert (d_scale_do is not None), "d_scale_do is required for FP8 fused attention."
+        assert (q_scale_s is not None), "q_scale_s is required for FP8 fused attention."
+        assert (q_scale_dp is not None), "q_scale_dp is required for FP8 fused attention."
+        assert (q_scale_dqkv is not None), "q_scale_dqkv is required for FP8 fused attention."
+        assert (amax_dp is not None), "amax_dp is required for FP8 fused attention."
+        assert (amax_dqkv is not None), "amax_dqkv is required for FP8 fused attention."
+        assert (len(aux_ctx_tensors) == 3
+                ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for FP8 fused attention."
+        check_scalar(d_scale_qkv)
+        check_scalar(d_scale_s)
+        check_scalar(d_scale_o)
+        check_scalar(d_scale_do)
+        check_scalar(q_scale_s)
+        check_scalar(q_scale_dp)
+        check_scalar(q_scale_dqkv)
+        check_scalar(amax_dp)
+        check_scalar(amax_dqkv)
+        m, z_inv = aux_ctx_tensors[:2]
+        check_stats(m, b, h, max_seqlen)
+        check_stats(z_inv, b, h, max_seqlen)
+
+    #else:
+    #    assert False, "No support for this dtype and max_seqlen combination."
 
     # execute kernel
     output_tensors = tex.fused_attn_bwd_kvpacked(
@@ -854,7 +900,7 @@ def fused_attn_bwd_kvpacked(
             cu_seqlens_q, cu_seqlens_kv, q, kv, o, d_o, qkv_dtype, aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
             q_scale_s, q_scale_dp, q_scale_dqkv, amax_dp, amax_dqkv,
-            fused_attention_backend,
+            #fused_attention_backend,
     )
 
     if attn_bias_type == "no_bias":
