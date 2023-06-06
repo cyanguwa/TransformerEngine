@@ -790,8 +790,7 @@ void SelfFusedAttnMax512Forward(cudaStream_t stream, void **buffers, const char 
                                   rng_state_tensor.data(), q_max_seqlen, descriptor.is_training,
                                   descriptor.scaling_factor, descriptor.dropout_probability,
                                   NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, descriptor.bias_type,
-                                  descriptor.mask_type, query_workspace_tensor.data(), stream,
-                                  NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+                                  descriptor.mask_type, query_workspace_tensor.data(), stream);
 
     auto *output_s = reinterpret_cast<Tensor *>(aux_output_tensors.tensors[0]);
     output_s->data.dptr = softmax_aux;
@@ -808,8 +807,7 @@ void SelfFusedAttnMax512Forward(cudaStream_t stream, void **buffers, const char 
                                   rng_state_tensor.data(), q_max_seqlen, descriptor.is_training,
                                   descriptor.scaling_factor, descriptor.dropout_probability,
                                   NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, descriptor.bias_type,
-                                  descriptor.mask_type, workspace_tensor.data(), stream,
-                                  NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+                                  descriptor.mask_type, workspace_tensor.data(), stream);
 
     nvte_tensor_pack_destroy(&aux_output_tensors);
 }
@@ -878,8 +876,7 @@ void SelfFusedAttnMax512Backward(cudaStream_t stream, void **buffers, const char
                                   cu_seqlens_tensor.data(), q_max_seqlen, descriptor.scaling_factor,
                                   descriptor.dropout_probability,
                                   NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, descriptor.bias_type,
-                                  descriptor.mask_type, query_workspace_tensor.data(), stream,
-                                  NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+                                  descriptor.mask_type, query_workspace_tensor.data(), stream);
 
     size_t workspace_size =
         query_workspace_tensor.shape().data[0] * typeToSize(query_workspace_tensor.dtype());
@@ -895,8 +892,7 @@ void SelfFusedAttnMax512Backward(cudaStream_t stream, void **buffers, const char
                                   cu_seqlens_tensor.data(), q_max_seqlen, descriptor.scaling_factor,
                                   descriptor.dropout_probability,
                                   NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, descriptor.bias_type,
-                                  descriptor.mask_type, workspace_tensor.data(), stream,
-                                  NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+                                  descriptor.mask_type, workspace_tensor.data(), stream);
 
     nvte_tensor_pack_destroy(&aux_output_tensors);
 }
@@ -956,7 +952,7 @@ void CrossFusedAttnMax512Forward(cudaStream_t stream, void **buffers, const char
         rng_state_tensor.data(), q_max_seqlen, kv_max_seqlen, descriptor.is_training,
         descriptor.scaling_factor, descriptor.dropout_probability,
         NVTE_QKV_Layout::NVTE_KV_INTERLEAVED, descriptor.bias_type, descriptor.mask_type,
-        query_workspace_tensor.data(), stream, NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+        query_workspace_tensor.data(), stream);
 
     auto *output_s = reinterpret_cast<Tensor *>(aux_output_tensors.tensors[0]);
     output_s->data.dptr = softmax_aux;
@@ -974,7 +970,7 @@ void CrossFusedAttnMax512Forward(cudaStream_t stream, void **buffers, const char
         rng_state_tensor.data(), q_max_seqlen, kv_max_seqlen, descriptor.is_training,
         descriptor.scaling_factor, descriptor.dropout_probability,
         NVTE_QKV_Layout::NVTE_KV_INTERLEAVED, descriptor.bias_type, descriptor.mask_type,
-        workspace_tensor.data(), stream, NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+        workspace_tensor.data(), stream);
 
     nvte_tensor_pack_destroy(&aux_output_tensors);
 }
@@ -1049,7 +1045,7 @@ void CrossFusedAttnMax512Backward(cudaStream_t stream, void **buffers, const cha
         q_cu_seqlens_tensor.data(), kv_cu_seqlens_tensor.data(), q_max_seqlen, kv_max_seqlen,
         descriptor.scaling_factor, descriptor.dropout_probability,
         NVTE_QKV_Layout::NVTE_KV_INTERLEAVED, descriptor.bias_type, descriptor.mask_type,
-        query_workspace_tensor.data(), stream, NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+        query_workspace_tensor.data(), stream);
 
     size_t workspace_size =
         query_workspace_tensor.shape().data[0] * typeToSize(query_workspace_tensor.dtype());
@@ -1066,7 +1062,7 @@ void CrossFusedAttnMax512Backward(cudaStream_t stream, void **buffers, const cha
         q_cu_seqlens_tensor.data(), kv_cu_seqlens_tensor.data(), q_max_seqlen, kv_max_seqlen,
         descriptor.scaling_factor, descriptor.dropout_probability,
         NVTE_QKV_Layout::NVTE_KV_INTERLEAVED, descriptor.bias_type, descriptor.mask_type,
-        workspace_tensor.data(), stream, NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen);
+        workspace_tensor.data(), stream);
 
     nvte_tensor_pack_destroy(&aux_output_tensors);
 }
