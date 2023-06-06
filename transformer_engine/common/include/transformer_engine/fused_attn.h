@@ -4,6 +4,10 @@
  * See LICENSE for license information.
  ************************************************************************/
 
+/*! \file fused_attn.h
+ *  \brief Enums and functions for fused attention.
+ */
+
 #ifndef TRANSFORMER_ENGINE_FUSED_ATTN_FP8_H_
 #define TRANSFORMER_ENGINE_FUSED_ATTN_FP8_H_
 
@@ -13,65 +17,80 @@
 extern "C" {
 #endif
 
+/*! \enum NVTE_QKV_Layout
+ *  \brief QKV matrix layouts
+ */
 enum NVTE_QKV_Layout {
-/*!< separate Q, K, V tensors:
-     Q: [total_seqs_q, num_heads, head_dim]
-                      | Q   Q   Q        ...       Q
-                      | \___________  _____________/
-        total_seqs_q <|             \/ 
-                      |   num_heads * head_dim
-     K: [total_seqs_kv, num_heads, head_dim]
-                       | K   K   K        ...       K
-                       | \___________  _____________/
-        total_seqs_kv <|             \/ 
-                       |   num_heads * head_dim
-     V: [total_seqs_kv, num_heads, head_dim]
-                       | V   V   V        ...       V
-                       | \___________  _____________/
-        total_seqs_kv <|             \/ 
-                       |   num_heads * head_dim
+/*! Separate Q, K, V tensors.
+    \verbatim
+      Q: [total_seqs_q, num_heads, head_dim]
+                          | Q   Q   Q        ...       Q
+                          | \___________  _____________/
+          total_seqs_q   <|             \/
+                          |   num_heads * head_dim
+      K: [total_seqs_kv, num_heads, head_dim]
+                          | K   K   K        ...       K
+                          | \___________  _____________/
+          total_seqs_kv  <|             \/
+                          |   num_heads * head_dim
+      V: [total_seqs_kv, num_heads, head_dim]
+                          | V   V   V        ...       V
+                          | \___________  _____________/
+          total_seqs_kv  <|             \/
+                          |   num_heads * head_dim
+    \endverbatim
  */
     NVTE_NOT_INTERLEAVED = 0,
 
-/*!< packed QKV tensor:
-     QKV: [total_seqs, 3, num_heads, head_dim]
-                 | Q   Q   Q        ...       Q K K K ... K V V V ... V 
-                 | \___________  _____________/
-     total_seqs <|             \/ 
-                 |   num_heads * head_dim
+/*! Packed QKV.
+    \verbatim
+      QKV: [total_seqs, 3, num_heads, head_dim]
+                          | Q   Q   Q        ...       Q K K K ... K V V V ... V
+                          | \___________  _____________/
+            total_seqs   <|             \/
+                          |   num_heads * head_dim
+    \endverbatim
  */
     NVTE_QKV_INTERLEAVED = 1,
 
-/*!< Q and packed KV tensor:
-     Q: [total_seqs_q, num_heads, head_dim]
-                      | Q   Q   Q        ...       Q
-                      | \___________  _____________/
-        total_seqs_q <|             \/ 
-                      |   num_heads * head_dim
-     KV: [total_seqs_kv, 2, num_heads, head_dim]
-                        | K   K   K        ...       K V V V ... V 
-                        | \___________  _____________/
-         total_seqs_kv <|             \/ 
-                        |   num_heads * head_dim
+ /*! Q and packed KV.
+     \verbatim
+       Q: [total_seqs_q, num_heads, head_dim]
+                          | Q   Q   Q        ...       Q
+                          | \___________  _____________/
+           total_seqs_q  <|             \/
+                          |   num_heads * head_dim
+       KV: [total_seqs_kv, 2, num_heads, head_dim]
+                          | K   K   K        ...       K V V V ... V
+                          | \___________  _____________/
+           total_seqs_kv <|             \/
+                          |   num_heads * head_dim
+    \endverbatim
  */
     NVTE_KV_INTERLEAVED = 2
 };
 
+/*! \enum NVTE_Bias_Type
+ *  \brief Bias types
+ */
 enum NVTE_Bias_Type {
-    /*!< no bias */
+    /*! No bias */
     NVTE_NO_BIAS = 0,
-    /*!< bias before scale */
+    /*! Bias before scale */
     NVTE_PRE_SCALE_BIAS = 1,
-    /*!< bias after scale */
+    /*! Bias after scale */
     NVTE_POST_SCALE_BIAS = 2
 };
 
+/*! \enum NVTE_Mask_Type
+ *  \brief Attention mask types
+ */
 enum NVTE_Mask_Type {
-    /*!< no masking */
+    /*! No masking */
     NVTE_NO_MASK = 0,
-    /*!< padding attention mask */
+    /*! Padding attention mask */
     NVTE_PADDING_MASK = 1,
-    /*!< causal attention mask */
+    /*! Causal attention mask */
     NVTE_CAUSAL_MASK = 2,
 };
 
@@ -110,17 +129,18 @@ NVTE_Fused_Attn_Backend select_fused_attn_backend(
 /*! \brief Compute dot product attention with packed QKV input.
  *
  * Computes:
- *  - P = Q * K.T + Bias
+ *  - P = Q * Transpose(K) + Bias
  *  - S = ScaleMaskSoftmax(P)
  *  - D = Dropout(S)
- *  - O = D * V.T
+ *  - O = D * Transpose(V)
  *
  * Support Matrix:
- *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
- *  | 1       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
- *  | 2       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
- *
+   \verbatim
+   | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+   | 1       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+   | 2       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
+   \endverbatim
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
  *                                          [total_seqs, 3, num_heads, head_dim].
@@ -160,11 +180,12 @@ void nvte_fused_attn_fwd_qkvpacked(
 /*! \brief Compute the backward of the dot product attention with packed QKV input.
  *
  * Support Matrix:
- *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
- *  | 1       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
- *  | 2       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
- *
+   \verbatim
+   | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+   | 1       | FP16/BF16 | QKV_INTERLEAVED |         NO_BIAS         |    CAUSAL      |   Yes   |      > 512      |  64, 128 |
+   | 2       | FP8       | QKV_INTERLEAVED |         NO_BIAS         |    PADDING     |   Yes   |     <= 512      |    64    |
+   \endverbatim
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
  *                                          [total_seqs, 3, num_heads, head_dim].
@@ -206,14 +227,16 @@ void nvte_fused_attn_bwd_qkvpacked(
 /*! \brief Compute dot product attention with packed KV input.
  *
  * Computes:
- *  - P = Q * K.T + Bias
+ *  - P = Q * Transpose(K) + Bias
  *  - S = ScaleMaskSoftmax(P)
  *  - D = Dropout(S)
- *  - O = D * V.T
+ *  - O = D * Transpose(V)
  *
  * Support Matrix:
- *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+   \verbatim
+   | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+   \endverbatim
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
  *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
@@ -258,8 +281,10 @@ void nvte_fused_attn_fwd_kvpacked(
 /*! \brief Compute the backward of the dot product attention with packed KV input.
  *
  * Support Matrix:
- *  | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
- *  | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+   \verbatim
+   | backend | precision |    qkv layout   |          bias           |      mask      | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 | QKV_INTERLEAVED | NO_BIAS/POST_SCALE_BIAS | PADDING/CAUSAL |   No    |     <= 512      |    64    |
+   \endverbatim
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
  *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
