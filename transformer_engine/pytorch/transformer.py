@@ -37,6 +37,7 @@ warnings.filterwarnings("module", category=DeprecationWarning, module="transform
 
 __all__ = ["TransformerLayer"]
 
+
 class DropPath(torch.nn.Module):
     """Drop paths (Stochastic Depth) per sample
     (when applied in main path of residual blocks).
