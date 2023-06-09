@@ -66,15 +66,15 @@ NVTE_Fused_Attn_Backend select_fused_attn_backend(
       backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
     }
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)) {
-      if (flag_m512 == true) { 
+      if (flag_m512 == true) {
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
-      } else if ((flag_m512 == false) && (flag_arb == true)) { 
+      } else if ((flag_m512 == false) && (flag_arb == true)) {
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
       }
     }
     const char* env_backend = std::getenv("NVTE_FUSED_ATTN_BACKEND");
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
-            && (flag_arb == true) 
+            && (flag_arb == true)
             && (env_backend != nullptr)
             && (std::string(env_backend) == std::to_string(
                     NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))) {

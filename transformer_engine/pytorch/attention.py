@@ -415,15 +415,6 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
             rng_gen)
-        print('----fused attn fwd')
-        print(qkv.shape,qkv.dtype,qkv.isnan().sum(),qkv.isinf().sum())
-        print(out.shape,out.dtype,out.isnan().sum(),out.isinf().sum())
-        print(len(aux_ctx_tensors), aux_ctx_tensors[0].shape,aux_ctx_tensors[1].shape)
-        print(len(aux_ctx_tensors), aux_ctx_tensors[0].dtype,aux_ctx_tensors[1].dtype)
-        print(aux_ctx_tensors[0].min(),aux_ctx_tensors[0].max())
-        print(aux_ctx_tensors[1].min(),aux_ctx_tensors[1].max())
-        #print(aux_ctx_tensors[0][0,:,0,0])
-        #print(aux_ctx_tensors[0][0,0,:,0])
 
         ctx.save_for_backward(qkv, out, cu_seqlens)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -449,10 +440,6 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
             None, None, None, None, None, None, None, None, None,
             ctx.attn_scale, ctx.dropout_p, ctx.fast_zero_fill,
             ctx.qkv_layout, ctx.attn_bias_type, ctx.attn_mask_type)
-        print('----fused attn bwd')
-        print(dqkv.shape,dqkv.dtype,dqkv.isnan().sum(),dqkv.isinf().sum())
-        print(len(ctx.aux_ctx_tensors), ctx.aux_ctx_tensors[0].shape,ctx.aux_ctx_tensors[1].shape)
-        print(len(ctx.aux_ctx_tensors), ctx.aux_ctx_tensors[0].dtype,ctx.aux_ctx_tensors[1].dtype)
 
         # if no_bias, return dqkv
         if ctx.attn_bias_type == "no_bias":
@@ -616,7 +603,6 @@ class FusedAttention(torch.nn.Module):
                 dtype=torch.int32,
                 device=query_layer.device)
 
-            print("--- fused attn self attn qkv---")
             with self.attention_dropout_ctx():
                 output = FusedAttnFunc_qkvpacked.apply(
                     self.training,
@@ -914,10 +900,6 @@ class DotProductAttention(torch.nn.Module):
             "use_fused_attention: ",use_fused_attention)
 
         if use_flash_attention:
-            print('--- flash ---')
-            torch.save(query_layer, 'fl_q.pt')
-            torch.save(key_layer, 'fl_k.pt')
-            torch.save(value_layer, 'fl_v.pt')
             if checkpoint_core_attention:
                 return self._checkpointed_attention_forward(self.flash_attention,
                                                             query_layer,
@@ -926,10 +908,6 @@ class DotProductAttention(torch.nn.Module):
             return self.flash_attention(query_layer, key_layer, value_layer)
 
         if use_fused_attention:
-            print('--- fused ---')
-            torch.save(query_layer, 'fu_q.pt')
-            torch.save(key_layer, 'fu_k.pt')
-            torch.save(value_layer, 'fu_v.pt')
             if checkpoint_core_attention:
                 return self._checkpointed_attention_forward(self.fused_attention,
                                                             query_layer,
@@ -946,10 +924,6 @@ class DotProductAttention(torch.nn.Module):
                                                             fast_zero_fill)
 
         if checkpoint_core_attention:
-            print('--- unfused ---')
-            torch.save(query_layer, 'ufu_q.pt')
-            torch.save(key_layer, 'ufu_k.pt')
-            torch.save(value_layer, 'ufu_v.pt')
             return self._checkpointed_attention_forward(
                 self.unfused_attention,
                 query_layer,
