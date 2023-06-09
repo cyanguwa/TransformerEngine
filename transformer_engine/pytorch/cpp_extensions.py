@@ -136,7 +136,7 @@ def fused_attn_fwd_qkvpacked(
     amax_o: torch.Tensor = None,
     attn_scale: float = None,
     dropout: float = 0.0,
-    set_zero: bool = True,
+    fast_zero_fill: bool = True,
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
@@ -159,7 +159,7 @@ def fused_attn_fwd_qkvpacked(
     qkv_dtype: tex.DType
                 data type of QKV; in tex.DType, not torch.dtype
     fused_attention_backend: tex.NVTE_Fused_Attn_Backend
-                please see FusedAttention for details on supported backends.
+                please see FusedAttention module for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
                 shape [1, num_heads, max_seqlen, max_seqlen], same data type as qkv
@@ -179,9 +179,9 @@ def fused_attn_fwd_qkvpacked(
     dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
                 dropout must be 0.0 if is_training is False
-    set_zero: bool, default = True
-                if True, initializes the output tensor O to zero using the mha_fill method;
-                if False, doesn't initialize O after its allocation
+    fast_zero_fill: bool, default = True
+                if True, initializes the output tensor O to zero using the fast filling method;
+                if False, uses PyTorch's .fill_() method
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
@@ -279,7 +279,7 @@ def fused_attn_fwd_qkvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_fwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
-            is_training, attn_scale, dropout, set_zero,
+            is_training, attn_scale, dropout, fast_zero_fill,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens, qkv, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o, attn_bias,
@@ -310,7 +310,7 @@ def fused_attn_bwd_qkvpacked(
     amax_dqkv: torch.Tensor = None,
     attn_scale: float = None,
     dropout: float = 0.0,
-    set_zero: bool = True,
+    fast_zero_fill: bool = True,
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
@@ -338,7 +338,7 @@ def fused_attn_bwd_qkvpacked(
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
     fused_attention_backend: tex.NVTE_Fused_Attn_Backend
-                please see FusedAttention for details on supported backends.
+                please see FusedAttention module for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     d_scale_s: torch.Tensor, default = None
@@ -363,9 +363,9 @@ def fused_attn_bwd_qkvpacked(
     dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
                 dropout must be 0.0 if is_training is False
-    set_zero: bool, default = True
-                if True, initializes the output tensor O to zero using the mha_fill method;
-                if False, doesn't initialize O after its allocation
+    fast_zero_fill: bool, default = True
+                if True, initializes the output tensor O to zero using the fast filling method;
+                if False, uses PyTorch's .fill_() method
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
@@ -432,7 +432,7 @@ def fused_attn_bwd_qkvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_bwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,
-            attn_scale, dropout, set_zero,
+            attn_scale, dropout, fast_zero_fill,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens, qkv, o, d_o, qkv_dtype, aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,
@@ -464,7 +464,7 @@ def fused_attn_fwd_kvpacked(
     amax_o: torch.Tensor = None,
     attn_scale: float = None,
     dropout: float = 0.0,
-    set_zero: bool = True,
+    fast_zero_fill: bool = True,
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
@@ -495,7 +495,7 @@ def fused_attn_fwd_kvpacked(
     qkv_dtype: tex.DType
                 data type of Q and KV; in tex.DType, not torch.dtype
     fused_attention_backend: tex.NVTE_Fused_Attn_Backend
-                please see FusedAttention for details on supported backends.
+                please see FusedAttention module for details on supported backends.
     attn_bias: torch.Tensor, default = None
                 input tensor Bias when attn_bias_type is "pre_scale_bias" or "post_scale_bias";
                 shape [1, num_heads, max_seqlen_q, max_seqlen_kv], same data type as q and kv
@@ -515,9 +515,9 @@ def fused_attn_fwd_kvpacked(
     dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
                 dropout must be 0.0 if is_training is False
-    set_zero: bool, default = True
-                if True, initializes the output tensor O to zero using the mha_fill method;
-                if False, doesn't initialize O after its allocation
+    fast_zero_fill: bool, default = True
+                if True, initializes the output tensor O to zero using the fast filling method;
+                if False, uses PyTorch's .fill_() method
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
@@ -607,7 +607,7 @@ def fused_attn_fwd_kvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_fwd_kvpacked(
             b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-            is_training, attn_scale, dropout, set_zero,
+            is_training, attn_scale, dropout, fast_zero_fill,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens_q, cu_seqlens_kv, q, kv, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o,
@@ -641,7 +641,7 @@ def fused_attn_bwd_kvpacked(
     amax_dqkv: torch.Tensor = None,
     attn_scale: float = None,
     dropout: float = 0.0,
-    set_zero: bool = True,
+    fast_zero_fill: bool = True,
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
@@ -677,7 +677,7 @@ def fused_attn_bwd_kvpacked(
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
     fused_attention_backend: tex.NVTE_Fused_Attn_Backend
-                please see FusedAttention for details on supported backends.
+                please see FusedAttention module for details on supported backends.
     d_scale_qkv: torch.Tensor, default = None
                 input tensor for the dequantization of QKV in FP8 computations
     d_scale_s: torch.Tensor, default = None
@@ -703,9 +703,9 @@ def fused_attn_bwd_kvpacked(
     dropout: float, default = 0.0
                 dropout probability, 0.0 means no dropout, 1.0 means no output;
                 dropout must be 0.0 if is_training is False
-    set_zero: bool, default = True
-                if True, initializes the output tensor O to zero using the mha_fill method;
-                if False, doesn't initialize O after its allocation
+    fast_zero_fill: bool, default = True
+                if True, initializes the output tensor O to zero using the fast filling method;
+                if False, uses PyTorch's .fill_() method
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
@@ -782,7 +782,7 @@ def fused_attn_bwd_kvpacked(
     # execute kernel
     output_tensors = tex.fused_attn_bwd_kvpacked(
             b, max_seqlen_q, max_seqlen_kv, total_seqs_q, total_seqs_kv, h, d,
-            attn_scale, dropout, set_zero,
+            attn_scale, dropout, fast_zero_fill,
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens_q, cu_seqlens_kv, q, kv, o, d_o, qkv_dtype, aux_ctx_tensors,
             d_scale_qkv, d_scale_s, d_scale_o, d_scale_do,

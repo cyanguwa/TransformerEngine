@@ -34,35 +34,47 @@ NVTE_Fused_Attn_Backend select_fused_attn_backend(
           && (max_seqlen_q <= 512)
           && (head_dim == 64)
           && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
-          && (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
+          && (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK)
           && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
     backend = NVTE_Fused_Attn_Backend::NVTE_FP8;
   } else if ((q_dtype == DType::kFloat16) || (q_dtype == DType::kBFloat16)) {
-    if ((max_seqlen_q > 512) || (max_seqlen_kv > 512)
-            && (deviceProp.major >= 8)
-            && (deviceProp.minor >= 0)
-            && (max_seqlen_q == max_seqlen_kv)
-            && ((head_dim == 64) || (head_dim == 128))
-            && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
-            && (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
-            && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
-      backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
-    }
-    if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
-            && (deviceProp.major >= 8)
+    bool flag_m512 = false;
+    bool flag_arb = false;
+    if ((deviceProp.major >= 8)
             && (deviceProp.minor >= 0)
             && (head_dim == 64)
             && (dropout == 0.0)
             && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
                 || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS))
             && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
-                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK))
+                || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
             && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_KV_INTERLEAVED))) {
-      backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
+      flag_m512 = true;
+    }
+    if ((deviceProp.major >= 8)
+            && (deviceProp.minor >= 0)
+            && (max_seqlen_q == max_seqlen_kv)
+            && ((head_dim == 64) || (head_dim == 128))
+            && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
+            && (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+            && (qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)) {
+      flag_arb = true;
+    }
+    if (((max_seqlen_q > 512) || (max_seqlen_kv > 512))
+            && (flag_arb == true)) {
+      backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
+    }
+    if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)) {
+      if (flag_m512 == true) { 
+        backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
+      } else if ((flag_m512 == false) && (flag_arb == true)) { 
+        backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
+      }
     }
     const char* env_backend = std::getenv("NVTE_FUSED_ATTN_BACKEND");
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
+            && (flag_arb == true) 
             && (env_backend != nullptr)
             && (std::string(env_backend) == std::to_string(
                     NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))) {

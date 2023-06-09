@@ -395,7 +395,7 @@ class TransformerLayer(torch.nn.Module):
         rotary_pos_emb: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
-        set_zero: bool = True,
+        fast_zero_fill: bool = True,
     ) -> torch.Tensor:
         """
         Transformer Layer: attention block and a feedforward network (MLP)
@@ -442,7 +442,7 @@ class TransformerLayer(torch.nn.Module):
                     Bias type, {`no_bias`, `pre_scale_bias`, 'post_scale_bias`}
         core_attention_bias: Optional[torch.Tensor], default = `None`
                     Bias tensor for Q * K.T
-        set_zero: bool, defautl = `True`
+        fast_zero_fill: bool, defautl = `True`
                     Whether to set output tensors to 0 or not before use.
         """
 
@@ -474,7 +474,7 @@ class TransformerLayer(torch.nn.Module):
             rotary_pos_emb=rotary_pos_emb,
             core_attention_bias_type=core_attention_bias_type,
             core_attention_bias=core_attention_bias,
-            set_zero=set_zero,
+            fast_zero_fill=fast_zero_fill,
         )
 
         if self.apply_residual_connection_post_layernorm and not self.output_layernorm:
@@ -520,7 +520,7 @@ class TransformerLayer(torch.nn.Module):
                 checkpoint_core_attention=checkpoint_core_attention,
                 core_attention_bias_type=core_attention_bias_type,
                 core_attention_bias=core_attention_bias,
-                set_zero=set_zero,
+                fast_zero_fill=fast_zero_fill,
             )
             if self.apply_residual_connection_post_layernorm:
                 attention_output, attention_bias, residual = inter_attention_outputs

@@ -1209,7 +1209,7 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(
         Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
         output_S->data.dptr = nullptr;
         output_S->data.shape = {batch, num_head, max_seqlen, 1};
-        output_S->data.dtype = input_QKV->data.dtype;
+        output_S->data.dtype = DType::kFloat32;
         Tensor *output_rng_state = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[1]);
         output_rng_state->data.dptr = nullptr;
         output_rng_state->data.shape = {2};
