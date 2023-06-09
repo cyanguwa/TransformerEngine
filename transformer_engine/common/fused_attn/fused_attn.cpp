@@ -126,8 +126,6 @@ void nvte_fused_attn_fwd_qkvpacked(
                           QKV_type, QKV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen, max_seqlen, d);
-  std::cout << "Using fused attn backend: "
-            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
@@ -217,8 +215,6 @@ void nvte_fused_attn_bwd_qkvpacked(
                           QKV_type, QKV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen, max_seqlen, d);
-  std::cout << "Using fused attn backend: "
-            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
@@ -319,8 +315,6 @@ void nvte_fused_attn_fwd_kvpacked(
                           Q_type, KV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen_q, max_seqlen_kv, d);
-  std::cout << "Using fused attn backend: "
-            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
@@ -397,8 +391,6 @@ void nvte_fused_attn_bwd_kvpacked(
                           Q_type, KV_type,
                           qkv_layout, bias_type, attn_mask_type,
                           dropout, max_seqlen_q, max_seqlen_kv, d);
-  std::cout << "Using fused attn backend: "
-            << static_cast<int>(fused_attention_backend) << std::endl;
 
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)

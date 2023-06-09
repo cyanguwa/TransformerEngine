@@ -896,8 +896,6 @@ class DotProductAttention(torch.nn.Module):
             query_layer.shape[-1])
         is_fused_attn_avail = int(fused_attention_backend) >= 0
         use_fused_attention = use_fused_attention and is_fused_attn_avail
-        print("fused_attention_backend: ",fused_attention_backend,
-            "use_fused_attention: ",use_fused_attention)
 
         if use_flash_attention:
             if checkpoint_core_attention:
