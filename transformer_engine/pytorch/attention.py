@@ -879,6 +879,7 @@ class DotProductAttention(torch.nn.Module):
 
         if self.attn_mask_type == "padding" and attention_mask is not None:
             use_flash_attention = False
+            use_fused_attention = False
 
         if is_in_onnx_export_mode():
             use_flash_attention = False
