@@ -8,7 +8,7 @@ import flax
 import jax
 import jax.numpy as jnp
 import numpy as np
-from jax.sharding import Mesh 
+from jax.sharding import Mesh
 
 from utils import assert_allclose
 from transformer_engine.common.recipe import DelayedScaling
