@@ -192,7 +192,8 @@ static cudnn_frontend::Tensor createScaleWithOffset(
       generateMatrixStrides(output_dim[0], output_dim[1], output_dim[2],
                       0  /*s_kv = 0 for placeholder*/,
                       output_dim[3], output_stride,
-                      NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+                      //NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+                      NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED, NVTE_QKV_Matrix::NVTE_O_Matrix);
   } else {
       // Otherwise output dim and stride should be the same as prev block dim and stride
       for (int i = 0; i < 4; i++) {

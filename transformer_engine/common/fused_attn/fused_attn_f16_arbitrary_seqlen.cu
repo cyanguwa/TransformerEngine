@@ -906,17 +906,20 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             int64_t dq_dim[4] = {b, h, s_q, d};
             int64_t dq_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, dq_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+                            //layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
 
             int64_t dk_dim[4] = {b, h, s_kv, d};
             int64_t dk_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, dk_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+                            //layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
 
             int64_t dv_dim[4] = {b, h, s_kv, d};
             int64_t dv_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, dv_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+                            //layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
 
             // Outputs of backprop
             auto dQTensor = tensor_create(tensorType, dQ_ID, dq_dim, dq_stride, false, false);
@@ -1491,6 +1494,16 @@ void fused_attn_arbitrary_seqlen_bwd_q_k_v(size_t batch, size_t max_seqlen_q, si
         }
     }
 #endif
+//    use_workspace_opt = true; //false;
+    std::cout << "use_workspace_opt before: " << (int)use_workspace_opt << std::endl;
+        const char* env_workspace_opt = std::getenv("NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT");
+        if ((env_workspace_opt != nullptr)
+            && (strcmp(env_workspace_opt, "1") == 0)) {
+                use_workspace_opt = true;
+        } else {
+                use_workspace_opt = false;
+        }
+    std::cout << "use_workspace_opt after: " << (int)use_workspace_opt << std::endl;
 
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 attn_scale, p_dropout, qkv_layout,

@@ -931,9 +931,12 @@ void fused_attn_max_512_bwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv
                     .build();
 
             // outputs from bprop
-            auto dqTensor = tensor_create(tensorType, dQ_ID, q_dim, q_stride, false, false);
-            auto dkTensor = tensor_create(tensorType, dK_ID, k_dim, k_stride, false, false);
-            auto dvTensor = tensor_create(tensorType, dV_ID, k_dim, k_stride, false,
+            //auto dqTensor = tensor_create(tensorType, dQ_ID, q_dim, q_stride, false, false);
+            //auto dkTensor = tensor_create(tensorType, dK_ID, k_dim, k_stride, false, false);
+            //auto dvTensor = tensor_create(tensorType, dV_ID, k_dim, k_stride, false,
+            auto dqTensor = tensor_create(tensorType, dQ_ID, q_dim, o_stride, false, false);
+            auto dkTensor = tensor_create(tensorType, dK_ID, k_dim, o_stride, false, false);
+            auto dvTensor = tensor_create(tensorType, dV_ID, k_dim, o_stride, false,
                                           false);  // not transposed therefore k_dim and k_stride
 
             ////////////////////////////////////////////////////////
@@ -1410,6 +1413,7 @@ void fused_attn_max_512_fwd_q_k_v(size_t batch, size_t q_max_seqlen, size_t kv_m
     void *devPtrBias = input_Bias->data.dptr;
 
     void *devPtrO = output_O->data.dptr;
+    std::cout << "fwd devPtrQ " << devPtrQ << " " << devPtrK << " " << devPtrV << " " << devPtrO << std::endl;
 
     void *devPtrS = nullptr;
 

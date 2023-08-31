@@ -945,15 +945,22 @@ std::vector<at::Tensor> fused_attn_bwd_q_k_v(
               torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 3);
           break;
       case NVTE_QKV_Layout_Group::NVTE_H3D:
-          tmp_shape = std::vector<int64_t>{q_sizes.begin(), q_sizes.end()};
-          tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(3));
-          dQKV = torch::empty(c10::IntArrayRef(tmp_shape), options);
-          dQ = dQKV.index({"...", torch::indexing::Slice(0, 1, 1),
-              torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 2);
-          dK = dQKV.index({"...", torch::indexing::Slice(1, 2, 1),
-              torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 2);
-          dV = dQKV.index({"...", torch::indexing::Slice(2, torch::indexing::None, 1),
-              torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 2);
+          //dQ = torch::empty_like(Q);
+          dQ = torch::zeros_like(Q);
+          dK = torch::empty_like(K);
+          dV = torch::empty_like(V);
+          //dK = torch::zeros_like(K);
+          //dV = torch::zeros_like(V);
+          printf("---------- testing h3d q/k/v as o shape");
+          //tmp_shape = std::vector<int64_t>{q_sizes.begin(), q_sizes.end()};
+          //tmp_shape.insert(tmp_shape.begin() + tmp_shape.size() - 1, int64_t(3));
+          //dQKV = torch::empty(c10::IntArrayRef(tmp_shape), options);
+          //dQ = dQKV.index({"...", torch::indexing::Slice(0, 1, 1),
+          //    torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 2);
+          //dK = dQKV.index({"...", torch::indexing::Slice(1, 2, 1),
+          //    torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 2);
+          //dV = dQKV.index({"...", torch::indexing::Slice(2, torch::indexing::None, 1),
+          //    torch::indexing::Slice(0, torch::indexing::None, 1)}).squeeze(tmp_shape.size() - 2);
           break;
       case NVTE_QKV_Layout_Group::NVTE_HD_2HD:
           dQ = torch::empty_like(Q);

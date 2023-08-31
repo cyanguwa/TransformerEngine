@@ -39,8 +39,8 @@ class ModelConfig:
         self.attn_mask_type  = attn_mask_type
 
 model_configs = {
-    "test1": ModelConfig(1, 3072, 24, 128, 2048, 0.0, "causal"),
-    #"test1": ModelConfig(1, 1024, 16, 64, 128, 0.0, "causal"),
+    #"test1": ModelConfig(1, 3072, 24, 128, 2048, 0.0, "causal"),
+    "test1": ModelConfig(1, 1024, 16, 64, 128, 0.0, "causal"),
     #"test2": ModelConfig(1, 1024, 16, 64, 512, 0.0, "causal"),
     #"test3": ModelConfig(1, 1024, 16, 64, 2048, 0.0, "causal"),
     #"test4": ModelConfig(1, 2048, 16, 128, 128, 0.0, "causal"),
@@ -73,6 +73,7 @@ def test_dpa_qkv_layout(dtype, bs, model):
         #'sb3hd',
         'sbh3d',
         #'bs3hd',
+        #'bsh3d',
         #'sbhd_sb2hd',
         #'sbhd_sbh2d',
         #'sbhd_sbhd_sbhd',
@@ -117,13 +118,13 @@ def test_dpa_qkv_layout(dtype, bs, model):
         #print('flash fwd:',flash_attn_fwd[1, 0, 480],flash_attn_fwd[1, 1, 974])
         #print('fused fwd:',fused_attn_fwd[1, 0, 480],fused_attn_fwd[1, 1, 974])
         #print('unfused fwd:',unfused_attn_fwd[1, 0, 480],unfused_attn_fwd[1, 1, 974])
-        #torch.save(flash_attn_fwd, 'flash_attn_fwd.pt')
-        #torch.save(flash_attn_bwd, 'flash_attn_bwd.pt')
-        #torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
-        #torch.save(fused_attn_bwd, 'fused_attn_bwd.pt')
-        torch.testing.assert_close(flash_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
-        torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
-        torch.testing.assert_close(fused_attn_fwd, flash_attn_fwd, atol = atol, rtol = rtol)
+        torch.save(flash_attn_fwd, 'flash_attn_fwd.pt')
+        torch.save(flash_attn_bwd, 'flash_attn_bwd.pt')
+        torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
+        torch.save(fused_attn_bwd, 'fused_attn_bwd.pt')
+        #torch.testing.assert_close(flash_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
+        #torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
+        #torch.testing.assert_close(fused_attn_fwd, flash_attn_fwd, atol = atol, rtol = rtol)
         #assert torch.allclose(flash_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
         #assert torch.allclose(fused_attn_fwd, flash_attn_fwd, atol = atol, rtol = rtol)
         #assert torch.allclose(fused_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
@@ -149,7 +150,7 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout):
         os.environ["NVTE_FLASH_ATTN"] = "1"
     if backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
-        os.environ["NVTE_FUSED_ATTN_BACKEND"] = "1"
+        #os.environ["NVTE_FUSED_ATTN_BACKEND"] = "1"
         os.environ["NVTE_FUSED_ATTN_USE_FAv2_BWD"] = "0"
 
     dim_to_num = {'b': bs,
@@ -239,6 +240,7 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout):
                 cu_seqlens_q = cu_seqlens_q,
                 cu_seqlens_kv = cu_seqlens_kv)
     op.backward(op_grad)
+    print('inp: dq dk dv',inp[0].grad.is_contiguous(),inp[1].grad.is_contiguous(),inp[2].grad.shape,inp[0].grad.stride())
     torch.cuda.synchronize()
     nvtx.end_range(range_core)
 

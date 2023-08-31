@@ -12,6 +12,7 @@ from typing import Any, Callable, Optional, Tuple, Union, Dict
 from pkg_resources import packaging
 
 import torch
+import nvtx
 
 import transformer_engine_extensions as tex
 from transformer_engine.pytorch.cpp_extensions.fused_attn import (
@@ -353,6 +354,13 @@ class _PrepareQKVForFA(torch.autograd.Function):
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         dqkv = tex.fa_prepare_bwd(dq, dk, dv)
         dq, dk, dv = split_tensor_along_dim(dqkv, -1, 3)
+        torch.cuda.synchronize()
+        range_fused = nvtx.start_range("flash-contig")
+        print('dq, dk, dv before', dq.is_contiguous(), dk.is_contiguous(), dv.is_contiguous())
+        dq, dk, dv = [i.contiguous() for i in [dq, dk, dv]]
+        torch.cuda.synchronize()
+        nvtx.end_range(range_fused)
+        print('dq, dk, dv after', dq.is_contiguous(), dk.is_contiguous(), dv.is_contiguous())
         return dq, dk, dv
 
 def _get_qkv_layout(
@@ -742,11 +750,19 @@ class FusedAttnFunc_q_k_v(torch.autograd.Function):
             ctx.attn_scale, ctx.dropout_p, ctx.fast_zero_fill,
             ctx.qkv_layout, ctx.attn_bias_type, ctx.attn_mask_type)
 
+        torch.cuda.synchronize()
+        range_fused = nvtx.start_range("flash-contig")
+        print('fu: dq, dk, dv before', dq.is_contiguous(), dk.is_contiguous(), dv.is_contiguous())
+        dq, dk, dv = [i.contiguous() for i in [dq, dk, dv]]
+        torch.cuda.synchronize()
+        nvtx.end_range(range_fused)
+        print('fu: dq, dk, dv after', dq.is_contiguous(), dk.is_contiguous(), dv.is_contiguous())
         # if no_bias, return dqkv
         if ctx.attn_bias_type == "no_bias":
             ret = (None, None, None, None, None, dq, dk, dv, None, None, None,
                     None, None, None, None, None, None,
                     None, None, None, None, None, None)
+            print('apply bwd: dq dk dv',_get_qkv_layout(dq,dk,dv,qkv_format='sbhd'),dq.is_contiguous(),dv.is_contiguous(),dq.shape,dq.stride())
             return ret
             #return (None, None, None, None, None, dq, dk, dv, None, None, None, None,
             #        None, None, None, None, None, None,
@@ -1043,6 +1059,7 @@ class DotProductAttention(torch.nn.Module):
 
     def forward(
         self,
+        #query_key_value: Union[torch.Tensor, Tuple[torch.Tensor], List[torch.Tensor]],
         query_layer: torch.Tensor,
         key_layer: torch.Tensor,
         value_layer: torch.Tensor,
@@ -1247,6 +1264,7 @@ class DotProductAttention(torch.nn.Module):
                 )
 
         if use_flash_attention:
+            print('----------------- flsh ---------------')
             if checkpoint_core_attention:
                 return self._checkpointed_attention_forward(self.flash_attention,
                                                             query_layer,
@@ -1263,6 +1281,7 @@ class DotProductAttention(torch.nn.Module):
                                                             attn_mask_type = attn_mask_type)
 
         if use_fused_attention:
+            print('----------------- fused ---------------',str(int(fused_attention_backend)))
             if checkpoint_core_attention:
                 return self._checkpointed_attention_forward(self.fused_attention,
                               query_layer,
@@ -1286,6 +1305,7 @@ class DotProductAttention(torch.nn.Module):
                               core_attention_bias = core_attention_bias,
                               fast_zero_fill = fast_zero_fill)
 
+        print('----------------- unfused ---------------')
         if checkpoint_core_attention:
             return self._checkpointed_attention_forward(
                 self.unfused_attention,
