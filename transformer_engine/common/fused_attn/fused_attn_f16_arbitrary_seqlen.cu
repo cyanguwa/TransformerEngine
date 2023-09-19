@@ -613,6 +613,8 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 dropout_probability, tensorType, &ops, softmax_output);
             createSVBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops, dropout_output);
 
+            std::cout << "Total ops created: " << ops.size() << std::endl;
+
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
             }
@@ -645,8 +647,10 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
         };
 
         auto plan = get_plan(fmha_fprop_cache, descriptor);
+        std::cout << "Plan tag: " << plan.getTag() << std::endl;
 
         auto plan_workspace_size = plan.getWorkspaceSize();
+        std::cout << plan.describe() << " requires workspace " << plan_workspace_size << std::endl;
 
         // Exit to request upper level API to allocate memory if needed
         if (workspace == nullptr) {
@@ -678,6 +682,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                .setWorkspacePointer(workspace)
                                .setDataPointers(data_ptrs)
                                .build();
+        std::cout << "variantPack " << variantPack.describe() << std::endl;
 
         NVTE_CHECK_CUDNN(
             cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
@@ -797,6 +802,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
                             .build();
+            std::cout << reductionAddDesc.describe() << std::endl;
 
             // Create a reduction add node
             auto reductionAdd_op = cudnn_frontend::OperationBuilder(
@@ -805,6 +811,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setyDesc(afterReductionTensor)
                             .setreductionDesc(reductionAddDesc)
                             .build();
+            std::cout << reductionAdd_op.describe() << std::endl;
             ops.push_back(std::move(reductionAdd_op));
 
 
@@ -838,6 +845,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto matmul_0_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+            std::cout << matmul_0_Desc.describe() << std::endl;
 
             auto matmul_op0 = cudnn_frontend::OperationBuilder(
                             CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -846,6 +854,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setcMatDesc(pTensor)
                             .setmatmulDesc(matmul_0_Desc)
                             .build();
+            std::cout << matmul_op0.describe() << std::endl;
 
             ops.push_back(std::move(matmul_op0));
 
@@ -948,6 +957,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto matmul_1_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+            std::cout << matmul_1_Desc.describe() << std::endl;
 
             auto matmul_op1 = cudnn_frontend::OperationBuilder(
                             CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -956,6 +966,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setcMatDesc(dVTensor)
                             .setmatmulDesc(matmul_1_Desc)
                             .build();
+            std::cout << matmul_op1.describe() << std::endl;
 
             ops.push_back(std::move(matmul_op1));
 
@@ -972,6 +983,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             auto matmul_2_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+            std::cout << matmul_2_Desc.describe() << std::endl;
 
             auto matmul_op2 = cudnn_frontend::OperationBuilder(
                             CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -980,6 +992,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setcMatDesc(dSTensor)
                             .setmatmulDesc(matmul_2_Desc)
                             .build();
+            std::cout << matmul_op2.describe() << std::endl;
 
             ops.push_back(std::move(matmul_op2));
 
@@ -1057,6 +1070,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .setxDesc(kTransposeTensor)
                             .setyDesc(kTensor)
                             .build();
+            std::cout << reshape_op2.describe() << std::endl;
             ops.push_back(std::move(reshape_op2));
 
             /*******************************************************************************
@@ -1086,6 +1100,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                     .setcMatDesc(dqAccumTensor)
                                     .setmatmulDesc(matmul_3_Desc)
                                     .build();
+                std::cout << matmul_op3.describe() << std::endl;
 
                 ops.push_back(std::move(matmul_op3));
             } else {
@@ -1096,6 +1111,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                     .setcMatDesc(dQTensor)
                                     .setmatmulDesc(matmul_3_Desc)
                                     .build();
+                std::cout << matmul_op3.describe() << std::endl;
 
                 ops.push_back(std::move(matmul_op3));
             }
@@ -1111,6 +1127,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 .setxDesc(dPScaledTensor)
                                 .setyDesc(dPTransposeTensor)
                                 .build();
+            std::cout << reshape_op3.describe() << std::endl;
             ops.push_back(std::move(reshape_op3));
 
             auto matmul_4_Desc = cudnn_frontend::MatMulDescBuilder()
@@ -1123,6 +1140,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 .setcMatDesc(dKTensor)
                                 .setmatmulDesc(matmul_4_Desc)
                                 .build();
+            std::cout << matmul_op4.describe() << std::endl;
 
             ops.push_back(std::move(matmul_op4));
 
@@ -1134,6 +1152,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 auto identity_op = unary_pw_op_create(dqAccumTensor, dQTensor, identityDesc);
                 ops.push_back(std::move(identity_op));
             }
+            std::cout << "Total ops created: " << ops.size() << std::endl;
 
             for (unsigned int i = 0; i < ops.size(); i++) {
                 all_ops.push_back(&ops[i]);
@@ -1165,8 +1184,10 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         };
 
         auto plan = get_plan(fmha_bprop_cache, descriptor);
+        std::cout << "Plan tag: " << plan.getTag() << std::endl;
 
         auto plan_workspace_size = plan.getWorkspaceSize();
+        std::cout << plan.describe() << " requires workspace " << plan_workspace_size << std::endl;
 
         // Exit to request upper level API to allocate memory if needed
         size_t softmaxSum_workspace_size = b * h * s_q * sizeof(float);
@@ -1221,6 +1242,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                .setWorkspacePointer(workspace)
                                .setDataPointers(data_ptrs)
                                .build();
+        std::cout << "variantPack " << variantPack.describe() << std::endl;
 
         NVTE_CHECK_CUDNN(
             cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
