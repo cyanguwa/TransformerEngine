@@ -374,6 +374,7 @@ cudnn_frontend::Tensor tensor_create(
           .setVirtual(is_virtual)
           .setByValue(is_value)
           .build();
+  std::cout << tensor_created.describe() << std::endl;
   return tensor_created;
 }
 
@@ -393,6 +394,7 @@ cudnn_frontend::Tensor tensor_create_with_offset(
           .setByValue(is_value)
           .setRaggedOffset(raggedOffset)
           .build();
+  std::cout << tensor_created.describe() << std::endl;
   return tensor_created;
 }
 
@@ -402,6 +404,7 @@ cudnn_frontend::PointWiseDesc pw_desc_create(
           .setMode(mode)
           .setComputeType(type)
           .build();
+  std::cout << pw_desc_created.describe() << std::endl;
   return pw_desc_created;
 }
 
@@ -415,6 +418,7 @@ cudnn_frontend::Operation unary_pw_op_create(
                       .setyDesc(yDesc)
                       .setpwDesc(pwDesc)
                       .build();
+  std::cout << pw_op_created.describe() << std::endl;
   return pw_op_created;
 }
 
@@ -430,6 +434,7 @@ cudnn_frontend::Operation binary_pw_op_create(
                       .setyDesc(yDesc)
                       .setpwDesc(pwDesc)
                       .build();
+  std::cout << pw_op_created.describe() << std::endl;
   return pw_op_created;
 }
 
@@ -445,6 +450,7 @@ cudnn_frontend::Operation ternary_pw_op_create(
                            .setyDesc(yDesc)
                            .setpwDesc(pwDesc)
                            .build();
+  std::cout << pw_op_created.describe() << std::endl;
   return pw_op_created;
 }
 

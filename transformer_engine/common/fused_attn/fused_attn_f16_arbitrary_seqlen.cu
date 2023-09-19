@@ -105,6 +105,7 @@ createQKBMM(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
     auto matmul_1_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+    std::cout << matmul_1_Desc.describe() << std::endl;
 
     // Create a matmul 1 node
     auto matmul_op1 = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -113,6 +114,7 @@ createQKBMM(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             .setcMatDesc(sTensor)
                             .setmatmulDesc(matmul_1_Desc)
                             .build();
+    std::cout << matmul_op1.describe() << std::endl;
 
     ops->push_back(std::move(matmul_op1));
 
@@ -165,10 +167,12 @@ createCausalMask(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             .setAxis(2)
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+    std::cout << genIndexRowDesc.describe() << std::endl;
 
     // Create a gen index node
     auto genIndexRow_op = unary_pw_op_create(
                             prevBlockOutputTensor, rowIndexTensor, genIndexRowDesc);
+    std::cout << genIndexRow_op.describe() << std::endl;
 
     // Define the gen index for row descriptor
     auto genIndexColumnDesc = cudnn_frontend::PointWiseDescBuilder()
@@ -176,6 +180,7 @@ createCausalMask(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             .setAxis(3)
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+    std::cout << genIndexColumnDesc.describe() << std::endl;
 
     // Create a gen index node
     auto genIndexColumn_op = unary_pw_op_create(
@@ -263,6 +268,7 @@ createSoftmaxForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, bool isTra
                                 .setComputeType(CUDNN_DATA_FLOAT)
                                 .setReductionOp(CUDNN_REDUCE_TENSOR_MAX)
                                 .build();
+    std::cout << reductionMaxDesc.describe() << std::endl;
 
     // Create a reduction max node
     auto reductionMax_op = cudnn_frontend::OperationBuilder(
@@ -271,6 +277,7 @@ createSoftmaxForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, bool isTra
                                 .setyDesc(afterMaxReductionTensor)
                                 .setreductionDesc(reductionMaxDesc)
                                 .build();
+    std::cout << reductionMax_op.describe() << std::endl;
 
     // Define the subtract descriptor
     auto subtractDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_SUB);
@@ -292,6 +299,7 @@ createSoftmaxForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, bool isTra
                                 .setComputeType(CUDNN_DATA_FLOAT)
                                 .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
                                 .build();
+    std::cout << reductionAddDesc.describe() << std::endl;
 
     // Create a reduction add node
     auto reductionAdd_op = cudnn_frontend::OperationBuilder(
@@ -300,6 +308,7 @@ createSoftmaxForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, bool isTra
                                 .setyDesc(afterAddReductionTensor)
                                 .setreductionDesc(reductionAddDesc)
                                 .build();
+    std::cout << reductionAdd_op.describe() << std::endl;
 
     // Create log descriptor
     auto logDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_LOG);
@@ -386,6 +395,7 @@ createDropoutForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             .setRngDistribution(CUDNN_RNG_DISTRIBUTION_BERNOULLI)
                             .setBernoulliDistProbability(1.0 - probability)
                             .build();
+    std::cout << rngDesc.describe() << std::endl;
 
     // Create a rng node
     auto rng_op = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_RNG_DESCRIPTOR)
@@ -394,6 +404,7 @@ createDropoutForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             .setOffsetDesc(dropoutOffset)
                             .setRngDesc(rngDesc)
                             .build();
+    std::cout << rng_op.describe() << std::endl;
 
     // Define the multiply mask descriptor
     auto maskMulDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
@@ -467,6 +478,7 @@ createDropoutBackward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d
                             .setRngDistribution(CUDNN_RNG_DISTRIBUTION_BERNOULLI)
                             .setBernoulliDistProbability(1.0 - probability)
                             .build();
+    std::cout << rngDesc.describe() << std::endl;
 
     // Create a rng node
     auto rng_op = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_RNG_DESCRIPTOR)
@@ -475,6 +487,7 @@ createDropoutBackward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d
                             .setOffsetDesc(dropoutOffset)
                             .setRngDesc(rngDesc)
                             .build();
+    std::cout << rng_op.describe() << std::endl;
 
     // Define the multiply mask descriptor
     auto maskMulDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
@@ -522,6 +535,7 @@ createSVBMM(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
     auto matmul_2_Desc = cudnn_frontend::MatMulDescBuilder()
                             .setComputeType(CUDNN_DATA_FLOAT)
                             .build();
+    std::cout << matmul_2_Desc.describe() << std::endl;
 
     // Create a matmul 2 node
     auto matmul_op2 = cudnn_frontend::OperationBuilder(CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
@@ -530,6 +544,7 @@ createSVBMM(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             .setcMatDesc(oTensor)
                             .setmatmulDesc(matmul_2_Desc)
                             .build();
+    std::cout << matmul_op2.describe() << std::endl;
 
     ops->push_back(std::move(matmul_op2));
 }
