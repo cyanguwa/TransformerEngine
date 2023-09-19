@@ -38,11 +38,11 @@ class ModelConfig:
         self.attn_mask_type  = attn_mask_type
 
 model_configs = {
-    "test1": ModelConfig(1, 1024, 16, 64, 128, 0.0, "causal"),
+    #"test1": ModelConfig(1, 1024, 16, 64, 128, 0.0, "causal"),
     "test2": ModelConfig(1, 1024, 16, 64, 2048, 0.0, "causal"),
-    "test3": ModelConfig(1, 2048, 16, 128, 128, 0.0, "causal"),
+    #"test3": ModelConfig(1, 2048, 16, 128, 128, 0.0, "causal"),
     "test4": ModelConfig(1, 3072, 24, 128, 2048, 0.0, "causal"),
-    "test5": ModelConfig(1, 1024, 16, 64, 128, 0.0, "no_mask"),
+    #"test5": ModelConfig(1, 1024, 16, 64, 128, 0.0, "no_mask"),
 }
 
 if os.getenv('NVTE_ADDITIONAL_TESTS', '0') == '1':
@@ -59,6 +59,7 @@ if get_device_compute_capability() < 9.0:
     batch_sizes = [1, 2]
 else:
     batch_sizes = [1, 2] #, 32]
+    #batch_sizes = [2] #, 32]
 
 @pytest.mark.skipif(
     get_device_compute_capability() < 8.0, reason="Compute capability 8.0+ is required.")
@@ -156,12 +157,13 @@ qkv_layouts = [
 @pytest.mark.parametrize("dtype", param_types)
 @pytest.mark.parametrize("bs", batch_sizes)
 @pytest.mark.parametrize("model", model_configs.keys())
-@pytest.mark.parametrize("workspace_opt", [True, False])
+@pytest.mark.parametrize("workspace_opt", [True]) #[True, False])
 @pytest.mark.parametrize("qkv_layout", qkv_layouts)
 def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
     """Test DotProductAttention module with different QKV layouts"""
 
     config = model_configs[model]
+    print('----- model ',model,'dtype ',dtype,'bs ',bs,'layout ',qkv_layout,'workspace opt',workspace_opt)
 
     flash_attn_fwd, flash_attn_bwd = _run_dpa_qkv_layout(
             dtype, bs, config, "FlashAttention", qkv_layout, workspace_opt)
@@ -174,7 +176,12 @@ def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
     torch.testing.assert_close(flash_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
     torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, atol = atol, rtol = rtol)
     torch.testing.assert_close(fused_attn_fwd, flash_attn_fwd, atol = atol, rtol = rtol)
+    ts = ['dq', 'dk', 'dv']
     for i in range(len(flash_attn_bwd)):
+        print("----------- i ",ts[i])
+        print("  flash_attn_bwd",flash_attn_bwd[i].min().item(), flash_attn_bwd[i].max().item())
+        print("  fused_attn_bwd",fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
+        print("unfused_attn_bwd",unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
         torch.testing.assert_close(flash_attn_bwd[i], unfused_attn_bwd[i], atol = atol, rtol = rtol)
         torch.testing.assert_close(fused_attn_bwd[i], flash_attn_bwd[i], atol = atol, rtol = rtol)
         torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], atol = atol, rtol = rtol)

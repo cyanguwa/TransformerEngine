@@ -906,17 +906,20 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             int64_t dq_dim[4] = {b, h, s_q, d};
             int64_t dq_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, dq_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+                            //layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
 
             int64_t dk_dim[4] = {b, h, s_kv, d};
             int64_t dk_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, dk_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+                            //layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
 
             int64_t dv_dim[4] = {b, h, s_kv, d};
             int64_t dv_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, dv_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+                            //layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
 
             // Outputs of backprop
             auto dQTensor = tensor_create(tensorType, dQ_ID, dq_dim, dq_stride, false, false);
@@ -1351,13 +1354,14 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
             }
         }
         // will not be needed in cuDNN 8.9.6
-        NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
-        if ((layout_group == NVTE_QKV_Layout_Group::NVTE_HD_2HD)
-            || (layout_group == NVTE_QKV_Layout_Group::NVTE_HD_H2D)) {
-                use_workspace_opt = false;
-        }
+        //NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
+        //if ((layout_group == NVTE_QKV_Layout_Group::NVTE_HD_2HD)
+        //    || (layout_group == NVTE_QKV_Layout_Group::NVTE_HD_H2D)) {
+        //        use_workspace_opt = false;
+        //}
     }
 #endif
+    std::cout << "use opt: " << (int)use_workspace_opt << std::endl;
 
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen, max_seqlen, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
@@ -1505,13 +1509,14 @@ void fused_attn_arbitrary_seqlen_bwd_q_k_v(size_t batch, size_t max_seqlen_q, si
             }
         }
         // will not be needed in cuDNN 8.9.6
-        NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
-        if ((layout_group == NVTE_QKV_Layout_Group::NVTE_HD_2HD)
-            || (layout_group == NVTE_QKV_Layout_Group::NVTE_HD_H2D)) {
-                use_workspace_opt = false;
-        }
+        ///NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
+        ///if ((layout_group == NVTE_QKV_Layout_Group::NVTE_HD_2HD)
+        ///    || (layout_group == NVTE_QKV_Layout_Group::NVTE_HD_H2D)) {
+        ///        use_workspace_opt = false;
+        ///}
     }
 #endif
+    std::cout << "use opt: " << (int)use_workspace_opt << std::endl;
 
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
