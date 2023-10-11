@@ -256,7 +256,8 @@ createSoftmaxForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, bool isTra
             .setVirtual(true)
             .setByValue(false)
             .setReorderType(
-                cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
+                cudnn_frontend::TensorReordering_t::F16x16)
+                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
             .build();
 
     // Define the reduction descriptor
@@ -371,7 +372,8 @@ createDropoutForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
             .setVirtual(true)
             .setByValue(false)
             .setReorderType(
-                cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
+                cudnn_frontend::TensorReordering_t::F16x16)
+                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
             .build();
     // scale after dropout
     auto scaleDropoutTensor = tensor_create(
@@ -452,7 +454,8 @@ createDropoutBackward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d
             .setVirtual(true)
             .setByValue(false)
             .setReorderType(
-                cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
+                cudnn_frontend::TensorReordering_t::F16x16)
+                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
             .build();
     // scale after dropout
     auto scaleDropoutTensor = tensor_create(
@@ -545,131 +548,514 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 cudnnDataType_t tensorType,
                                 void *workspace, size_t *workspace_size,
                                 cudaStream_t stream, cudnnHandle_t handle) {
-    try {
-        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
+    //if (cudnnGetCudartVersion() < 12000) {
+    //    SKIP("Test requires cuda toolkit 12.0 or above");
+    //    return;
+    //}
 
-        if (!is_training) {
-          dropout_probability = 0.0f;
-        }
+    //if (cudnnGetVersion() < 8901) {
+    //    SKIP("Test requires cuDNN version 8.9.1 or above");
+    //    return;
+    //}
 
-        FADescriptor descriptor{b,           h,
-                                s_q,         s_kv,
-                                d,           scaling_factor,
-                                is_training, dropout_probability,
-                                layout,      NVTE_Bias_Type::NVTE_NO_BIAS,
-                                NVTE_Mask_Type::NVTE_CAUSAL_MASK,   tensorType,
-                                false};
+    //if (check_device_arch_newer_than("ampere") == false) {
+    //    SKIP("Test requires Hopper or above arch.");
+    //    return;
+    //}
 
-        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
-        static thread_local CacheType fmha_fprop_cache;
+    //int64_t b                 = 3;     // batch size
+    //int64_t h                 = 4;     // head dim
+    //int64_t s_q               = 1024;  // q tensor is padded to this seq length
+    //int64_t s_kv              = 1024;  // k and v tensor is padded to this seq length
+    //int64_t d                 = 128;   // hidden dim
+    bool is_inference         = !is_training; //false;
+    //float dropout_probability = 0.2f;
 
-        // Get plan from cache if cache is available, otherwise create one
-        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
-            // if hit, return
-            auto it = cache.find(descriptor);
-            if (it != cache.end()) {
-                auto plan = it->second;
-                return plan;
-            }
+    namespace fe = cudnn_frontend;
+    fe::graph::Graph mha_graph;
+    mha_graph.set_io_data_type(fe::DataType_t::HALF)
+        .set_intermediate_data_type(fe::DataType_t::FLOAT)
+        .set_compute_data_type(fe::DataType_t::FLOAT);
 
-            // otherwise, build the op_graph and the plan. Then update cache
-            std::vector<cudnn_frontend::Operation const*> all_ops;
-            std::vector<cudnn_frontend::Operation> ops;
+    auto Q = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("Q")
+                                  .set_dim({b, h, s_q, d})
+                                  .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
+    auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("K")
+                                  .set_dim({b, h, d, s_kv})
+                                  .set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
+    auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("V")
+                                  .set_dim({b, h, s_kv, d})
+                                  .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
 
-            // Q * K^T
-            auto sTensor = createQKBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops);
+    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                           .set_name("attn_scale")
+                                           .set_dim({1, 1, 1, 1})
+                                           .set_stride({1, 1, 1, 1})
+                                           .set_is_pass_by_value(true)
+                                           .set_data_type(fe::DataType_t::FLOAT));
 
-            // Q * K^T * bmmScale
-            auto sScaleTensor = createScale(
-                                b, h, s_q, s_kv, d, layout, CUDNN_DATA_FLOAT, sTensor, &ops);
+    auto bias = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                     .set_name("bias")
+                                     .set_dim({b, 1, s_q, s_kv})
+                                     .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
 
-            // Causual mask
-            auto sAfterMaskTensor = createCausalMask(
-                                b, h, s_q, s_kv, d, layout, tensorType, &ops, sScaleTensor);
+    auto seed = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                     .set_name("Seed")
+                                     .set_dim({1, 1, 1, 1})
+                                     .set_stride({1, 1, 1, 1})
+                                     .set_data_type(fe::DataType_t::INT32));
+    auto offset = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                       .set_name("Offset")
+                                       .set_dim({1, 1, 1, 1})
+                                       .set_stride({1, 1, 1, 1})
+                                       .set_data_type(fe::DataType_t::INT32));
+    auto scaled_dpa_options = fe::graph::Scaled_dot_product_flash_attention_attributes()
+                                                          .set_name("flash_attention")
+                                                          .set_is_inference(is_inference)
+                                                          .set_causal_mask(true)
+                                                          .set_attn_scale(attn_scale)
+                                                          .set_dropout(dropout_probability, seed, offset);
 
-            NVTE_CHECK(dropout_probability != 1.0f,
-                                "Dropout probability cannot be 1.0");
+    // Optional bias in flash attention is only supported 8.9.3 onwards
+    //if (cudnnGetVersion() >= 8904) {
+    //    scaled_dot_product_flash_attention_options.set_alibi_mask(true);
+    //}
 
-            auto softmax_output = createSoftmaxForward(
-                                b, h, s_q, s_kv, is_training, &ops, sAfterMaskTensor);
+    auto seq_q  = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                    .set_name("seq_q")
+                                    .set_dim({b, 1, 1, 1})
+                                    .set_stride({1, 1, 1, 1})
+                                    .set_data_type(fe::DataType_t::INT32));
+    auto seq_kv = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                    .set_name("seq_kv")
+                                    .set_dim({b, 1, 1, 1})
+                                    .set_stride({1, 1, 1, 1})
+                                    .set_data_type(fe::DataType_t::INT32));
 
-            // Dropout(softmax)
-            auto dropout_output = createDropoutForward(
-                                b, h, s_q, s_kv, d,
-                                dropout_probability, tensorType, &ops, softmax_output);
-            createSVBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops, dropout_output);
+    //if (cudnnGetVersion() >= 8903) {
+    //    scaled_dot_product_flash_attention_options.set_bias(bias)
+    //        .set_padding_mask(true)
+    //        .set_seq_len_q(seq_q)
+    //        .set_seq_len_kv(seq_kv);
+    //}
 
-            for (unsigned int i = 0; i < ops.size(); i++) {
-                all_ops.push_back(&ops[i]);
-            }
+    auto [O, Stats] = mha_graph.scaled_dot_product_flash_attention(
+        Q, K, V, scaled_dpa_options);
 
-            // Create an Operation Graph
-            auto opGraph = cudnn_frontend::OperationGraphBuilder()
-                                .setHandle(handle)
-                                .setOperationGraph(all_ops.size(), all_ops.data())
-                                .build();
+    O->set_output(true).set_stride({h * d, d, b * h * d, 1});
 
-            cudnn_frontend::EngineConfigList filtered_configs;
-            auto statuses = cudnn_frontend::get_heuristics_list<1>(
-                                {"heuristics_instant"}, opGraph, allowAllConfig,
-                                filtered_configs, true);
-
-            if (filtered_configs.size() == 0) {
-                cudnn_frontend::set_error_and_throw_exception(
-                        nullptr,
-                        CUDNN_STATUS_NOT_SUPPORTED,
-                        "run_mha_fprop: No config returned by the heuristics");
-            }
-
-            auto plan = cudnn_frontend::ExecutionPlanBuilder()
-                                .setHandle(handle)
-                                .setEngineConfig(filtered_configs[0], opGraph.getTag())
-                                .build();
-
-            cache.insert({descriptor, plan});
-            return plan;
-        };
-
-        auto plan = get_plan(fmha_fprop_cache, descriptor);
-
-        auto plan_workspace_size = plan.getWorkspaceSize();
-
-        // Exit to request upper level API to allocate memory if needed
-        if (workspace == nullptr) {
-            *workspace_size = plan_workspace_size;
-            return;
-        }
-
-        std::set<std::pair<uint64_t, void*>> data_ptrs;
-        // Add all the data pointers to be used in the variant pack
-        float negInfinity = -1.0E+10f;
-        float scale_dropout = 1.0f/(1.0f - dropout_probability);
-
-        data_ptrs.insert(std::pair<uint64_t, void*>(Q_ID, devPtrQ));
-        data_ptrs.insert(std::pair<uint64_t, void*>(K_ID, devPtrK));
-        data_ptrs.insert(std::pair<uint64_t, void*>(V_ID, devPtrV));
-        data_ptrs.insert(std::pair<uint64_t, void*>(MASK_VAL_ID, &negInfinity));
-        data_ptrs.insert(std::pair<uint64_t, void*>(S_CONST_ID, &scaling_factor));
-        data_ptrs.insert(std::pair<uint64_t, void*>(O_ID, devPtrO));
-        data_ptrs.insert(std::pair<uint64_t, void*>(D_SEED_ID, devPtrDropoutSeed));
-        data_ptrs.insert(std::pair<uint64_t, void*>(D_OFFSET_ID, devPtrDropoutOffset));
-        data_ptrs.insert(std::pair<uint64_t, void*>(D_CONST_ID, &scale_dropout));
-
-        // If training mode, we write out softmax stats
-        if (is_training) {
-            data_ptrs.insert(std::pair<uint64_t, void*>(S_STATS_ID, devPtrSoftmaxStats));
-        }
-
-        auto variantPack = cudnn_frontend::VariantPackBuilder()
-                               .setWorkspacePointer(workspace)
-                               .setDataPointers(data_ptrs)
-                               .build();
-
-        NVTE_CHECK_CUDNN(
-            cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
-    } catch (cudnn_frontend::cudnnException &e) {
-        NVTE_ERROR(e.what());
+    // Check that Stats tensor is real, which is only when its training step
+    if (Stats) {
+        Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
     }
+
+    //cudnnHandle_t handle;
+    //checkCudnnErr(cudnnCreate(&handle));
+    //REQUIRE(mha_graph.validate().is_good());
+
+    //REQUIRE(mha_graph.build_operation_graph(handle).is_good());
+
+    //auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+
+    //REQUIRE(plans.check_support(handle).is_good());
+
+    //REQUIRE(mha_graph.set_execution_plans(plans).is_good());
+
+    if (!mha_graph.validate().is_good()) {
+        NVTE_ERROR("MHA Graph validation is false.");
+        return;
+    }
+
+    if (!mha_graph.build_operation_graph(handle).is_good()) {
+        NVTE_ERROR("MHA Graph build is unsuccessful.");
+        return;
+    }
+
+    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+    
+    if (!plans.check_support(handle).is_good()) {
+        NVTE_ERROR("MHA Graph check support is unsuccessful.");
+        return;
+    }
+
+    if (!mha_graph.set_execution_plans(plans).is_good()) {
+        NVTE_ERROR("MHA Graph set execution plan is unsuccessful.");
+        return;
+    }
+
+    auto plan_workspace_size = mha_graph.get_workspace_size();
+
+    // Exit to request upper level API to allocate memory if needed
+    if (workspace == nullptr) {
+        *workspace_size = plan_workspace_size;
+        return;
+    }
+
+    ////// Build variant pack
+    //Surface<half> qkvTensor(b * s_q * 3 * h * d, false);
+    //Surface<half> oTensor(b * s_q * h * d, false);
+    //void* devPtrQ = qkvTensor.devPtr;
+    //void* devPtrK = (qkvTensor.devPtr + d);
+    //void* devPtrV = (qkvTensor.devPtr + 2 * d);
+    //void* devPtrO = oTensor.devPtr;
+
+    //float attn_scale_cpu = 0.5f;
+
+    //Surface<half> bTensor(b * 1 * s_q * s_kv, false);
+
+    //int32_t scaleSize  = 1;
+    //int32_t seed_value = 123456;
+    //Surface<int32_t> dropoutSeed(scaleSize, false, seed_value);
+    //Surface<int32_t> dropoutOffset(scaleSize, false, (int32_t)1);
+
+    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
+        {Q, devPtrQ},
+        {K, devPtrK},
+        {V, devPtrV},
+        {attn_scale, &scaling_factor},
+        {seed, devPtrDropoutSeed},
+        {offset, devPtrDropoutOffset},
+        {O, devPtrO}};
+        //{attn_scale, &attn_scale_cpu},
+        //{bias, bTensor.devPtr},
+        //{seed, dropoutSeed.devPtr},
+        //{offset, dropoutOffset.devPtr},
+
+#if (CUDNN_VERSION >= 8903)
+    //Surface<int32_t> devActualSeqlenQ(b, false);
+    //Surface<int32_t> devActualSeqlenKV(b, false);
+    //std::vector<int32_t> hostActualSeqlenQ(b, 20);
+    //std::vector<int32_t> hostActualSeqlenKV(b, 20);
+
+    //checkCudaErr(cudaMemcpy(
+    //    devActualSeqlenQ.devPtr, hostActualSeqlenQ.data(), sizeof(hostActualSeqlenQ[0]) * b, cudaMemcpyHostToDevice));
+    //checkCudaErr(cudaMemcpy(devActualSeqlenKV.devPtr,
+    //                        hostActualSeqlenKV.data(),
+    //                        sizeof(hostActualSeqlenKV[0]) * b,
+    //                        cudaMemcpyHostToDevice));
+    //checkCudaErr(cudaDeviceSynchronize());
+
+    // Prepare actual seqlen
+    constexpr size_t nthreads_per_block = 128;
+    const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
+    void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
+    void *devActualSeqlenKV = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
+    cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
+        b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
+        static_cast<const int32_t *>(devPtrCuSeqlenKV),
+        static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
+
+    variant_pack[seq_q]  = devActualSeqlenQ;
+    variant_pack[seq_kv] = devActualSeqlenKV;
+#endif
+
+    //Surface<float> statsTensor(b * h * s_q * 1, false);
+    if(is_inference == false) {
+        variant_pack[Stats] = devPtrSoftmaxStats; //statsTensor.devPtr;
+    }
+    
+    //Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
+    //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
+    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
+        NVTE_ERROR("MHA Graph execution is unsuccessful.");
+        return;
+    }
+
+    //checkCudaErr(cudaDeviceSynchronize());
+
+    //cudnnDestroy(handle);
+
+
+//    //int64_t b = 1;  // batch size
+//    //int64_t h = 2;  // head dim
+//    //int64_t s_q = 2048; // q tensor is padded to this seq length
+//    //int64_t s_kv = 2048; // k and v tensor is padded to this seq length
+//    //int64_t d = 128;  // hidden dim
+//    bool is_inference = !is_training;
+//    //float dropout_probability = 0.2f;
+//
+//    namespace fe = cudnn_frontend;
+//    fe::graph::Graph mha_graph;
+//    mha_graph.set_io_data_type(fe::DataType_t::HALF)
+//            .set_intermediate_data_type(fe::DataType_t::FLOAT)
+//            .set_compute_data_type(fe::DataType_t::FLOAT);
+//
+//    auto Q = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("Q")
+//            .set_dim({b, h, s_q , d})
+//            .set_stride({3*h*d   , 3*d, 3*b*h*d, 1}));
+//    auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("K")
+//            .set_dim({b, h, d   , s_kv})
+//            .set_stride({3*h*d, 3*d, 1      , 3*b*h*d}));
+//    auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("V")
+//            .set_dim({b, h, s_kv, d})
+//            .set_stride({3*h*d   , 3*d, 3*b*h*d, 1}));
+//
+//    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("attn_scale")
+//            .set_dim({1,1,1,1})
+//            .set_stride({1,1,1,1})
+//            .set_is_pass_by_value(true)
+//            .set_data_type(fe::DataType_t::FLOAT));
+//
+//    auto bias = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("bias")
+//            .set_dim({b, 1, s_q, s_kv})
+//            .set_stride({s_q*s_kv, s_q*s_kv, s_kv, 1}));
+//
+//    auto seed = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("Seed")
+//            .set_dim({1,1,1,1})
+//            .set_stride({1,1,1,1})
+//            .set_data_type(fe::DataType_t::INT32));
+//    auto offset = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("Offset")
+//            .set_dim({1,1,1,1})
+//            .set_stride({1,1,1,1})
+//            .set_data_type(fe::DataType_t::INT32));
+//    auto scaled_dpa_options = fe::graph::Scaled_dot_product_flash_attention_attributes()
+//                                            .set_name("flash_attention")
+//                                            .set_is_inference(is_inference)
+//                                            .set_causal_mask(true)
+//                                            .set_attn_scale(attn_scale)
+//                                            .set_dropout(dropout_probability, seed, offset);
+//
+//    // Optional bias in flash attention is only supported 8.9.3 onwards
+//    //#if (CUDNN_VERSION >= 8930)
+//    //    scaled_dpa_options.set_bias(bias);
+//    //#endif
+//
+//    auto [O, Stats] = mha_graph.scaled_dot_product_flash_attention(
+//            Q, K, V, scaled_dpa_options);
+//    O->set_output(true);
+//
+//    // Check that Stats tensor is real, which is only when its training step
+//    if(Stats) {
+//        Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
+//    }
+//
+//    #if (CUDNN_VERSION < 8900)
+//        NVTE_ERROR("MHA Graph requires cudnn 8.9 and up");
+//        return;
+//    #endif
+//    //if (check_device_arch_newer_than("hopper") == false) {
+//    //    NVTE_ERROR("MHA Graph requires Hopper or above arch.");
+//    //    return;
+//    //}
+//
+//    //cudnnHandle_t handle;
+//    //checkCudnnErr(cudnnCreate(&handle));
+//
+//    if (!mha_graph.validate().is_good()) {
+//        NVTE_ERROR("MHA Graph validation is false.");
+//        return;
+//    }
+//
+//    if (!mha_graph.build_operation_graph(handle).is_good()) {
+//        NVTE_ERROR("MHA Graph build is unsuccessful.");
+//        return;
+//    }
+//
+//    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+//    
+//    if (!plans.check_support(handle).is_good()) {
+//        NVTE_ERROR("MHA Graph check support is unsuccessful.");
+//        return;
+//    }
+//
+//    if (!mha_graph.set_execution_plans(plans).is_good()) {
+//        NVTE_ERROR("MHA Graph set execution plan is unsuccessful.");
+//        return;
+//    }
+//
+//    auto plan_workspace_size = mha_graph.get_workspace_size();
+//
+//    // Exit to request upper level API to allocate memory if needed
+//    if (workspace == nullptr) {
+//        *workspace_size = plan_workspace_size;
+//        return;
+//    }
+//
+//    //// Build variant pack
+//    //Surface<half> qkvTensor(b * s_q * 3 * h * d, false);
+//    //Surface<half> oTensor(b * s_q * h * d, false);
+//    //void* devPtrQ = qkvTensor.devPtr;
+//    //void* devPtrK = (qkvTensor.devPtr + d);
+//    //void* devPtrV = (qkvTensor.devPtr + 2 * d);
+//    //void* devPtrO = oTensor.devPtr;
+//
+//    //float attn_scale_cpu = 0.5f;
+//
+//    //Surface<half> bTensor(b * 1 * s_q * s_kv, false);
+//
+//    //int32_t scaleSize = 1;
+//    //int32_t seed_value = 123456;
+//    //Surface<int32_t> dropoutSeed(scaleSize, false, seed_value);
+//    //Surface<int32_t> dropoutOffset(scaleSize, false, (int32_t)1);
+//    
+//    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
+//        {Q, devPtrQ}
+//        , {K, devPtrK}
+//        , {V, devPtrV}
+//        , {attn_scale, &scaling_factor}
+//        , {seed, devPtrDropoutSeed}
+//        , {offset, devPtrDropoutOffset}
+//        , {O, devPtrO}
+//    };
+//        //, {bias, bTensor.devPtr}
+//        //, {attn_scale, &attn_scale_cpu}
+//        //, {seed, dropoutSeed.devPtr}
+//        //, {offset, dropoutOffset.devPtr}
+//
+//    //Surface<float> statsTensor(b * h * s_q * 1, false);
+//    if(is_inference == false) {
+//        variant_pack[Stats] = devPtrSoftmaxStats; //statsTensor.devPtr;
+//    }
+//    
+//    //Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
+//    //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
+//    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
+//        NVTE_ERROR("MHA Graph execution is unsuccessful.");
+//        return;
+//    }
+//
+//    //checkCudaErr(cudaDeviceSynchronize());
+//
+//    //cudnnDestroy(handle);
+
+
+
+
+//    try {
+//        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
+//
+//        if (!is_training) {
+//          dropout_probability = 0.0f;
+//        }
+//
+//        FADescriptor descriptor{b,           h,
+//                                s_q,         s_kv,
+//                                d,           scaling_factor,
+//                                is_training, dropout_probability,
+//                                layout,      NVTE_Bias_Type::NVTE_NO_BIAS,
+//                                NVTE_Mask_Type::NVTE_CAUSAL_MASK,   tensorType,
+//                                false};
+//
+//        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
+//        static thread_local CacheType fmha_fprop_cache;
+//
+//        // Get plan from cache if cache is available, otherwise create one
+//        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
+//            // if hit, return
+//            auto it = cache.find(descriptor);
+//            if (it != cache.end()) {
+//                auto plan = it->second;
+//                return plan;
+//            }
+//
+//            // otherwise, build the op_graph and the plan. Then update cache
+//            std::vector<cudnn_frontend::Operation const*> all_ops;
+//            std::vector<cudnn_frontend::Operation> ops;
+//
+//            // Q * K^T
+//            auto sTensor = createQKBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops);
+//
+//            // Q * K^T * bmmScale
+//            auto sScaleTensor = createScale(
+//                                b, h, s_q, s_kv, d, layout, CUDNN_DATA_FLOAT, sTensor, &ops);
+//
+//            // Causual mask
+//            auto sAfterMaskTensor = createCausalMask(
+//                                b, h, s_q, s_kv, d, layout, tensorType, &ops, sScaleTensor);
+//
+//            NVTE_CHECK(dropout_probability != 1.0f,
+//                                "Dropout probability cannot be 1.0");
+//
+//            auto softmax_output = createSoftmaxForward(
+//                                b, h, s_q, s_kv, is_training, &ops, sAfterMaskTensor);
+//
+//            // Dropout(softmax)
+//            auto dropout_output = createDropoutForward(
+//                                b, h, s_q, s_kv, d,
+//                                dropout_probability, tensorType, &ops, softmax_output);
+//            createSVBMM(b, h, s_q, s_kv, d, layout, tensorType, &ops, dropout_output);
+//
+//            for (unsigned int i = 0; i < ops.size(); i++) {
+//                all_ops.push_back(&ops[i]);
+//            }
+//
+//            // Create an Operation Graph
+//            auto opGraph = cudnn_frontend::OperationGraphBuilder()
+//                                .setHandle(handle)
+//                                .setOperationGraph(all_ops.size(), all_ops.data())
+//                                .build();
+//
+//            cudnn_frontend::EngineConfigList filtered_configs;
+//            auto statuses = cudnn_frontend::get_heuristics_list<1>(
+//                                {"heuristics_instant"}, opGraph, allowAllConfig,
+//                                filtered_configs, true);
+//
+//            if (filtered_configs.size() == 0) {
+//                cudnn_frontend::set_error_and_throw_exception(
+//                        nullptr,
+//                        CUDNN_STATUS_NOT_SUPPORTED,
+//                        "run_mha_fprop: No config returned by the heuristics");
+//            }
+//
+//            auto plan = cudnn_frontend::ExecutionPlanBuilder()
+//                                .setHandle(handle)
+//                                .setEngineConfig(filtered_configs[0], opGraph.getTag())
+//                                .build();
+//
+//            cache.insert({descriptor, plan});
+//            return plan;
+//        };
+//
+//        auto plan = get_plan(fmha_fprop_cache, descriptor);
+//
+//        auto plan_workspace_size = plan.getWorkspaceSize();
+//
+//        // Exit to request upper level API to allocate memory if needed
+//        if (workspace == nullptr) {
+//            *workspace_size = plan_workspace_size;
+//            return;
+//        }
+//
+//        std::set<std::pair<uint64_t, void*>> data_ptrs;
+//        // Add all the data pointers to be used in the variant pack
+//        float negInfinity = -1.0E+10f;
+//        float scale_dropout = 1.0f/(1.0f - dropout_probability);
+//
+//        data_ptrs.insert(std::pair<uint64_t, void*>(Q_ID, devPtrQ));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(K_ID, devPtrK));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(V_ID, devPtrV));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(MASK_VAL_ID, &negInfinity));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(S_CONST_ID, &scaling_factor));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(O_ID, devPtrO));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(D_SEED_ID, devPtrDropoutSeed));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(D_OFFSET_ID, devPtrDropoutOffset));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(D_CONST_ID, &scale_dropout));
+//
+//        // If training mode, we write out softmax stats
+//        if (is_training) {
+//            data_ptrs.insert(std::pair<uint64_t, void*>(S_STATS_ID, devPtrSoftmaxStats));
+//        }
+//
+//        auto variantPack = cudnn_frontend::VariantPackBuilder()
+//                               .setWorkspacePointer(workspace)
+//                               .setDataPointers(data_ptrs)
+//                               .build();
+//
+//        NVTE_CHECK_CUDNN(
+//            cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
+//    } catch (cudnn_frontend::cudnnException &e) {
+//        NVTE_ERROR(e.what());
+//    }
 }
 
 void fused_attn_arbitrary_seqlen_bwd_impl(
@@ -681,535 +1067,743 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             void* devPtrDropoutSeed, void* devPtrDropoutOffset,
                             cudnnDataType_t tensorType, void *workspace, size_t *workspace_size,
                             cudaStream_t stream, cudnnHandle_t handle, bool use_workspace_opt) {
-    try {
-        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 
-        FADescriptor descriptor{b,           h,
-                                s_q,         s_kv,
-                                d,           scaling_factor,
-                                true,        dropout_probability,
-                                layout,      NVTE_Bias_Type::NVTE_NO_BIAS,
-                                NVTE_Mask_Type::NVTE_CAUSAL_MASK,   tensorType,
-                                use_workspace_opt};
-
-        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
-        static thread_local CacheType fmha_bprop_cache;
-
-        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
-            auto it = cache.find(descriptor);
-            if (it != cache.end()) {
-                return it->second;
-            }
-
-            std::vector<cudnn_frontend::Operation const*> all_ops;
-            std::vector<cudnn_frontend::Operation> ops;
-
-            // Creates the necessary tensor descriptors
-            int64_t q_dim[4] = {b, h, s_q, d};
-            int64_t q_stride[4];
-            generateMatrixStrides(
-                            b, h, s_q, s_kv, d, q_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
-
-            int64_t k_transpose_dim[4] =  {b, h, d, s_kv};
-            int64_t k_transpose_stride[4];
-            generateMatrixStrides(
-                            b, h, s_q, s_kv, d, k_transpose_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
-
-            int64_t v_transpose_dim[4] =  {b, h, d, s_kv};
-            int64_t v_transpose_stride[4];
-            generateMatrixStrides(
-                            b, h, s_q, s_kv, d, v_transpose_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_V_Matrix_Transpose);
-
-            int64_t p_dim[4] = {b, h, s_q, s_kv};
-            int64_t p_stride[4];
-            generateMatrixStrides(
-                            b, h, s_q, s_kv, d, p_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
-
-            int64_t p_transpose_dim[4] = {b, h, s_kv, s_q};
-            int64_t p_transpose_stride[4];
-            p_transpose_stride[0] = p_stride[0];
-            p_transpose_stride[1] = p_stride[1];
-            p_transpose_stride[2] = p_stride[3];
-            p_transpose_stride[3] = p_stride[2];
-
-            int64_t o_dim[4] =  {b, h, s_q, d};
-            int64_t o_stride[4];
-            generateMatrixStrides(
-                            b, h, s_q, s_kv, d, o_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
-
-            int64_t dqAccum_dim[4] =  {b, h, s_q, d};
-            int64_t dqAccum_stride[4];
-            generateMatrixStrides(b, h, s_q, s_kv, d, dqAccum_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
-
-            int64_t scale_dim[4] = {1, 1, 1, 1};
-            int64_t scale_stride[4] = {1, 1, 1, 1};
-
-            /*******************************************************************************
-             *                          Dot product dO * O                                */ 
-
-            // output and gradient of the output
-            auto oTensor = tensor_create(tensorType, O_ID, o_dim, o_stride, false, false);
-            auto dOTensor = tensor_create(tensorType, dO_ID, o_dim, o_stride, false, false);
-
-            auto dotProductTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID, o_dim,
-                            o_stride, true, false);  // is virtual
-
-            // Create pointwise mul
-            auto multiplyDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
-
-            // do * O
-            auto dotProductOp = binary_pw_op_create(
-                            dOTensor, oTensor, dotProductTensor, multiplyDesc);
-            ops.push_back(std::move(dotProductOp));
-
-            /*******************************************************************************
-             *                         Reduction(dO * O)                                  */
-
-            int64_t reduction_dim[4] = {b, h, s_q, 1};
-            int64_t reduction_stride[4] = {h * s_q, s_q, 1, 1};
-
-            // reduction(dO * O)
-            auto afterReductionTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 1, reduction_dim,
-                            reduction_stride, true, false);  // is virtual
-            auto reductionAddDesc = cudnn_frontend::ReductionDescBuilder()
-                            .setComputeType(CUDNN_DATA_FLOAT)
-                            .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
-                            .build();
-
-            // Create a reduction add node
-            auto reductionAdd_op = cudnn_frontend::OperationBuilder(
-                            CUDNN_BACKEND_OPERATION_REDUCTION_DESCRIPTOR)
-                            .setxDesc(dotProductTensor)
-                            .setyDesc(afterReductionTensor)
-                            .setreductionDesc(reductionAddDesc)
-                            .build();
-            ops.push_back(std::move(reductionAdd_op));
-
-
-            /*******************************************************************************
-             *                        reduction(dO * O) * scale prob -> softmaxSum         */
-
-            auto softmaxSumTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, S_SUM_ID, reduction_dim,
-                            reduction_stride, false, false);  // not virtual
-            auto scaleProbTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, SCALE_PROB, scale_dim,
-                            scale_stride, false, true);  // not virtual
-            auto softmaxSumOp = binary_pw_op_create(
-                            afterReductionTensor, scaleProbTensor,
-                            softmaxSumTensor, multiplyDesc);
-            ops.push_back(std::move(softmaxSumOp));
-
-            /*******************************************************************************
-             *                        Q @ K.T -> P                                        */
-
-            // Inputs from fprop
-            auto qTensor = tensor_create(tensorType, Q_ID, q_dim, q_stride, false, false);
-            auto kTransposeTensor = tensor_create(
-                            tensorType, K_ID, k_transpose_dim,
-                            k_transpose_stride, false, false);
-            auto pTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 2, p_dim,
-                            p_stride, true, false);  // is virtual
-
-            // matmul to calculate dvTensor
-            auto matmul_0_Desc = cudnn_frontend::MatMulDescBuilder()
-                            .setComputeType(CUDNN_DATA_FLOAT)
-                            .build();
-
-            auto matmul_op0 = cudnn_frontend::OperationBuilder(
-                            CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                            .setaMatDesc(qTensor)
-                            .setbMatDesc(kTransposeTensor)
-                            .setcMatDesc(pTensor)
-                            .setmatmulDesc(matmul_0_Desc)
-                            .build();
-
-            ops.push_back(std::move(matmul_op0));
-
-            /*******************************************************************************
-             *                        P * bmmScale -> pAfterScale                         */
-
-            auto bmmScaleTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, S_CONST_ID, scale_dim,
-                            scale_stride, false, true);  // not virtual and by value
-            auto pAfterScaleTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 2000, p_dim,
-                            p_stride, true, false);  // virtual
-            auto scaleOp = binary_pw_op_create(
-                            pTensor, bmmScaleTensor, pAfterScaleTensor, multiplyDesc);
-            ops.push_back(std::move(scaleOp));
-
-            /*******************************************************************************
-             *                          Causal masking -> pAfterMaskTensor                */
-
-            auto pAfterMaskTensor = createCausalMask(
-                            b, h, s_q, s_kv, d, layout, tensorType, &ops, pAfterScaleTensor);
-
-            /*******************************************************************************
-             *                          pAfterMaskTensor - softmaxStats -> pAfterSubtract */
-
-            auto pAfterSubtractTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 3, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto softmaxStatsTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, S_STATS_ID, reduction_dim,
-                            reduction_stride, false, false);  // not virtual
-            auto subtractDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_SUB);
-            auto subtract_op = binary_pw_op_create(
-                            pAfterMaskTensor, softmaxStatsTensor,
-                            pAfterSubtractTensor, subtractDesc);
-            ops.push_back(std::move(subtract_op));
-
-            /*******************************************************************************
-             *                          e^(pAfterSubtract) -> pAfterSoftmax               */
-
-            auto pAfterSoftmaxTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 4, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto expDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_EXP);
-            auto exp_op = unary_pw_op_create(
-                            pAfterSubtractTensor, pAfterSoftmaxTensor, expDesc);
-            ops.push_back(std::move(exp_op));
-
-            /*******************************************************************************
-             *                          Dropout -> afterScaleDropout                      */
-
-            auto dropoutMaskTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 5, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto afterScaleDropoutTensor = createDropoutBackward(
-                            b, h, s_q, s_kv, d, dropout_probability, tensorType,
-                            &ops, pAfterSoftmaxTensor, dropoutMaskTensor);
-
-            /*******************************************************************************
-             *                          afterScaleDropout -> sTransposeTensor             */
-
-            auto sTransposeTensor = tensor_create(
-                            tensorType, VIRTUAL_ID + 6, p_transpose_dim,
-                            p_transpose_stride, true, false);  // is virtual
-            auto reshape_op = cudnn_frontend::OperationBuilder(
-                            CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
-                            .setxDesc(afterScaleDropoutTensor)
-                            .setyDesc(sTransposeTensor)
-                            .build();
-            ops.push_back(std::move(reshape_op));
-
-            // Outputs of bprop
-            int64_t dq_dim[4] = {b, h, s_q, d};
-            int64_t dq_stride[4];
-            generateMatrixStrides(b, h, s_q, s_kv, d, dq_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
-
-            int64_t dk_dim[4] = {b, h, s_kv, d};
-            int64_t dk_stride[4];
-            generateMatrixStrides(b, h, s_q, s_kv, d, dk_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
-
-            int64_t dv_dim[4] = {b, h, s_kv, d};
-            int64_t dv_stride[4];
-            generateMatrixStrides(b, h, s_q, s_kv, d, dv_stride,
-                            layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
-
-            // Outputs of backprop
-            auto dQTensor = tensor_create(tensorType, dQ_ID, dq_dim, dq_stride, false, false);
-            auto dKTensor = tensor_create(tensorType, dK_ID, dk_dim, dk_stride, false, false);
-            auto dVTensor = tensor_create(tensorType, dV_ID, dv_dim, dv_stride, false, false);
-                            // not virtual
-
-            /*******************************************************************************
-             *                          sTransposeTensor @ dO -> dV                       */
-
-            auto matmul_1_Desc = cudnn_frontend::MatMulDescBuilder()
-                            .setComputeType(CUDNN_DATA_FLOAT)
-                            .build();
-
-            auto matmul_op1 = cudnn_frontend::OperationBuilder(
-                            CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                            .setaMatDesc(sTransposeTensor)
-                            .setbMatDesc(dOTensor)
-                            .setcMatDesc(dVTensor)
-                            .setmatmulDesc(matmul_1_Desc)
-                            .build();
-
-            ops.push_back(std::move(matmul_op1));
-
-            /*******************************************************************************
-             *                          dO @ V.T -> dS                                    */
-
-            auto vTransposeTensor = tensor_create(
-                            tensorType, V_ID, v_transpose_dim,
-                            v_transpose_stride, false, false);
-            auto dSTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 7, p_dim,
-                            p_stride, true, false);  // is virtual
-
-            auto matmul_2_Desc = cudnn_frontend::MatMulDescBuilder()
-                            .setComputeType(CUDNN_DATA_FLOAT)
-                            .build();
-
-            auto matmul_op2 = cudnn_frontend::OperationBuilder(
-                            CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                            .setaMatDesc(dOTensor)
-                            .setbMatDesc(vTransposeTensor)
-                            .setcMatDesc(dSTensor)
-                            .setmatmulDesc(matmul_2_Desc)
-                            .build();
-
-            ops.push_back(std::move(matmul_op2));
-
-            /*******************************************************************************
-             *                          dS * dropoutMask -> dSAfterDropout                */
-
-            auto dSAfterDropoutTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 8, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto multiply_op = binary_pw_op_create(
-                            dSTensor, dropoutMaskTensor,
-                            dSAfterDropoutTensor, multiplyDesc);
-            ops.push_back(std::move(multiply_op));
-
-            /*******************************************************************************
-             *                          dSAfterDropout - softmaxSum -> dsAfterSubtract    */
-
-            auto dsAfterSubtractTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 9, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto subtract_op2 = binary_pw_op_create(
-                            dSAfterDropoutTensor, softmaxSumTensor,
-                            dsAfterSubtractTensor, subtractDesc);
-            ops.push_back(std::move(subtract_op2));
-
-            /*******************************************************************************
-             *                          dsAfterSubtract * afterSoftmax -> dP              */
-
-            auto dPTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 10, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto multiply_op2 = binary_pw_op_create(
-                            dsAfterSubtractTensor, pAfterSoftmaxTensor,
-                            dPTensor, multiplyDesc);
-            ops.push_back(std::move(multiply_op2));
-
-            /*******************************************************************************
-             *                          dP * scaleDropout -> dPAfterDropoutScale          */
-
-            auto dPAfterDropoutScaleTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 11, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto scaleDropoutTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, D_CONST_ID, scale_dim,
-                            scale_stride, false, true);  // is by value
-            auto multiply_op3 = binary_pw_op_create(
-                            dPTensor, scaleDropoutTensor,
-                            dPAfterDropoutScaleTensor, multiplyDesc);
-            ops.push_back(std::move(multiply_op3));
-
-            /*******************************************************************************
-             *                          dPAfterDropoutScale * bmmScale -> dPScaledTensor  */
-
-            auto dPScaledTensor = tensor_create(
-                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 12, p_dim,
-                            p_stride, true, false);  // is virtual
-            auto multiply_op4 = binary_pw_op_create(
-                            dPAfterDropoutScaleTensor, bmmScaleTensor,
-                            dPScaledTensor, multiplyDesc);
-            ops.push_back(std::move(multiply_op4));
-
-            /*******************************************************************************
-             *                          K.T -> K                                          */
-
-            int64_t kDim[4] = {b, h, s_kv, d};
-            int64_t kStride[4];
-            generateMatrixStrides(
-                            b, h, s_q, s_kv, d, kStride,
-                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
-            auto kTensor = tensor_create(
-                            tensorType, VIRTUAL_ID + 13, kDim,
-                            kStride, true, false);  // is virtual
-            auto reshape_op2 = cudnn_frontend::OperationBuilder(
-                            CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
-                            .setxDesc(kTransposeTensor)
-                            .setyDesc(kTensor)
-                            .build();
-            ops.push_back(std::move(reshape_op2));
-
-            /*******************************************************************************
-             *                          dP @ K -> dqAccumTensor / dqTensor                */
-
-            auto dqAccumTensor = cudnn_frontend::TensorBuilder()
-                .setDim(4, dqAccum_dim)
-                .setStride(4, dqAccum_stride)
-                .setId(dQ_ACCUM_ID)
-                .setAlignment(16)  // 16B alignment is needed to run a tensor core engine
-                .setDataType(CUDNN_DATA_FLOAT)
-                .setVirtual(false)
-                .setByValue(false)
-                .setReorderType(
-                cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
-                .build();
-
-            auto matmul_3_Desc = cudnn_frontend::MatMulDescBuilder()
-                                .setComputeType(CUDNN_DATA_FLOAT)
-                                .build();
-
-            if (!use_workspace_opt) {
-                auto matmul_op3 = cudnn_frontend::OperationBuilder(
-                                    CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                                    .setaMatDesc(dPScaledTensor)
-                                    .setbMatDesc(kTensor)
-                                    .setcMatDesc(dqAccumTensor)
-                                    .setmatmulDesc(matmul_3_Desc)
-                                    .build();
-
-                ops.push_back(std::move(matmul_op3));
-            } else {
-                auto matmul_op3 = cudnn_frontend::OperationBuilder(
-                                    CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                                    .setaMatDesc(dPScaledTensor)
-                                    .setbMatDesc(kTensor)
-                                    .setcMatDesc(dQTensor)
-                                    .setmatmulDesc(matmul_3_Desc)
-                                    .build();
-
-                ops.push_back(std::move(matmul_op3));
-            }
-
-            /*******************************************************************************
-             *                          dP.T @ Q -> dK                                    */
-
-            auto dPTransposeTensor = tensor_create(
-                                CUDNN_DATA_FLOAT, VIRTUAL_ID + 14, p_transpose_dim,
-                                p_transpose_stride, true, false);  // is virtual
-            auto reshape_op3 = cudnn_frontend::OperationBuilder(
-                                CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
-                                .setxDesc(dPScaledTensor)
-                                .setyDesc(dPTransposeTensor)
-                                .build();
-            ops.push_back(std::move(reshape_op3));
-
-            auto matmul_4_Desc = cudnn_frontend::MatMulDescBuilder()
-                                .setComputeType(CUDNN_DATA_FLOAT)
-                                .build();
-            auto matmul_op4 = cudnn_frontend::OperationBuilder(
-                                CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
-                                .setaMatDesc(dPTransposeTensor)
-                                .setbMatDesc(qTensor)
-                                .setcMatDesc(dKTensor)
-                                .setmatmulDesc(matmul_4_Desc)
-                                .build();
-
-            ops.push_back(std::move(matmul_op4));
-
-            /*******************************************************************************
-             *                          dqAccumTensor @ identity -> dqTensor              */
-
-            if (!use_workspace_opt) {
-                auto identityDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_IDENTITY);
-                auto identity_op = unary_pw_op_create(dqAccumTensor, dQTensor, identityDesc);
-                ops.push_back(std::move(identity_op));
-            }
-
-            for (unsigned int i = 0; i < ops.size(); i++) {
-                all_ops.push_back(&ops[i]);
-            }
-
-            // Create an Operation Graph
-            auto opGraph = cudnn_frontend::OperationGraphBuilder()
-                               .setHandle(handle)
-                               .setOperationGraph(all_ops.size(), all_ops.data())
-                               .build();
-
-            cudnn_frontend::EngineConfigList filtered_configs;
-            auto statuses = cudnn_frontend::get_heuristics_list<1>(
-                {"heuristics_instant"}, opGraph, allowAllConfig, filtered_configs, true);
-
-            if (filtered_configs.size() == 0) {
-                cudnn_frontend::set_error_and_throw_exception(
-                    nullptr, CUDNN_STATUS_NOT_SUPPORTED,
-                    "run_mha_bprop: No config returned by the heuristics");
-            }
-
-            auto plan = cudnn_frontend::ExecutionPlanBuilder()
-                            .setHandle(handle)
-                            .setEngineConfig(filtered_configs[0], opGraph.getTag())
-                            .build();
-
-            cache.insert({descriptor, plan});
-            return plan;
-        };
-
-        auto plan = get_plan(fmha_bprop_cache, descriptor);
-
-        auto plan_workspace_size = plan.getWorkspaceSize();
-
-        // Exit to request upper level API to allocate memory if needed
-        size_t softmaxSum_workspace_size = b * h * s_q * sizeof(float);
-        size_t dqAccum_workspace_size = b * s_q * h * d * sizeof(float);
-        if (workspace == nullptr) {
-            if (use_workspace_opt) {
-                *workspace_size = plan_workspace_size + softmaxSum_workspace_size;
-            } else {
-                *workspace_size = plan_workspace_size + softmaxSum_workspace_size
-                                  + dqAccum_workspace_size;
-            }
-            return;
-        }
-
-        void *devPtrSoftmaxSum = static_cast<int8_t *>(workspace) + plan_workspace_size;
-        void *devPtrdQAccumulator = nullptr;
-        if (!use_workspace_opt) {
-            devPtrdQAccumulator = static_cast<int8_t *>(devPtrSoftmaxSum)
-                                        + softmaxSum_workspace_size;
-            NVTE_CHECK_CUDA(cudaMemsetAsync(
-                                  devPtrdQAccumulator, 0, dqAccum_workspace_size, stream));
-        }
-
-        std::set<std::pair<uint64_t, void *>> data_ptrs;
-        // add all the data pointers to be used in the variant pack
-        float negInfinity = -1.0E+10f;
-        float scale_dropout = 1.0f/(1.0f - dropout_probability);
-        data_ptrs.insert(std::pair<uint64_t, void*>(dQ_ID, devPtrdQ));
-        if (!use_workspace_opt) {
-            data_ptrs.insert(std::pair<uint64_t, void*>(dQ_ACCUM_ID, devPtrdQAccumulator));
-        }
-        data_ptrs.insert(std::pair<uint64_t, void*>(dK_ID, devPtrdK));
-        data_ptrs.insert(std::pair<uint64_t, void*>(dV_ID, devPtrdV));
-
-        data_ptrs.insert(std::pair<uint64_t, void*>(Q_ID, devPtrQ));
-        data_ptrs.insert(std::pair<uint64_t, void*>(K_ID, devPtrKTranspose));
-        data_ptrs.insert(std::pair<uint64_t, void*>(V_ID, devPtrVTranspose));
-        data_ptrs.insert(std::pair<uint64_t, void*>(O_ID, devPtrO));
-        data_ptrs.insert(std::pair<uint64_t, void*>(dO_ID, devPtrdO));
-        data_ptrs.insert(std::pair<uint64_t, void*>(S_STATS_ID, devPtrSoftmaxStats));
-        data_ptrs.insert(std::pair<uint64_t, void*>(S_SUM_ID, devPtrSoftmaxSum));
-        data_ptrs.insert(std::pair<uint64_t, void*>(D_SEED_ID, devPtrDropoutSeed));
-        data_ptrs.insert(std::pair<uint64_t, void*>(D_OFFSET_ID, devPtrDropoutOffset));
-        data_ptrs.insert(std::pair<uint64_t, void*>(MASK_VAL_ID, &negInfinity));
-
-        float scaleProb = 1.0f - dropout_probability;
-        data_ptrs.insert(std::pair<uint64_t, void*>(D_CONST_ID, &scale_dropout));
-        data_ptrs.insert(std::pair<uint64_t, void*>(S_CONST_ID, &scaling_factor));
-        data_ptrs.insert(std::pair<uint64_t, void*>(SCALE_PROB, &scaleProb));
-
-        auto variantPack = cudnn_frontend::VariantPackBuilder()
-                               .setWorkspacePointer(workspace)
-                               .setDataPointers(data_ptrs)
-                               .build();
-
-        NVTE_CHECK_CUDNN(
-            cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
-    } catch (cudnn_frontend::cudnnException &e) {
-        NVTE_ERROR(e.what());
+    //if (cudnnGetCudartVersion() < 12000) {
+    //        SKIP("Test requires cuda toolkit 12.0 or above");
+    //        return;
+    //}
+    //if (cudnnGetVersion() < 8903) {
+    //        SKIP("Test requires cuDNN version 8.9.3 or above");
+    //        return;
+    //}
+
+    //if (check_device_arch_newer_than("ampere") == false) {
+    //    SKIP("Test requires Hopper or above arch.");
+    //    return;
+    //}
+
+    //int64_t b                 = 3;     // batch size
+    //int64_t h                 = 4;     // head dim
+    //int64_t s_q               = 1024;  // q tensor is padded to this seq length
+    //int64_t s_kv              = 1024;  // k and v tensor is padded to this seq length
+    //int64_t d                 = 128;   // hidden dim
+
+    bool is_bias = false; //true;
+    //float dropout_probability = 0.2f;
+
+    namespace fe = cudnn_frontend;
+    fe::graph::Graph mha_graph;
+    mha_graph.set_io_data_type(fe::DataType_t::HALF)
+                      .set_intermediate_data_type(fe::DataType_t::FLOAT)
+                      .set_compute_data_type(fe::DataType_t::FLOAT);
+
+    // used for bias, and dropout != 0.0f
+    std::shared_ptr<fe::graph::Tensor_attributes> bias, dropout_seed, dropout_offset;
+
+    auto q = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("Q")
+                                  .set_dim({b, h, s_q, d})
+                                  .set_stride({h * s_q * d, s_q * d, d, 1}));
+    auto k = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("K")
+                                  .set_dim({b, h, d, s_kv})
+                                  .set_stride({h * s_kv * d, s_kv * d, 1, d}));
+    auto v = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("V")
+                                  .set_dim({b, h, d, s_kv})
+                                  .set_stride({h * s_kv * d, s_kv * d, 1, d}));
+    auto o = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("O")
+                                  .set_dim({b, h, s_q, d})
+                                  .set_stride({h * s_q * d, s_q * d, d, 1}));
+    auto dO = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("dO")
+                                  .set_dim({b, h, s_q, d})
+                                  .set_stride({h * s_q * d, s_q * d, d, 1}));
+    auto stats = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("stats")
+                                  .set_dim({b, h, s_q, 1})
+                                  .set_stride({h * s_q, s_q, 1, 1})
+                                  .set_data_type(fe::DataType_t::FLOAT));
+
+    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("attn_scale")
+                                  .set_dim({1, 1, 1, 1})
+                                  .set_stride({1, 1, 1, 1})
+                                  .set_is_pass_by_value(true)
+                                  .set_data_type(fe::DataType_t::FLOAT));
+
+    if (is_bias) {
+        bias = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("bias")
+                                  .set_dim({b, 1, s_q, s_kv})
+                                  .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
     }
+
+    if (dropout_probability != 0.0f) {
+        dropout_seed = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("Seed")
+                                  .set_dim({1, 1, 1, 1})
+                                  .set_stride({1, 1, 1, 1})
+                                  .set_data_type(fe::DataType_t::INT32));
+        dropout_offset = mha_graph.tensor(fe::graph::Tensor_attributes()
+                                  .set_name("Offset")
+                                  .set_dim({1, 1, 1, 1})
+                                  .set_stride({1, 1, 1, 1})
+                                  .set_data_type(fe::DataType_t::INT32));
+    }
+
+    auto scaled_dot_product_flash_attention_backward_options = fe::graph::Scaled_dot_product_flash_attention_backward_attributes()
+                                  .set_name("flash_attention_backward")
+                                  .set_causal_mask(true)
+                                  .set_attn_scale(attn_scale);
+
+    if (is_bias) {
+        scaled_dot_product_flash_attention_backward_options.set_bias(bias);
+    }
+
+    if (dropout_probability != 0.0f) {
+        scaled_dot_product_flash_attention_backward_options.set_dropout(
+            dropout_probability, dropout_seed, dropout_offset);
+    }
+
+    auto [dQ, dK, dV] = mha_graph.scaled_dot_product_flash_attention_backward(
+        q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
+
+    dQ->set_output(true).set_dim({b, h, s_q, d}).set_stride({h * s_q * d, s_q * d, d, 1});
+    dK->set_output(true).set_dim({b, h, s_kv, d}).set_stride({h * s_kv * d, s_kv * d, d, 1});
+    dV->set_output(true).set_dim({b, h, s_kv, d}).set_stride({h * s_kv * d, s_kv * d, d, 1});
+
+    //cudnnHandle_t handle;
+    //checkCudnnErr(cudnnCreate(&handle));
+
+    //REQUIRE(mha_graph.validate().is_good());
+
+    //REQUIRE(mha_graph.build_operation_graph(handle).is_good());
+
+    //auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+
+    //REQUIRE(plans.check_support(handle).is_good());
+
+    //REQUIRE(mha_graph.set_execution_plans(plans).is_good());
+    if (!mha_graph.validate().is_good()) {
+        NVTE_ERROR("MHA Graph validation is false.");
+        return;
+    }
+
+    if (!mha_graph.build_operation_graph(handle).is_good()) {
+        NVTE_ERROR("MHA Graph build is unsuccessful.");
+        return;
+    }
+
+    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+    
+    if (!plans.check_support(handle).is_good()) {
+        NVTE_ERROR("MHA Graph check support is unsuccessful.");
+        return;
+    }
+
+    if (!mha_graph.set_execution_plans(plans).is_good()) {
+        NVTE_ERROR("MHA Graph set execution plan is unsuccessful.");
+        return;
+    }
+
+    auto plan_workspace_size = mha_graph.get_workspace_size();
+
+    // Exit to request upper level API to allocate memory if needed
+    if (workspace == nullptr) {
+        *workspace_size = plan_workspace_size;
+        return;
+    }
+
+    // build variant pack
+    //// inputs
+    //Surface<half> q_tensor(b * h * s_q * d, false);
+    //Surface<half> k_tensor(b * h * d * s_kv, false);
+    //Surface<half> v_tensor(b * h * d * s_kv, false);
+    //Surface<half> o_tensor(b * h * s_q * d, false);
+    //Surface<half> dO_tensor(b * h * s_q * d, false);
+    //Surface<half> stats_tensor(b * h * s_q * 1, false);
+    //// outputs
+    //Surface<half> dQ_tensor(b * h * s_q * d, false);
+    //Surface<half> dK_tensor(b * h * s_kv * d, false);
+    //Surface<half> dV_tensor(b * h * s_kv * d, false);
+
+    //float attn_scale_cpu = 0.5f;
+
+    //Surface<half> bias_tensor(b * 1 * s_q * s_kv, false);
+
+    //int32_t seed_value = 123456;
+    //int32_t offset_value = 789;
+    //Surface<int32_t> dropout_seed_tensor(1, false, seed_value);
+    //Surface<int32_t> dropout_offset_tensor(1, false, offset_value);
+
+    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
+        // inputs
+        {q, devPtrQ},
+        {k, devPtrKTranspose},
+        {v, devPtrVTranspose},
+        {o, devPtrO},
+        {dO, devPtrdO},
+        {stats, devPtrSoftmaxStats},
+        // outputs
+        {dQ, devPtrdQ},
+        {dK, devPtrdK},
+        {dV, devPtrdV},
+        // pass by value
+        {attn_scale, &scaling_factor}
+    };
+
+    //if (is_bias) {
+    //    variant_pack[bias] = bias_tensor.devPtr;
+    //}
+
+    if (dropout_probability != 0.0f) {
+        variant_pack[dropout_seed] = devPtrDropoutSeed; //dropout_seed_tensor.devPtr;
+        variant_pack[dropout_offset] = devPtrDropoutOffset; //dropout_offset_tensor.devPtr;
+    }
+
+//    Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
+    //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
+    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
+        NVTE_ERROR("MHA graph execution is unsuccessful!");
+        return;
+    }
+
+//    checkCudaErr(cudaDeviceSynchronize());
+//
+//    cudnnDestroy(handle);
+
+//    try {
+//        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
+//
+//        FADescriptor descriptor{b,           h,
+//                                s_q,         s_kv,
+//                                d,           scaling_factor,
+//                                true,        dropout_probability,
+//                                layout,      NVTE_Bias_Type::NVTE_NO_BIAS,
+//                                NVTE_Mask_Type::NVTE_CAUSAL_MASK,   tensorType,
+//                                use_workspace_opt};
+//
+//        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
+//        static thread_local CacheType fmha_bprop_cache;
+//
+//        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
+//            auto it = cache.find(descriptor);
+//            if (it != cache.end()) {
+//                return it->second;
+//            }
+//
+//            std::vector<cudnn_frontend::Operation const*> all_ops;
+//            std::vector<cudnn_frontend::Operation> ops;
+//
+//            // Creates the necessary tensor descriptors
+//            int64_t q_dim[4] = {b, h, s_q, d};
+//            int64_t q_stride[4];
+//            generateMatrixStrides(
+//                            b, h, s_q, s_kv, d, q_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+//
+//            int64_t k_transpose_dim[4] =  {b, h, d, s_kv};
+//            int64_t k_transpose_stride[4];
+//            generateMatrixStrides(
+//                            b, h, s_q, s_kv, d, k_transpose_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
+//
+//            int64_t v_transpose_dim[4] =  {b, h, d, s_kv};
+//            int64_t v_transpose_stride[4];
+//            generateMatrixStrides(
+//                            b, h, s_q, s_kv, d, v_transpose_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_V_Matrix_Transpose);
+//
+//            int64_t p_dim[4] = {b, h, s_q, s_kv};
+//            int64_t p_stride[4];
+//            generateMatrixStrides(
+//                            b, h, s_q, s_kv, d, p_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
+//
+//            int64_t p_transpose_dim[4] = {b, h, s_kv, s_q};
+//            int64_t p_transpose_stride[4];
+//            p_transpose_stride[0] = p_stride[0];
+//            p_transpose_stride[1] = p_stride[1];
+//            p_transpose_stride[2] = p_stride[3];
+//            p_transpose_stride[3] = p_stride[2];
+//
+//            int64_t o_dim[4] =  {b, h, s_q, d};
+//            int64_t o_stride[4];
+//            generateMatrixStrides(
+//                            b, h, s_q, s_kv, d, o_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+//
+//            int64_t dqAccum_dim[4] =  {b, h, s_q, d};
+//            int64_t dqAccum_stride[4];
+//            generateMatrixStrides(b, h, s_q, s_kv, d, dqAccum_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+//
+//            int64_t scale_dim[4] = {1, 1, 1, 1};
+//            int64_t scale_stride[4] = {1, 1, 1, 1};
+//
+//            /*******************************************************************************
+//             *                          Dot product dO * O                                */ 
+//
+//            // output and gradient of the output
+//            auto oTensor = tensor_create(tensorType, O_ID, o_dim, o_stride, false, false);
+//            auto dOTensor = tensor_create(tensorType, dO_ID, o_dim, o_stride, false, false);
+//
+//            auto dotProductTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID, o_dim,
+//                            o_stride, true, false);  // is virtual
+//
+//            // Create pointwise mul
+//            auto multiplyDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_MUL);
+//
+//            // do * O
+//            auto dotProductOp = binary_pw_op_create(
+//                            dOTensor, oTensor, dotProductTensor, multiplyDesc);
+//            ops.push_back(std::move(dotProductOp));
+//
+//            /*******************************************************************************
+//             *                         Reduction(dO * O)                                  */
+//
+//            int64_t reduction_dim[4] = {b, h, s_q, 1};
+//            int64_t reduction_stride[4] = {h * s_q, s_q, 1, 1};
+//
+//            // reduction(dO * O)
+//            auto afterReductionTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 1, reduction_dim,
+//                            reduction_stride, true, false);  // is virtual
+//            auto reductionAddDesc = cudnn_frontend::ReductionDescBuilder()
+//                            .setComputeType(CUDNN_DATA_FLOAT)
+//                            .setReductionOp(CUDNN_REDUCE_TENSOR_ADD)
+//                            .build();
+//
+//            // Create a reduction add node
+//            auto reductionAdd_op = cudnn_frontend::OperationBuilder(
+//                            CUDNN_BACKEND_OPERATION_REDUCTION_DESCRIPTOR)
+//                            .setxDesc(dotProductTensor)
+//                            .setyDesc(afterReductionTensor)
+//                            .setreductionDesc(reductionAddDesc)
+//                            .build();
+//            ops.push_back(std::move(reductionAdd_op));
+//
+//
+//            /*******************************************************************************
+//             *                        reduction(dO * O) * scale prob -> softmaxSum         */
+//
+//            auto softmaxSumTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, S_SUM_ID, reduction_dim,
+//                            reduction_stride, false, false);  // not virtual
+//            auto scaleProbTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, SCALE_PROB, scale_dim,
+//                            scale_stride, false, true);  // not virtual
+//            auto softmaxSumOp = binary_pw_op_create(
+//                            afterReductionTensor, scaleProbTensor,
+//                            softmaxSumTensor, multiplyDesc);
+//            ops.push_back(std::move(softmaxSumOp));
+//
+//            /*******************************************************************************
+//             *                        Q @ K.T -> P                                        */
+//
+//            // Inputs from fprop
+//            auto qTensor = tensor_create(tensorType, Q_ID, q_dim, q_stride, false, false);
+//            auto kTransposeTensor = tensor_create(
+//                            tensorType, K_ID, k_transpose_dim,
+//                            k_transpose_stride, false, false);
+//            auto pTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 2, p_dim,
+//                            p_stride, true, false);  // is virtual
+//
+//            // matmul to calculate dvTensor
+//            auto matmul_0_Desc = cudnn_frontend::MatMulDescBuilder()
+//                            .setComputeType(CUDNN_DATA_FLOAT)
+//                            .build();
+//
+//            auto matmul_op0 = cudnn_frontend::OperationBuilder(
+//                            CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+//                            .setaMatDesc(qTensor)
+//                            .setbMatDesc(kTransposeTensor)
+//                            .setcMatDesc(pTensor)
+//                            .setmatmulDesc(matmul_0_Desc)
+//                            .build();
+//
+//            ops.push_back(std::move(matmul_op0));
+//
+//            /*******************************************************************************
+//             *                        P * bmmScale -> pAfterScale                         */
+//
+//            auto bmmScaleTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, S_CONST_ID, scale_dim,
+//                            scale_stride, false, true);  // not virtual and by value
+//            auto pAfterScaleTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 2000, p_dim,
+//                            p_stride, true, false);  // virtual
+//            auto scaleOp = binary_pw_op_create(
+//                            pTensor, bmmScaleTensor, pAfterScaleTensor, multiplyDesc);
+//            ops.push_back(std::move(scaleOp));
+//
+//            /*******************************************************************************
+//             *                          Causal masking -> pAfterMaskTensor                */
+//
+//            auto pAfterMaskTensor = createCausalMask(
+//                            b, h, s_q, s_kv, d, layout, tensorType, &ops, pAfterScaleTensor);
+//
+//            /*******************************************************************************
+//             *                          pAfterMaskTensor - softmaxStats -> pAfterSubtract */
+//
+//            auto pAfterSubtractTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 3, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto softmaxStatsTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, S_STATS_ID, reduction_dim,
+//                            reduction_stride, false, false);  // not virtual
+//            auto subtractDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_SUB);
+//            auto subtract_op = binary_pw_op_create(
+//                            pAfterMaskTensor, softmaxStatsTensor,
+//                            pAfterSubtractTensor, subtractDesc);
+//            ops.push_back(std::move(subtract_op));
+//
+//            /*******************************************************************************
+//             *                          e^(pAfterSubtract) -> pAfterSoftmax               */
+//
+//            auto pAfterSoftmaxTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 4, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto expDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_EXP);
+//            auto exp_op = unary_pw_op_create(
+//                            pAfterSubtractTensor, pAfterSoftmaxTensor, expDesc);
+//            ops.push_back(std::move(exp_op));
+//
+//            /*******************************************************************************
+//             *                          Dropout -> afterScaleDropout                      */
+//
+//            auto dropoutMaskTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 5, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto afterScaleDropoutTensor = createDropoutBackward(
+//                            b, h, s_q, s_kv, d, dropout_probability, tensorType,
+//                            &ops, pAfterSoftmaxTensor, dropoutMaskTensor);
+//
+//            /*******************************************************************************
+//             *                          afterScaleDropout -> sTransposeTensor             */
+//
+//            auto sTransposeTensor = tensor_create(
+//                            tensorType, VIRTUAL_ID + 6, p_transpose_dim,
+//                            p_transpose_stride, true, false);  // is virtual
+//            auto reshape_op = cudnn_frontend::OperationBuilder(
+//                            CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
+//                            .setxDesc(afterScaleDropoutTensor)
+//                            .setyDesc(sTransposeTensor)
+//                            .build();
+//            ops.push_back(std::move(reshape_op));
+//
+//            // Outputs of bprop
+//            int64_t dq_dim[4] = {b, h, s_q, d};
+//            int64_t dq_stride[4];
+//            generateMatrixStrides(b, h, s_q, s_kv, d, dq_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+//
+//            int64_t dk_dim[4] = {b, h, s_kv, d};
+//            int64_t dk_stride[4];
+//            generateMatrixStrides(b, h, s_q, s_kv, d, dk_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+//
+//            int64_t dv_dim[4] = {b, h, s_kv, d};
+//            int64_t dv_stride[4];
+//            generateMatrixStrides(b, h, s_q, s_kv, d, dv_stride,
+//                            layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+//
+//            // Outputs of backprop
+//            auto dQTensor = tensor_create(tensorType, dQ_ID, dq_dim, dq_stride, false, false);
+//            auto dKTensor = tensor_create(tensorType, dK_ID, dk_dim, dk_stride, false, false);
+//            auto dVTensor = tensor_create(tensorType, dV_ID, dv_dim, dv_stride, false, false);
+//                            // not virtual
+//
+//            /*******************************************************************************
+//             *                          sTransposeTensor @ dO -> dV                       */
+//
+//            auto matmul_1_Desc = cudnn_frontend::MatMulDescBuilder()
+//                            .setComputeType(CUDNN_DATA_FLOAT)
+//                            .build();
+//
+//            auto matmul_op1 = cudnn_frontend::OperationBuilder(
+//                            CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+//                            .setaMatDesc(sTransposeTensor)
+//                            .setbMatDesc(dOTensor)
+//                            .setcMatDesc(dVTensor)
+//                            .setmatmulDesc(matmul_1_Desc)
+//                            .build();
+//
+//            ops.push_back(std::move(matmul_op1));
+//
+//            /*******************************************************************************
+//             *                          dO @ V.T -> dS                                    */
+//
+//            auto vTransposeTensor = tensor_create(
+//                            tensorType, V_ID, v_transpose_dim,
+//                            v_transpose_stride, false, false);
+//            auto dSTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 7, p_dim,
+//                            p_stride, true, false);  // is virtual
+//
+//            auto matmul_2_Desc = cudnn_frontend::MatMulDescBuilder()
+//                            .setComputeType(CUDNN_DATA_FLOAT)
+//                            .build();
+//
+//            auto matmul_op2 = cudnn_frontend::OperationBuilder(
+//                            CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+//                            .setaMatDesc(dOTensor)
+//                            .setbMatDesc(vTransposeTensor)
+//                            .setcMatDesc(dSTensor)
+//                            .setmatmulDesc(matmul_2_Desc)
+//                            .build();
+//
+//            ops.push_back(std::move(matmul_op2));
+//
+//            /*******************************************************************************
+//             *                          dS * dropoutMask -> dSAfterDropout                */
+//
+//            auto dSAfterDropoutTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 8, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto multiply_op = binary_pw_op_create(
+//                            dSTensor, dropoutMaskTensor,
+//                            dSAfterDropoutTensor, multiplyDesc);
+//            ops.push_back(std::move(multiply_op));
+//
+//            /*******************************************************************************
+//             *                          dSAfterDropout - softmaxSum -> dsAfterSubtract    */
+//
+//            auto dsAfterSubtractTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 9, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto subtract_op2 = binary_pw_op_create(
+//                            dSAfterDropoutTensor, softmaxSumTensor,
+//                            dsAfterSubtractTensor, subtractDesc);
+//            ops.push_back(std::move(subtract_op2));
+//
+//            /*******************************************************************************
+//             *                          dsAfterSubtract * afterSoftmax -> dP              */
+//
+//            auto dPTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 10, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto multiply_op2 = binary_pw_op_create(
+//                            dsAfterSubtractTensor, pAfterSoftmaxTensor,
+//                            dPTensor, multiplyDesc);
+//            ops.push_back(std::move(multiply_op2));
+//
+//            /*******************************************************************************
+//             *                          dP * scaleDropout -> dPAfterDropoutScale          */
+//
+//            auto dPAfterDropoutScaleTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 11, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto scaleDropoutTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, D_CONST_ID, scale_dim,
+//                            scale_stride, false, true);  // is by value
+//            auto multiply_op3 = binary_pw_op_create(
+//                            dPTensor, scaleDropoutTensor,
+//                            dPAfterDropoutScaleTensor, multiplyDesc);
+//            ops.push_back(std::move(multiply_op3));
+//
+//            /*******************************************************************************
+//             *                          dPAfterDropoutScale * bmmScale -> dPScaledTensor  */
+//
+//            auto dPScaledTensor = tensor_create(
+//                            CUDNN_DATA_FLOAT, VIRTUAL_ID + 12, p_dim,
+//                            p_stride, true, false);  // is virtual
+//            auto multiply_op4 = binary_pw_op_create(
+//                            dPAfterDropoutScaleTensor, bmmScaleTensor,
+//                            dPScaledTensor, multiplyDesc);
+//            ops.push_back(std::move(multiply_op4));
+//
+//            /*******************************************************************************
+//             *                          K.T -> K                                          */
+//
+//            int64_t kDim[4] = {b, h, s_kv, d};
+//            int64_t kStride[4];
+//            generateMatrixStrides(
+//                            b, h, s_q, s_kv, d, kStride,
+//                            layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+//            auto kTensor = tensor_create(
+//                            tensorType, VIRTUAL_ID + 13, kDim,
+//                            kStride, true, false);  // is virtual
+//            auto reshape_op2 = cudnn_frontend::OperationBuilder(
+//                            CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
+//                            .setxDesc(kTransposeTensor)
+//                            .setyDesc(kTensor)
+//                            .build();
+//            ops.push_back(std::move(reshape_op2));
+//
+//            /*******************************************************************************
+//             *                          dP @ K -> dqAccumTensor / dqTensor                */
+//
+//            auto dqAccumTensor = cudnn_frontend::TensorBuilder()
+//                .setDim(4, dqAccum_dim)
+//                .setStride(4, dqAccum_stride)
+//                .setId(dQ_ACCUM_ID)
+//                .setAlignment(16)  // 16B alignment is needed to run a tensor core engine
+//                .setDataType(CUDNN_DATA_FLOAT)
+//                .setVirtual(false)
+//                .setByValue(false)
+//                .setReorderType(
+//                cudnn_frontend::TensorReordering_t::F16x16)
+//                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
+//                .build();
+//
+//            auto matmul_3_Desc = cudnn_frontend::MatMulDescBuilder()
+//                                .setComputeType(CUDNN_DATA_FLOAT)
+//                                .build();
+//
+//            if (!use_workspace_opt) {
+//                auto matmul_op3 = cudnn_frontend::OperationBuilder(
+//                                    CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+//                                    .setaMatDesc(dPScaledTensor)
+//                                    .setbMatDesc(kTensor)
+//                                    .setcMatDesc(dqAccumTensor)
+//                                    .setmatmulDesc(matmul_3_Desc)
+//                                    .build();
+//
+//                ops.push_back(std::move(matmul_op3));
+//            } else {
+//                auto matmul_op3 = cudnn_frontend::OperationBuilder(
+//                                    CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+//                                    .setaMatDesc(dPScaledTensor)
+//                                    .setbMatDesc(kTensor)
+//                                    .setcMatDesc(dQTensor)
+//                                    .setmatmulDesc(matmul_3_Desc)
+//                                    .build();
+//
+//                ops.push_back(std::move(matmul_op3));
+//            }
+//
+//            /*******************************************************************************
+//             *                          dP.T @ Q -> dK                                    */
+//
+//            auto dPTransposeTensor = tensor_create(
+//                                CUDNN_DATA_FLOAT, VIRTUAL_ID + 14, p_transpose_dim,
+//                                p_transpose_stride, true, false);  // is virtual
+//            auto reshape_op3 = cudnn_frontend::OperationBuilder(
+//                                CUDNN_BACKEND_OPERATION_RESHAPE_DESCRIPTOR)
+//                                .setxDesc(dPScaledTensor)
+//                                .setyDesc(dPTransposeTensor)
+//                                .build();
+//            ops.push_back(std::move(reshape_op3));
+//
+//            auto matmul_4_Desc = cudnn_frontend::MatMulDescBuilder()
+//                                .setComputeType(CUDNN_DATA_FLOAT)
+//                                .build();
+//            auto matmul_op4 = cudnn_frontend::OperationBuilder(
+//                                CUDNN_BACKEND_OPERATION_MATMUL_DESCRIPTOR)
+//                                .setaMatDesc(dPTransposeTensor)
+//                                .setbMatDesc(qTensor)
+//                                .setcMatDesc(dKTensor)
+//                                .setmatmulDesc(matmul_4_Desc)
+//                                .build();
+//
+//            ops.push_back(std::move(matmul_op4));
+//
+//            /*******************************************************************************
+//             *                          dqAccumTensor @ identity -> dqTensor              */
+//
+//            if (!use_workspace_opt) {
+//                auto identityDesc = pw_desc_create(CUDNN_DATA_FLOAT, CUDNN_POINTWISE_IDENTITY);
+//                auto identity_op = unary_pw_op_create(dqAccumTensor, dQTensor, identityDesc);
+//                ops.push_back(std::move(identity_op));
+//            }
+//
+//            for (unsigned int i = 0; i < ops.size(); i++) {
+//                all_ops.push_back(&ops[i]);
+//            }
+//
+//            // Create an Operation Graph
+//            auto opGraph = cudnn_frontend::OperationGraphBuilder()
+//                               .setHandle(handle)
+//                               .setOperationGraph(all_ops.size(), all_ops.data())
+//                               .build();
+//
+//            cudnn_frontend::EngineConfigList filtered_configs;
+//            auto statuses = cudnn_frontend::get_heuristics_list<1>(
+//                {"heuristics_instant"}, opGraph, allowAllConfig, filtered_configs, true);
+//
+//            if (filtered_configs.size() == 0) {
+//                cudnn_frontend::set_error_and_throw_exception(
+//                    nullptr, CUDNN_STATUS_NOT_SUPPORTED,
+//                    "run_mha_bprop: No config returned by the heuristics");
+//            }
+//
+//            auto plan = cudnn_frontend::ExecutionPlanBuilder()
+//                            .setHandle(handle)
+//                            .setEngineConfig(filtered_configs[0], opGraph.getTag())
+//                            .build();
+//
+//            cache.insert({descriptor, plan});
+//            return plan;
+//        };
+//
+//        auto plan = get_plan(fmha_bprop_cache, descriptor);
+//
+//        auto plan_workspace_size = plan.getWorkspaceSize();
+//
+//        // Exit to request upper level API to allocate memory if needed
+//        size_t softmaxSum_workspace_size = b * h * s_q * sizeof(float);
+//        size_t dqAccum_workspace_size = b * s_q * h * d * sizeof(float);
+//        if (workspace == nullptr) {
+//            if (use_workspace_opt) {
+//                *workspace_size = plan_workspace_size + softmaxSum_workspace_size;
+//            } else {
+//                *workspace_size = plan_workspace_size + softmaxSum_workspace_size
+//                                  + dqAccum_workspace_size;
+//            }
+//            return;
+//        }
+//
+//        void *devPtrSoftmaxSum = static_cast<int8_t *>(workspace) + plan_workspace_size;
+//        void *devPtrdQAccumulator = nullptr;
+//        if (!use_workspace_opt) {
+//            devPtrdQAccumulator = static_cast<int8_t *>(devPtrSoftmaxSum)
+//                                        + softmaxSum_workspace_size;
+//            NVTE_CHECK_CUDA(cudaMemsetAsync(
+//                                  devPtrdQAccumulator, 0, dqAccum_workspace_size, stream));
+//        }
+//
+//        std::set<std::pair<uint64_t, void *>> data_ptrs;
+//        // add all the data pointers to be used in the variant pack
+//        float negInfinity = -1.0E+10f;
+//        float scale_dropout = 1.0f/(1.0f - dropout_probability);
+//        data_ptrs.insert(std::pair<uint64_t, void*>(dQ_ID, devPtrdQ));
+//        if (!use_workspace_opt) {
+//            data_ptrs.insert(std::pair<uint64_t, void*>(dQ_ACCUM_ID, devPtrdQAccumulator));
+//        }
+//        data_ptrs.insert(std::pair<uint64_t, void*>(dK_ID, devPtrdK));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(dV_ID, devPtrdV));
+//
+//        data_ptrs.insert(std::pair<uint64_t, void*>(Q_ID, devPtrQ));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(K_ID, devPtrKTranspose));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(V_ID, devPtrVTranspose));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(O_ID, devPtrO));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(dO_ID, devPtrdO));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(S_STATS_ID, devPtrSoftmaxStats));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(S_SUM_ID, devPtrSoftmaxSum));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(D_SEED_ID, devPtrDropoutSeed));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(D_OFFSET_ID, devPtrDropoutOffset));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(MASK_VAL_ID, &negInfinity));
+//
+//        float scaleProb = 1.0f - dropout_probability;
+//        data_ptrs.insert(std::pair<uint64_t, void*>(D_CONST_ID, &scale_dropout));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(S_CONST_ID, &scaling_factor));
+//        data_ptrs.insert(std::pair<uint64_t, void*>(SCALE_PROB, &scaleProb));
+//
+//        auto variantPack = cudnn_frontend::VariantPackBuilder()
+//                               .setWorkspacePointer(workspace)
+//                               .setDataPointers(data_ptrs)
+//                               .build();
+//
+//        NVTE_CHECK_CUDNN(
+//            cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
+//    } catch (cudnn_frontend::cudnnException &e) {
+//        NVTE_ERROR(e.what());
+//    }
 }
 
 }  // namespace fused_attn
