@@ -643,357 +643,359 @@ void fused_attn_max_512_fwd_impl(
     void *devPtrS, void *devPtrO, void *devPtrBias, void *devPtrCuSeqlenQ, void *devPtrCuSeqlenKV,
     void *devPtrDropoutSeed, void *devPtrDropoutOffset, void *workspace, size_t *workspace_size,
     cudnnDataType_t tensorType, cudaStream_t stream, cudnnHandle_t handle) {
-    //int64_t b = 32;  // batch size
-    //int64_t h = 16;  // head dim
-    //int64_t s_q = 512; // q tensor is padded to this seq length
-    //int64_t s_kv = 512; // k and v tensor is padded to this seq length
-    //int64_t d = 64;  // hidden dim
-    bool is_inference = !is_training; //false;
-    //float dropout_probability = 0.2f;
-    //int64_t seed = 123456;
-
-    namespace fe = cudnn_frontend;
-    fe::graph::Graph mha_graph;
-    mha_graph.set_io_data_type(fe::DataType_t::HALF)
-            .set_intermediate_data_type(fe::DataType_t::FLOAT)
-            .set_compute_data_type(fe::DataType_t::FLOAT);
-
-    auto Q = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("Q")
-            .set_dim({b,h,s_q,d})
-            .set_stride({s_q*3*h*d,d,3*h*d,1}));
-    auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("K")
-            .set_dim({b,h,d,s_kv})
-            .set_stride({s_kv*3*h*d,d,1,3*h*d}));
-    auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("V")
-            .set_dim({b,h,s_kv,d})
-            .set_stride({s_kv*3*h*d,d,3*h*d,1}));
-    auto SEQ_LEN_Q = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("SEQ_LEN_Q")
-            .set_dim({b,1,1,1})
-            .set_stride({1,1,1,1})
-            .set_data_type(fe::DataType_t::INT32));
-    auto SEQ_LEN_K = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("SEQ_LEN_K")
-            .set_dim({b,1,1,1})
-            .set_stride({1,1,1,1})
-            .set_data_type(fe::DataType_t::INT32));
-
-    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("attn_scale")
-            .set_dim({1,1,1,1})
-            .set_stride({1,1,1,1})
-            .set_is_pass_by_value(true));
-    auto bias = mha_graph.tensor(fe::graph::Tensor_attributes()
-            .set_name("Bias")
-            .set_dim({1,h,s_q,s_kv})
-            .set_stride({h*s_q*s_kv,s_q*s_kv,s_kv,1}));
-
-    auto scaled_dpa_options = fe::graph::Scaled_dot_product_attention_attributes()
-                                        .set_name("non_flash_attention")
-                                        .set_is_inference(is_inference)
-                                        .set_seq_len_q(SEQ_LEN_Q)
-                                        .set_seq_len_k(SEQ_LEN_K)
-                                        .set_bias(bias)
-                                        .set_padding_mask(true)
-                                        .set_causal_mask(true)
-                                        .set_attn_scale(attn_scale)
-                                        .set_dropout(dropout_probability, dropout_probability);
-                                        //.set_dropout(dropout_probability, seed);
-
-    auto [O, S] = mha_graph.scaled_dot_product_attention(
-            Q, K, V, scaled_dpa_options);
-    O->set_output(true);
-    S->set_output(true);
-
-    //#if (CUDNN_VERSION < 8900)
-    //    SKIP("MHA Graph requires cudnn 8.9 and up");
-    //    return;
-    //#endif
-    //if (check_device_arch_newer_than("hopper") == false) {
-    //    SKIP("MHA Graph requires Hopper or above arch.");
-    //    return;
-    //}
-
-    //cudnnHandle_t handle;
-    //checkCudnnErr(cudnnCreate(&handle));
-
-    if (!mha_graph.validate().is_good()) {
-        NVTE_ERROR("MHA graph validation is unsuccessful!");
-        return;
-    }
-
-    if (!mha_graph.build_operation_graph(handle).is_good()) {
-        NVTE_ERROR("MHA graph build is unsuccessful!");
-        return;
-    }
-
-    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
-    
-    if (!plans.check_support(handle).is_good()) {
-        NVTE_ERROR("MHA graph check support is unsuccessful!");
-        return;
-    }
-
-    if (!mha_graph.set_execution_plans(plans).is_good()) {
-        NVTE_ERROR("MHA graph set execution plan is unsuccessful!");
-        return;
-    }
-
-    //// Build variant pack
-    //Surface<half> qkvTensor(b * s_q * 3 * h * d, false);
-    //Surface<half> oTensor(b * s_q * h * d, false);
-    //void* devPtrQ = qkvTensor.devPtr;
-    //void* devPtrK = (qkvTensor.devPtr + h * d);
-    //void* devPtrV = (qkvTensor.devPtr + 2 * h * d);
-    //void* devPtrO = oTensor.devPtr;
-
-    //Surface<int32_t> devActualSeqlenQ(b, false);
-    //Surface<int32_t> devActualSeqlenK(b, false);
-    //std::vector<int32_t> hostActualSeqlenQ(b, 20);
-    //std::vector<int32_t> hostActualSeqlenK(b, 20);
-
-    //checkCudaErr(cudaMemcpy(devActualSeqlenQ.devPtr, hostActualSeqlenQ.data(), sizeof(hostActualSeqlenQ[0]) * b, cudaMemcpyHostToDevice));
-    //checkCudaErr(cudaMemcpy(devActualSeqlenK.devPtr, hostActualSeqlenK.data(), sizeof(hostActualSeqlenK[0]) * b, cudaMemcpyHostToDevice));
-    //checkCudaErr(cudaDeviceSynchronize());
-
-    // Prepare actual seqlen
-    constexpr size_t nthreads_per_block = 128;
-    const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
-    void *devActualSeqlenQ = static_cast<int8_t *>(workspace); // + plans.getWorkspaceSize(); //plan_workspace_size;
-    void *devActualSeqlenK = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
-    cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
-        b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
-        static_cast<const int32_t *>(devPtrCuSeqlenKV),
-        static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
-
-    //__half half_cast_scaling_factor{scaling_factor};
-    //__nv_bfloat16 bfloat_cast_scaling_factor{scaling_factor};
-
-    //half attn_scale_cpu = 0.5;
-    //Surface<half> bTensor(1 * h * s_q * s_kv, false);
-
-    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
-        {Q, devPtrQ}
-        , {K, devPtrK}
-        , {SEQ_LEN_Q, devActualSeqlenQ}
-        , {SEQ_LEN_K, devActualSeqlenK}
-        , {attn_scale, &scaling_factor}
-        , {bias, devPtrBias}
-        , {V, devPtrV}
-        , {O, devPtrO}
-    };
-        //, {bias, bTensor.devPtr}
-
-    //Surface<half> sTensor(b * h * s_q * s_kv, false);
-    if(is_inference == false) {
-        variant_pack[S] = devPtrS; //sTensor.devPtr;
-    }
-    
-    //Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
-    //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
-    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
-        NVTE_ERROR("MHA graph execution is unsuccessful!");
-        return;
-    }
-
-    //checkCudaErr(cudaDeviceSynchronize());
-
-    //cudnnDestroy(handle);
-
-//    try {
-//        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
+//    //int64_t b = 32;  // batch size
+//    //int64_t h = 16;  // head dim
+//    //int64_t s_q = 512; // q tensor is padded to this seq length
+//    //int64_t s_kv = 512; // k and v tensor is padded to this seq length
+//    //int64_t d = 64;  // hidden dim
+//    bool is_inference = !is_training; //false;
+//    //float dropout_probability = 0.2f;
+//    //int64_t seed = 123456;
 //
-//        FADescriptor descriptor{b,           h,
-//                                s_q,         s_kv,
-//                                d,           scaling_factor,
-//                                is_training, dropout_probability,
-//                                layout,      bias_type,
-//                                mask_type,   tensorType,
-//                                false};
+//    namespace fe = cudnn_frontend;
+//    fe::graph::Graph mha_graph;
+//    mha_graph.set_io_data_type(fe::DataType_t::HALF)
+//            .set_intermediate_data_type(fe::DataType_t::FLOAT)
+//            .set_compute_data_type(fe::DataType_t::FLOAT);
 //
-//        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
-//        static thread_local CacheType fmha_fprop_cache;
+//    auto Q = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("Q")
+//            .set_dim({b,h,s_q,d})
+//            .set_stride({s_q*3*h*d,d,3*h*d,1}));
+//    auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("K")
+//            .set_dim({b,h,d,s_kv})
+//            .set_stride({s_kv*3*h*d,d,1,3*h*d}));
+//    auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("V")
+//            .set_dim({b,h,s_kv,d})
+//            .set_stride({s_kv*3*h*d,d,3*h*d,1}));
+//    auto SEQ_LEN_Q = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("SEQ_LEN_Q")
+//            .set_dim({b,1,1,1})
+//            .set_stride({1,1,1,1})
+//            .set_data_type(fe::DataType_t::INT32));
+//    auto SEQ_LEN_K = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("SEQ_LEN_K")
+//            .set_dim({b,1,1,1})
+//            .set_stride({1,1,1,1})
+//            .set_data_type(fe::DataType_t::INT32));
 //
-//        // softmax auxiliary is only used in the training mode
-//        bool enable_dropout = is_training && (dropout_probability != 0.0f);
+//    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("attn_scale")
+//            .set_dim({1,1,1,1})
+//            .set_stride({1,1,1,1})
+//            .set_is_pass_by_value(true));
+//    auto bias = mha_graph.tensor(fe::graph::Tensor_attributes()
+//            .set_name("Bias")
+//            .set_dim({1,h,s_q,s_kv})
+//            .set_stride({h*s_q*s_kv,s_q*s_kv,s_kv,1}));
 //
-//        // two conditions that make softmax auxiliary in virtual
-//        // 1. inference mode (not is_training)
-//        // 2. dropout enabled: the auxiliary becomes the dropout output
-//        bool softmax_output_virtual = !is_training || enable_dropout;
+//    auto scaled_dpa_options = fe::graph::Scaled_dot_product_attention_attributes()
+//                                        .set_name("non_flash_attention")
+//                                        .set_is_inference(is_inference)
+//                                        .set_bias(bias)
+//                                        .set_padding_mask(true)
+//                                        .set_causal_mask(true)
+//                                        .set_attn_scale(attn_scale)
+//                                        .set_dropout(dropout_probability, dropout_probability);
+//                                        //.set_dropout(dropout_probability, seed);
+//                                        //.set_seq_len_q(SEQ_LEN_Q)
+//                                        //.set_seq_len_k(SEQ_LEN_K)
 //
-//        // Get plan from cache if cache is available, otherwise create one
-//        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
-//            // if hit, return
-//            auto it = cache.find(descriptor);
-//            if (it != cache.end()) {
-//                auto plan = it->second;
-//                return plan;
-//            }
+//    auto [O, S] = mha_graph.scaled_dot_product_attention(
+//            Q, K, V, scaled_dpa_options);
+//    O->set_output(true);
+//    S->set_output(true);
 //
-//            // otherwise, build the op_graph and the plan. Then update cache
-//            std::vector<cudnn_frontend::Operation const *> all_ops;
-//            std::vector<cudnn_frontend::Operation> ops;
+//    //#if (CUDNN_VERSION < 8900)
+//    //    SKIP("MHA Graph requires cudnn 8.9 and up");
+//    //    return;
+//    //#endif
+//    //if (check_device_arch_newer_than("hopper") == false) {
+//    //    SKIP("MHA Graph requires Hopper or above arch.");
+//    //    return;
+//    //}
 //
-//            createScale(b, h, s_q, s_kv, d, layout, tensorType, ops);
+//    //cudnnHandle_t handle;
+//    //checkCudnnErr(cudnnCreate(&handle));
 //
-//            // if bias, we need to memset the S buffer to correctly computate dbias
-//            // WAR: causal_mask without bias needs memset the S buffer
-//            // inference mode doesn't need the S auxiliary
-//            auto zero_s = (bias_type != NVTE_Bias_Type::NVTE_NO_BIAS) ||
-//                          (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK) && is_training;
-//            std::shared_ptr<cudnn_frontend::Tensor> maskInput;
-//            auto bmm1_output = createBMM1(b, h, s_q, s_kv, d, layout, tensorType, zero_s, ops);
-//
-//            NVTE_CHECK(bias_type != NVTE_Bias_Type::NVTE_PRE_SCALE_BIAS,
-//                       "NVTE_Bias_Type::NVTE_PRE_SCALE_BIAS has not been implemented.");
-//
-//            if (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS) {
-//                auto bias_output = createBias(b, h, s_q, s_kv, d, layout,
-//                                tensorType, ops, bmm1_output);
-//                maskInput = std::make_shared<cudnn_frontend::Tensor>(std::move(bias_output));
-//            }
-//            if (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS) {
-//                maskInput = std::make_shared<cudnn_frontend::Tensor>(std::move(bmm1_output));
-//            }
-//
-//            auto mask_output = createMask(b, h, s_q, s_kv, d, layout, mask_type, tensorType, ops,
-//                                          *maskInput.get(), false);
-//
-//            NVTE_CHECK(dropout_probability != 1.0f, "Dropout probability cannot be 1.0.");
-//
-//            auto softmax_output =
-//                createSoftmaxForward(b, h, s_q, s_kv, d, layout, enable_dropout,
-//                                     softmax_output_virtual, tensorType, ops, mask_output);
-//
-//            if (enable_dropout) {
-//                auto dropout_output = createDropout(b, h, s_q, s_kv, d, dropout_probability,
-//                                                    tensorType, ops, softmax_output);
-//                createBMM2(b, h, s_q, s_kv, d, layout, tensorType, ops, dropout_output);
-//            } else {
-//                createBMM2(b, h, s_q, s_kv, d, layout, tensorType, ops, softmax_output);
-//            }
-//
-//            for (unsigned int i = 0; i < ops.size(); i++) {
-//                all_ops.push_back(&ops[i]);
-//            }
-//
-//            // Create an Operation Graph
-//            auto opGraph = cudnn_frontend::OperationGraphBuilder()
-//                               .setHandle(handle)
-//                               .setOperationGraph(all_ops.size(), all_ops.data())
-//                               .build();
-//
-//            cudnn_frontend::EngineConfigList filtered_configs;
-//            auto statuses = cudnn_frontend::get_heuristics_list<1>(
-//                {"heuristics_instant"}, opGraph, allowAllConfig, filtered_configs, true);
-//
-//            if (filtered_configs.size() == 0) {
-//                cudnn_frontend::set_error_and_throw_exception(
-//                    nullptr, CUDNN_STATUS_NOT_SUPPORTED,
-//                    "run_mha_fprop: No config returned by the heuristics");
-//            }
-//            auto plan = cudnn_frontend::ExecutionPlanBuilder()
-//                            .setHandle(handle)
-//                            .setEngineConfig(filtered_configs[0], opGraph.getTag())
-//                            .build();
-//            cache.insert({descriptor, plan});
-//            return plan;
-//        };
-//
-//        auto plan = get_plan(fmha_fprop_cache, descriptor);
-//
-//        auto plan_workspace_size = plan.getWorkspaceSize();
-//
-//        // Exit to request upper level API to allocate memory if needed
-//        if (workspace == nullptr) {
-//            size_t actual_seqlen_workspace_size = 2 * b * sizeof(int32_t);
-//            *workspace_size = plan_workspace_size + actual_seqlen_workspace_size;
-//            return;
-//        }
-//
-//        // Prepare actual seqlen
-//        constexpr size_t nthreads_per_block = 128;
-//        const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
-//        void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
-//        void *devActualSeqlenK = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
-//        cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
-//            b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
-//            static_cast<const int32_t *>(devPtrCuSeqlenKV),
-//            static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
-//        NVTE_CHECK_CUDA(cudaGetLastError());
-//
-//        // change this if you have access to float_min
-//        float negInfinity = -1.0E+10;
-//        float scale_dropout = 1 / (1 - dropout_probability);
-//
-//        std::set<std::pair<uint64_t, void *>> data_ptrs;
-//        // add all the data pointers to be used in the variant pack
-//        data_ptrs.insert(std::pair<uint64_t, void *>(Q_ID, devPtrQ));
-//        data_ptrs.insert(std::pair<uint64_t, void *>(K_ID, devPtrK));
-//        data_ptrs.insert(std::pair<uint64_t, void *>(V_ID, devPtrV));
-//        data_ptrs.insert(std::pair<uint64_t, void *>(Q_SEQLEN_ID, devActualSeqlenQ));
-//        data_ptrs.insert(std::pair<uint64_t, void *>(K_SEQLEN_ID, devActualSeqlenK));
-//        data_ptrs.insert(std::pair<uint64_t, void *>(MASK_VAL_ID, &negInfinity));
-//
-//        __half half_cast_scaling_factor{scaling_factor};
-//        __nv_bfloat16 bfloat_cast_scaling_factor{scaling_factor};
-//
-//        if (tensorType == CUDNN_DATA_FLOAT) {
-//            data_ptrs.insert(std::pair<uint64_t, void *>(S_CONST_ID, &scaling_factor));
-//        } else if (tensorType == CUDNN_DATA_HALF) {
-//            data_ptrs.insert(std::pair<uint64_t, void *>(S_CONST_ID, &half_cast_scaling_factor));
-//        } else if (tensorType == CUDNN_DATA_BFLOAT16) {
-//            data_ptrs.insert(std::pair<uint64_t, void *>(S_CONST_ID, &bfloat_cast_scaling_factor));
-//        } else {
-//            NVTE_ERROR("Unsupported tensor type.");
-//        }
-//
-//        data_ptrs.insert(std::pair<uint64_t, void *>(O_ID, devPtrO));
-//
-//        if (bias_type != NVTE_Bias_Type::NVTE_NO_BIAS) {
-//            data_ptrs.insert(std::pair<uint64_t, void *>(B_ID, devPtrBias));
-//        }
-//
-//        // if enable_dropout, S is the result after dropout
-//        // if not enable dropout, S is the result after softmax
-//        if (enable_dropout || !softmax_output_virtual) {
-//            data_ptrs.insert(std::pair<uint64_t, void *>(S_ID, devPtrS));
-//        }
-//
-//        __half half_cast_scale_dropout{scale_dropout};
-//        __nv_bfloat16 bfloat16_cast_scale_dropout{scale_dropout};
-//
-//        if (enable_dropout) {
-//            // TODO(rewang): make a util func
-//            if (tensorType == CUDNN_DATA_FLOAT) {
-//                data_ptrs.insert(std::pair<uint64_t, void *>(DROPOUT_CONST_ID, &scale_dropout));
-//            } else if (tensorType == CUDNN_DATA_HALF) {
-//                data_ptrs.insert(
-//                    std::pair<uint64_t, void *>(DROPOUT_CONST_ID, &half_cast_scale_dropout));
-//            } else if (tensorType == CUDNN_DATA_BFLOAT16) {
-//                data_ptrs.insert(
-//                    std::pair<uint64_t, void *>(DROPOUT_CONST_ID, &bfloat16_cast_scale_dropout));
-//            } else {
-//                NVTE_ERROR("Unsupported tensor type.");
-//            }
-//            data_ptrs.insert(std::pair<uint64_t, void *>(DROPOUT_SEED_ID, devPtrDropoutSeed));
-//            data_ptrs.insert(std::pair<uint64_t, void *>(DROPOUT_OFFSET_ID, devPtrDropoutOffset));
-//        }
-//
-//        auto variantPack = cudnn_frontend::VariantPackBuilder()
-//                               .setWorkspacePointer(workspace)
-//                               .setDataPointers(data_ptrs)
-//                               .build();
-//
-//        NVTE_CHECK_CUDNN(
-//            cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
-//    } catch (cudnn_frontend::cudnnException &e) {
-//        NVTE_ERROR(e.what());
+//    if (!mha_graph.validate().is_good()) {
+//        NVTE_ERROR("MHA graph validation is unsuccessful!");
+//        return;
 //    }
+//
+//    if (!mha_graph.build_operation_graph(handle).is_good()) {
+//        NVTE_ERROR("MHA graph build is unsuccessful!");
+//        return;
+//    }
+//
+//    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+//    
+//    if (!plans.check_support(handle).is_good()) {
+//        NVTE_ERROR("MHA graph check support is unsuccessful!");
+//        return;
+//    }
+//
+//    if (!mha_graph.set_execution_plans(plans).is_good()) {
+//        NVTE_ERROR("MHA graph set execution plan is unsuccessful!");
+//        return;
+//    }
+//
+//    //// Build variant pack
+//    //Surface<half> qkvTensor(b * s_q * 3 * h * d, false);
+//    //Surface<half> oTensor(b * s_q * h * d, false);
+//    //void* devPtrQ = qkvTensor.devPtr;
+//    //void* devPtrK = (qkvTensor.devPtr + h * d);
+//    //void* devPtrV = (qkvTensor.devPtr + 2 * h * d);
+//    //void* devPtrO = oTensor.devPtr;
+//
+//    //Surface<int32_t> devActualSeqlenQ(b, false);
+//    //Surface<int32_t> devActualSeqlenK(b, false);
+//    //std::vector<int32_t> hostActualSeqlenQ(b, 20);
+//    //std::vector<int32_t> hostActualSeqlenK(b, 20);
+//
+//    //checkCudaErr(cudaMemcpy(devActualSeqlenQ.devPtr, hostActualSeqlenQ.data(), sizeof(hostActualSeqlenQ[0]) * b, cudaMemcpyHostToDevice));
+//    //checkCudaErr(cudaMemcpy(devActualSeqlenK.devPtr, hostActualSeqlenK.data(), sizeof(hostActualSeqlenK[0]) * b, cudaMemcpyHostToDevice));
+//    //checkCudaErr(cudaDeviceSynchronize());
+//
+//    // Prepare actual seqlen
+//    constexpr size_t nthreads_per_block = 128;
+//    const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
+//    void *devActualSeqlenQ = static_cast<int8_t *>(workspace); // + plans.getWorkspaceSize(); //plan_workspace_size;
+//    void *devActualSeqlenK = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
+//    cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
+//        b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
+//        static_cast<const int32_t *>(devPtrCuSeqlenKV),
+//        static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
+//
+//    //__half half_cast_scaling_factor{scaling_factor};
+//    //__nv_bfloat16 bfloat_cast_scaling_factor{scaling_factor};
+//
+//    //half attn_scale_cpu = 0.5;
+//    //Surface<half> bTensor(1 * h * s_q * s_kv, false);
+//
+//    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
+//        {Q, devPtrQ}
+//        , {K, devPtrK}
+//        , {SEQ_LEN_Q, devActualSeqlenQ}
+//        , {SEQ_LEN_K, devActualSeqlenK}
+//        , {attn_scale, &scaling_factor}
+//        , {bias, devPtrBias}
+//        , {V, devPtrV}
+//        , {O, devPtrO}
+//    };
+//        //, {bias, bTensor.devPtr}
+//
+//    //Surface<half> sTensor(b * h * s_q * s_kv, false);
+//    if(is_inference == false) {
+//        variant_pack[S] = devPtrS; //sTensor.devPtr;
+//    }
+//    
+//    //Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
+//    //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
+//    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
+//        NVTE_ERROR("MHA graph execution is unsuccessful!");
+//        return;
+//    }
+//
+//    //checkCudaErr(cudaDeviceSynchronize());
+//
+//    //cudnnDestroy(handle);
+
+//////////////////////////////////////////////////////////////////////////
+
+    try {
+        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
+
+        FADescriptor descriptor{b,           h,
+                                s_q,         s_kv,
+                                d,           scaling_factor,
+                                is_training, dropout_probability,
+                                layout,      bias_type,
+                                mask_type,   tensorType,
+                                false};
+
+        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
+        static thread_local CacheType fmha_fprop_cache;
+
+        // softmax auxiliary is only used in the training mode
+        bool enable_dropout = is_training && (dropout_probability != 0.0f);
+
+        // two conditions that make softmax auxiliary in virtual
+        // 1. inference mode (not is_training)
+        // 2. dropout enabled: the auxiliary becomes the dropout output
+        bool softmax_output_virtual = !is_training || enable_dropout;
+
+        // Get plan from cache if cache is available, otherwise create one
+        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
+            // if hit, return
+            auto it = cache.find(descriptor);
+            if (it != cache.end()) {
+                auto plan = it->second;
+                return plan;
+            }
+
+            // otherwise, build the op_graph and the plan. Then update cache
+            std::vector<cudnn_frontend::Operation const *> all_ops;
+            std::vector<cudnn_frontend::Operation> ops;
+
+            createScale(b, h, s_q, s_kv, d, layout, tensorType, ops);
+
+            // if bias, we need to memset the S buffer to correctly computate dbias
+            // WAR: causal_mask without bias needs memset the S buffer
+            // inference mode doesn't need the S auxiliary
+            auto zero_s = (bias_type != NVTE_Bias_Type::NVTE_NO_BIAS) ||
+                          (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK) && is_training;
+            std::shared_ptr<cudnn_frontend::Tensor> maskInput;
+            auto bmm1_output = createBMM1(b, h, s_q, s_kv, d, layout, tensorType, zero_s, ops);
+
+            NVTE_CHECK(bias_type != NVTE_Bias_Type::NVTE_PRE_SCALE_BIAS,
+                       "NVTE_Bias_Type::NVTE_PRE_SCALE_BIAS has not been implemented.");
+
+            if (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS) {
+                auto bias_output = createBias(b, h, s_q, s_kv, d, layout,
+                                tensorType, ops, bmm1_output);
+                maskInput = std::make_shared<cudnn_frontend::Tensor>(std::move(bias_output));
+            }
+            if (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS) {
+                maskInput = std::make_shared<cudnn_frontend::Tensor>(std::move(bmm1_output));
+            }
+
+            auto mask_output = createMask(b, h, s_q, s_kv, d, layout, mask_type, tensorType, ops,
+                                          *maskInput.get(), false);
+
+            NVTE_CHECK(dropout_probability != 1.0f, "Dropout probability cannot be 1.0.");
+
+            auto softmax_output =
+                createSoftmaxForward(b, h, s_q, s_kv, d, layout, enable_dropout,
+                                     softmax_output_virtual, tensorType, ops, mask_output);
+
+            if (enable_dropout) {
+                auto dropout_output = createDropout(b, h, s_q, s_kv, d, dropout_probability,
+                                                    tensorType, ops, softmax_output);
+                createBMM2(b, h, s_q, s_kv, d, layout, tensorType, ops, dropout_output);
+            } else {
+                createBMM2(b, h, s_q, s_kv, d, layout, tensorType, ops, softmax_output);
+            }
+
+            for (unsigned int i = 0; i < ops.size(); i++) {
+                all_ops.push_back(&ops[i]);
+            }
+
+            // Create an Operation Graph
+            auto opGraph = cudnn_frontend::OperationGraphBuilder()
+                               .setHandle(handle)
+                               .setOperationGraph(all_ops.size(), all_ops.data())
+                               .build();
+
+            cudnn_frontend::EngineConfigList filtered_configs;
+            auto statuses = cudnn_frontend::get_heuristics_list<1>(
+                {"heuristics_instant"}, opGraph, allowAllConfig, filtered_configs, true);
+
+            if (filtered_configs.size() == 0) {
+                cudnn_frontend::set_error_and_throw_exception(
+                    nullptr, CUDNN_STATUS_NOT_SUPPORTED,
+                    "run_mha_fprop: No config returned by the heuristics");
+            }
+            auto plan = cudnn_frontend::ExecutionPlanBuilder()
+                            .setHandle(handle)
+                            .setEngineConfig(filtered_configs[0], opGraph.getTag())
+                            .build();
+            cache.insert({descriptor, plan});
+            return plan;
+        };
+
+        auto plan = get_plan(fmha_fprop_cache, descriptor);
+
+        auto plan_workspace_size = plan.getWorkspaceSize();
+
+        // Exit to request upper level API to allocate memory if needed
+        if (workspace == nullptr) {
+            size_t actual_seqlen_workspace_size = 2 * b * sizeof(int32_t);
+            *workspace_size = plan_workspace_size + actual_seqlen_workspace_size;
+            return;
+        }
+
+        // Prepare actual seqlen
+        constexpr size_t nthreads_per_block = 128;
+        const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
+        void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
+        void *devActualSeqlenK = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
+        cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
+            b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
+            static_cast<const int32_t *>(devPtrCuSeqlenKV),
+            static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
+        NVTE_CHECK_CUDA(cudaGetLastError());
+
+        // change this if you have access to float_min
+        float negInfinity = -1.0E+10;
+        float scale_dropout = 1 / (1 - dropout_probability);
+
+        std::set<std::pair<uint64_t, void *>> data_ptrs;
+        // add all the data pointers to be used in the variant pack
+        data_ptrs.insert(std::pair<uint64_t, void *>(Q_ID, devPtrQ));
+        data_ptrs.insert(std::pair<uint64_t, void *>(K_ID, devPtrK));
+        data_ptrs.insert(std::pair<uint64_t, void *>(V_ID, devPtrV));
+        data_ptrs.insert(std::pair<uint64_t, void *>(Q_SEQLEN_ID, devActualSeqlenQ));
+        data_ptrs.insert(std::pair<uint64_t, void *>(K_SEQLEN_ID, devActualSeqlenK));
+        data_ptrs.insert(std::pair<uint64_t, void *>(MASK_VAL_ID, &negInfinity));
+
+        __half half_cast_scaling_factor{scaling_factor};
+        __nv_bfloat16 bfloat_cast_scaling_factor{scaling_factor};
+
+        if (tensorType == CUDNN_DATA_FLOAT) {
+            data_ptrs.insert(std::pair<uint64_t, void *>(S_CONST_ID, &scaling_factor));
+        } else if (tensorType == CUDNN_DATA_HALF) {
+            data_ptrs.insert(std::pair<uint64_t, void *>(S_CONST_ID, &half_cast_scaling_factor));
+        } else if (tensorType == CUDNN_DATA_BFLOAT16) {
+            data_ptrs.insert(std::pair<uint64_t, void *>(S_CONST_ID, &bfloat_cast_scaling_factor));
+        } else {
+            NVTE_ERROR("Unsupported tensor type.");
+        }
+
+        data_ptrs.insert(std::pair<uint64_t, void *>(O_ID, devPtrO));
+
+        if (bias_type != NVTE_Bias_Type::NVTE_NO_BIAS) {
+            data_ptrs.insert(std::pair<uint64_t, void *>(B_ID, devPtrBias));
+        }
+
+        // if enable_dropout, S is the result after dropout
+        // if not enable dropout, S is the result after softmax
+        if (enable_dropout || !softmax_output_virtual) {
+            data_ptrs.insert(std::pair<uint64_t, void *>(S_ID, devPtrS));
+        }
+
+        __half half_cast_scale_dropout{scale_dropout};
+        __nv_bfloat16 bfloat16_cast_scale_dropout{scale_dropout};
+
+        if (enable_dropout) {
+            // TODO(rewang): make a util func
+            if (tensorType == CUDNN_DATA_FLOAT) {
+                data_ptrs.insert(std::pair<uint64_t, void *>(DROPOUT_CONST_ID, &scale_dropout));
+            } else if (tensorType == CUDNN_DATA_HALF) {
+                data_ptrs.insert(
+                    std::pair<uint64_t, void *>(DROPOUT_CONST_ID, &half_cast_scale_dropout));
+            } else if (tensorType == CUDNN_DATA_BFLOAT16) {
+                data_ptrs.insert(
+                    std::pair<uint64_t, void *>(DROPOUT_CONST_ID, &bfloat16_cast_scale_dropout));
+            } else {
+                NVTE_ERROR("Unsupported tensor type.");
+            }
+            data_ptrs.insert(std::pair<uint64_t, void *>(DROPOUT_SEED_ID, devPtrDropoutSeed));
+            data_ptrs.insert(std::pair<uint64_t, void *>(DROPOUT_OFFSET_ID, devPtrDropoutOffset));
+        }
+
+        auto variantPack = cudnn_frontend::VariantPackBuilder()
+                               .setWorkspacePointer(workspace)
+                               .setDataPointers(data_ptrs)
+                               .build();
+
+        NVTE_CHECK_CUDNN(
+            cudnnBackendExecute(handle, plan.get_raw_desc(), variantPack.get_raw_desc()));
+    } catch (cudnn_frontend::cudnnException &e) {
+        NVTE_ERROR(e.what());
+    }
 }
 
 void fused_attn_max_512_bwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,

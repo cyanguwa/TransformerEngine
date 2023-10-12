@@ -738,18 +738,18 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
     //                        cudaMemcpyHostToDevice));
     //checkCudaErr(cudaDeviceSynchronize());
 
-    // Prepare actual seqlen
-    constexpr size_t nthreads_per_block = 128;
-    const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
-    void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
-    void *devActualSeqlenKV = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
-    cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
-        b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
-        static_cast<const int32_t *>(devPtrCuSeqlenKV),
-        static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
+    //// Prepare actual seqlen
+    //constexpr size_t nthreads_per_block = 128;
+    //const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
+    //void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
+    //void *devActualSeqlenKV = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
+    //cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
+    //    b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
+    //    static_cast<const int32_t *>(devPtrCuSeqlenKV),
+    //    static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenK));
 
-    variant_pack[seq_q]  = devActualSeqlenQ;
-    variant_pack[seq_kv] = devActualSeqlenKV;
+    //variant_pack[seq_q]  = devActualSeqlenQ;
+    //variant_pack[seq_kv] = devActualSeqlenKV;
 #endif
 
     //Surface<float> statsTensor(b * h * s_q * 1, false);
