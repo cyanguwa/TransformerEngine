@@ -43,8 +43,8 @@ target_include_directories(transformer_engine PUBLIC
 
 # Check for cuDNN frontend API
 set(CUDNN_FRONTEND_INCLUDE_DIR
-    "/code/fmha/github3/pr-graph-api/cudnn_frontend/include")
-#    "${CMAKE_SOURCE_DIR}/../3rdparty/cudnn-frontend/include")
+    "${CMAKE_SOURCE_DIR}/../3rdparty/cudnn-frontend/include")
+#    "/code/fmha/github3/pr-graph-api/cudnn_frontend/include")
 if(NOT EXISTS "${CUDNN_FRONTEND_INCLUDE_DIR}")
     message(FATAL_ERROR
             "Could not find cuDNN frontend API. "
