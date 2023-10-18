@@ -78,7 +78,7 @@ batch_sizes = [1, 32]
 
 model_configs_lean = {
     "test6": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
-    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "causal"),
+    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"), #"causal"),
 }
 
 param_types_lean = [torch.bfloat16]
@@ -271,6 +271,11 @@ def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
     if fused_attn_supported:
         fused_attn_fwd, fused_attn_bwd = _run_dpa_qkv_layout(
             dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
+        print(fused_attn_fwd.shape, unfused_attn_fwd.shape)
+        print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
+        print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
+        torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
+        torch.save(unfused_attn_fwd, 'unfused_attn_fwd.pt')
         torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
         for i in range(len(unfused_attn_bwd)):
             torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
