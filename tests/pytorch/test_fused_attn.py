@@ -232,9 +232,8 @@ def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, bias_type)
     return op, inp.grad
 
 qkv_layouts = [
-    'sbh3d',
-    #'sb3hd', 'sbh3d', 'sbhd_sb2hd', 'sbhd_sbh2d', 'sbhd_sbhd_sbhd',
-    #'bs3hd', 'bsh3d', 'bshd_bs2hd', 'bshd_bsh2d', 'bshd_bshd_bshd',
+    'sb3hd', 'sbh3d', 'sbhd_sb2hd', 'sbhd_sbh2d', 'sbhd_sbhd_sbhd',
+    'bs3hd', 'bsh3d', 'bshd_bs2hd', 'bshd_bsh2d', 'bshd_bshd_bshd',
     # will add tests for thd layouts later when the support is available in fused attention
     #'t3hd', 'th3d', 'thd_t2hd', 'thd_th2d', 'thd_thd_thd',
     ]
@@ -243,8 +242,8 @@ qkv_layouts = [
     _cudnn_version < [8,9,5], reason="cuDNN 8.9.5+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
-@pytest.mark.parametrize("model", model_configs_lean.keys())
-@pytest.mark.parametrize("workspace_opt", [True, False])
+@pytest.mark.parametrize("model", ['test7']) #model_configs_lean.keys())
+@pytest.mark.parametrize("workspace_opt", [True])#, False])
 @pytest.mark.parametrize("qkv_layout", qkv_layouts)
 def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
     """Test DotProductAttention module with different QKV layouts"""

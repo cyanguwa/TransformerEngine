@@ -538,6 +538,7 @@ namespace fused_attn {
 //    ops->push_back(std::move(matmul_op2));
 //}
 
+
 void fused_attn_arbitrary_seqlen_fwd_impl(
                                 int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                                 bool is_training, float scaling_factor, float dropout_probability,
@@ -565,13 +566,7 @@ std::cout << "Enter fwd impl " << std::endl;
     //    return;
     //}
 
-    //int64_t b                 = 3;     // batch size
-    //int64_t h                 = 4;     // head dim
-    //int64_t s_q               = 1024;  // q tensor is padded to this seq length
-    //int64_t s_kv              = 1024;  // k and v tensor is padded to this seq length
-    //int64_t d                 = 128;   // hidden dim
     bool is_inference         = !is_training; //false;
-    //float dropout_probability = 0.2f;
 
     namespace fe = cudnn_frontend;
     fe::graph::Graph mha_graph;
@@ -580,20 +575,30 @@ std::cout << "Enter fwd impl " << std::endl;
         .set_compute_data_type(fe::DataType_t::FLOAT);
 
 std::cout << "Get qkv strides " << std::endl;
-    //int64_t q_stride[4];
-    //generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+    int64_t q_stride[4];
+    int64_t k_stride[4];
+    int64_t v_stride[4];
+    generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
+    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+    std::vector<int64_t> q_strides(q_stride, q_stride + 4);
+    std::vector<int64_t> k_strides(k_stride, k_stride + 4);
+    std::vector<int64_t> v_strides(v_stride, v_stride + 4);
     auto Q = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("Q")
                                   .set_dim({b, h, s_q, d})
-                                  .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
+                                  .set_stride(q_strides));
+                                  //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
     auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("K")
                                   .set_dim({b, h, d, s_kv})
-                                  .set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
+                                  .set_stride(k_strides));
+                                  //.set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
     auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("V")
                                   .set_dim({b, h, s_kv, d})
-                                  .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
+                                  .set_stride(v_strides));
+                                  //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
 
     auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
                                            .set_name("attn_scale")
@@ -665,9 +670,14 @@ std::cout << "Call sdpa " << std::endl;
     auto [O, Stats] = mha_graph.scaled_dot_product_flash_attention(
         Q, K, V, scaled_dpa_options);
 
-    O->set_output(true).set_stride({h * d, d, b * h * d, 1});
+    int64_t o_stride[4];
+    generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+    std::vector<int64_t> o_strides(o_stride, o_stride + 4);
+    O->set_output(true).set_stride(o_strides); //{h * d, d, b * h * d, 1});
 
     // Check that Stats tensor is real, which is only when its training step
+    //int64_t s_stride[4];
+    //generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
     if (Stats) {
         Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
     }
@@ -802,169 +812,6 @@ std::cout << "Execute " << std::endl;
 
     //cudnnDestroy(handle);
 
-
-//    //int64_t b = 1;  // batch size
-//    //int64_t h = 2;  // head dim
-//    //int64_t s_q = 2048; // q tensor is padded to this seq length
-//    //int64_t s_kv = 2048; // k and v tensor is padded to this seq length
-//    //int64_t d = 128;  // hidden dim
-//    bool is_inference = !is_training;
-//    //float dropout_probability = 0.2f;
-//
-//    namespace fe = cudnn_frontend;
-//    fe::graph::Graph mha_graph;
-//    mha_graph.set_io_data_type(fe::DataType_t::HALF)
-//            .set_intermediate_data_type(fe::DataType_t::FLOAT)
-//            .set_compute_data_type(fe::DataType_t::FLOAT);
-//
-//    auto Q = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("Q")
-//            .set_dim({b, h, s_q , d})
-//            .set_stride({3*h*d   , 3*d, 3*b*h*d, 1}));
-//    auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("K")
-//            .set_dim({b, h, d   , s_kv})
-//            .set_stride({3*h*d, 3*d, 1      , 3*b*h*d}));
-//    auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("V")
-//            .set_dim({b, h, s_kv, d})
-//            .set_stride({3*h*d   , 3*d, 3*b*h*d, 1}));
-//
-//    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("attn_scale")
-//            .set_dim({1,1,1,1})
-//            .set_stride({1,1,1,1})
-//            .set_is_pass_by_value(true)
-//            .set_data_type(fe::DataType_t::FLOAT));
-//
-//    auto bias = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("bias")
-//            .set_dim({b, 1, s_q, s_kv})
-//            .set_stride({s_q*s_kv, s_q*s_kv, s_kv, 1}));
-//
-//    auto seed = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("Seed")
-//            .set_dim({1,1,1,1})
-//            .set_stride({1,1,1,1})
-//            .set_data_type(fe::DataType_t::INT32));
-//    auto offset = mha_graph.tensor(fe::graph::Tensor_attributes()
-//            .set_name("Offset")
-//            .set_dim({1,1,1,1})
-//            .set_stride({1,1,1,1})
-//            .set_data_type(fe::DataType_t::INT32));
-//    auto scaled_dpa_options = fe::graph::Scaled_dot_product_flash_attention_attributes()
-//                                            .set_name("flash_attention")
-//                                            .set_is_inference(is_inference)
-//                                            .set_causal_mask(true)
-//                                            .set_attn_scale(attn_scale)
-//                                            .set_dropout(dropout_probability, seed, offset);
-//
-//    // Optional bias in flash attention is only supported 8.9.3 onwards
-//    //#if (CUDNN_VERSION >= 8930)
-//    //    scaled_dpa_options.set_bias(bias);
-//    //#endif
-//
-//    auto [O, Stats] = mha_graph.scaled_dot_product_flash_attention(
-//            Q, K, V, scaled_dpa_options);
-//    O->set_output(true);
-//
-//    // Check that Stats tensor is real, which is only when its training step
-//    if(Stats) {
-//        Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
-//    }
-//
-//    #if (CUDNN_VERSION < 8900)
-//        NVTE_ERROR("MHA Graph requires cudnn 8.9 and up");
-//        return;
-//    #endif
-//    //if (check_device_arch_newer_than("hopper") == false) {
-//    //    NVTE_ERROR("MHA Graph requires Hopper or above arch.");
-//    //    return;
-//    //}
-//
-//    //cudnnHandle_t handle;
-//    //checkCudnnErr(cudnnCreate(&handle));
-//
-//    if (!mha_graph.validate().is_good()) {
-//        NVTE_ERROR("MHA Graph validation is false.");
-//        return;
-//    }
-//
-//    if (!mha_graph.build_operation_graph(handle).is_good()) {
-//        NVTE_ERROR("MHA Graph build is unsuccessful.");
-//        return;
-//    }
-//
-//    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
-//    
-//    if (!plans.check_support(handle).is_good()) {
-//        NVTE_ERROR("MHA Graph check support is unsuccessful.");
-//        return;
-//    }
-//
-//    if (!mha_graph.set_execution_plans(plans).is_good()) {
-//        NVTE_ERROR("MHA Graph set execution plan is unsuccessful.");
-//        return;
-//    }
-//
-//    auto plan_workspace_size = mha_graph.get_workspace_size();
-//
-//    // Exit to request upper level API to allocate memory if needed
-//    if (workspace == nullptr) {
-//        *workspace_size = plan_workspace_size;
-//        return;
-//    }
-//
-//    //// Build variant pack
-//    //Surface<half> qkvTensor(b * s_q * 3 * h * d, false);
-//    //Surface<half> oTensor(b * s_q * h * d, false);
-//    //void* devPtrQ = qkvTensor.devPtr;
-//    //void* devPtrK = (qkvTensor.devPtr + d);
-//    //void* devPtrV = (qkvTensor.devPtr + 2 * d);
-//    //void* devPtrO = oTensor.devPtr;
-//
-//    //float attn_scale_cpu = 0.5f;
-//
-//    //Surface<half> bTensor(b * 1 * s_q * s_kv, false);
-//
-//    //int32_t scaleSize = 1;
-//    //int32_t seed_value = 123456;
-//    //Surface<int32_t> dropoutSeed(scaleSize, false, seed_value);
-//    //Surface<int32_t> dropoutOffset(scaleSize, false, (int32_t)1);
-//    
-//    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
-//        {Q, devPtrQ}
-//        , {K, devPtrK}
-//        , {V, devPtrV}
-//        , {attn_scale, &scaling_factor}
-//        , {seed, devPtrDropoutSeed}
-//        , {offset, devPtrDropoutOffset}
-//        , {O, devPtrO}
-//    };
-//        //, {bias, bTensor.devPtr}
-//        //, {attn_scale, &attn_scale_cpu}
-//        //, {seed, dropoutSeed.devPtr}
-//        //, {offset, dropoutOffset.devPtr}
-//
-//    //Surface<float> statsTensor(b * h * s_q * 1, false);
-//    if(is_inference == false) {
-//        variant_pack[Stats] = devPtrSoftmaxStats; //statsTensor.devPtr;
-//    }
-//    
-//    //Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
-//    //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
-//    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
-//        NVTE_ERROR("MHA Graph execution is unsuccessful.");
-//        return;
-//    }
-//
-//    //checkCudaErr(cudaDeviceSynchronize());
-//
-//    //cudnnDestroy(handle);
-
-
-
-
 //    try {
 //        NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 //
@@ -1090,6 +937,7 @@ std::cout << "Execute " << std::endl;
 //    } catch (cudnn_frontend::cudnnException &e) {
 //        NVTE_ERROR(e.what());
 //    }
+
 }
 
 void fused_attn_arbitrary_seqlen_bwd_impl(
@@ -1118,14 +966,7 @@ std::cout << "Enter bwd impl" << std::endl;
     //    return;
     //}
 
-    //int64_t b                 = 3;     // batch size
-    //int64_t h                 = 4;     // head dim
-    //int64_t s_q               = 1024;  // q tensor is padded to this seq length
-    //int64_t s_kv              = 1024;  // k and v tensor is padded to this seq length
-    //int64_t d                 = 128;   // hidden dim
-
     bool is_bias = false; //true;
-    //float dropout_probability = 0.2f;
 
     namespace fe = cudnn_frontend;
     fe::graph::Graph mha_graph;
@@ -1137,30 +978,50 @@ std::cout << "Enter bwd impl" << std::endl;
     std::shared_ptr<fe::graph::Tensor_attributes> bias, dropout_seed, dropout_offset;
 
 std::cout << "Get qkv strides" << std::endl;
+    int64_t q_stride[4];
+    int64_t k_stride[4];
+    int64_t v_stride[4];
+    generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
+    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix_Transpose);
+    std::vector<int64_t> q_strides(q_stride, q_stride + 4);
+    std::vector<int64_t> k_strides(k_stride, k_stride + 4);
+    std::vector<int64_t> v_strides(v_stride, v_stride + 4);
+    int64_t o_stride[4];
+    generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+    std::vector<int64_t> o_strides(o_stride, o_stride + 4);
+    //int64_t s_stride[4];
+    //generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
     auto q = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("Q")
                                   .set_dim({b, h, s_q, d})
-                                  .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
+                                  .set_stride(q_strides));
+                                  //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
                                   //.set_stride({h * s_q * d, s_q * d, d, 1}));
     auto k = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("K")
                                   .set_dim({b, h, d, s_kv})
-                                  .set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
+                                  .set_stride(k_strides));
+                                  //.set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
                                   //.set_stride({h * s_kv * d, s_kv * d, 1, d}));
     auto v = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("V")
                                   .set_dim({b, h, d, s_kv})
-                                  .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
+                                  .set_stride(v_strides));
+                                  //.set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
+                                  ////.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
                                   //.set_stride({h * s_kv * d, s_kv * d, 1, d}));
     auto o = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("O")
                                   .set_dim({b, h, s_q, d})
-                                  .set_stride({h * d, d, b * h * d, 1}));
+                                  .set_stride(o_strides));
+                                  //.set_stride({h * d, d, b * h * d, 1}));
                                   //.set_stride({h * s_q * d, s_q * d, d, 1}));
     auto dO = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("dO")
                                   .set_dim({b, h, s_q, d})
-                                  .set_stride({h * d, d, b * h * d, 1}));
+                                  .set_stride(o_strides));
+                                  //.set_stride({h * d, d, b * h * d, 1}));
                                   //.set_stride({h * s_q * d, s_q * d, d, 1}));
     auto stats = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("stats")
@@ -1214,17 +1075,24 @@ std::cout << "Call sdpa" << std::endl;
     auto [dQ, dK, dV] = mha_graph.scaled_dot_product_flash_attention_backward(
         q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
 
+    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+    std::vector<int64_t> k_strides1(k_stride, k_stride + 4);
+    std::vector<int64_t> v_strides1(v_stride, v_stride + 4);
     dQ->set_output(true)
             .set_dim({b, h, s_q, d})
-            .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
+            .set_stride(q_strides);
+            //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
             //.set_stride({h * s_q * d, s_q * d, d, 1});
     dK->set_output(true)
             .set_dim({b, h, s_kv, d})
-            .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
+            .set_stride(k_strides1);
+            //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
             //.set_stride({h * s_kv * d, s_kv * d, d, 1});
     dV->set_output(true)
             .set_dim({b, h, s_kv, d})
-            .set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
+            .set_stride(v_strides1);
+            //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
             //.set_stride({h * s_kv * d, s_kv * d, d, 1});
 
     //cudnnHandle_t handle;
