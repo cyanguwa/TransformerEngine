@@ -607,6 +607,7 @@ std::cout << "Get qkv strides " << std::endl;
     //                                 .set_dim({b, 1, s_q, s_kv})
     //                                 .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
 
+    //if (dropout_probability != 0.0f) {
     auto seed = mha_graph.tensor(fe::graph::Tensor_attributes()
                                      .set_name("Seed")
                                      .set_dim({1, 1, 1, 1})
@@ -617,13 +618,18 @@ std::cout << "Get qkv strides " << std::endl;
                                        .set_dim({1, 1, 1, 1})
                                        .set_stride({1, 1, 1, 1})
                                        .set_data_type(fe::DataType_t::INT32));
+    //}
 std::cout << "Set options seq q/kv" << std::endl;
     auto scaled_dpa_options = fe::graph::Scaled_dot_product_flash_attention_attributes()
                                                           .set_name("flash_attention")
                                                           .set_is_inference(is_inference)
-                                                          .set_causal_mask(true)
-                                                          .set_attn_scale(attn_scale)
-                                                          .set_dropout(dropout_probability, seed, offset);
+                                                          .set_causal_mask(false)
+                                                          .set_attn_scale(attn_scale);
+                                                          //.set_causal_mask(true)
+                                                          //.set_dropout(dropout_probability, seed, offset);
+    if (dropout_probability != 0.0f) {
+        scaled_dpa_options.set_dropout(dropout_probability, seed, offset);
+    }
 
     // Optional bias in flash attention is only supported 8.9.3 onwards
     //if (cudnnGetVersion() >= 8904) {
@@ -631,6 +637,7 @@ std::cout << "Set options seq q/kv" << std::endl;
         scaled_dpa_options.set_alibi_mask(false);
     //}
 
+    //if (dropout_probability != 0.0f) {
     auto seq_q  = mha_graph.tensor(fe::graph::Tensor_attributes()
                                     .set_name("seq_q")
                                     .set_dim({b, 1, 1, 1})
@@ -649,8 +656,10 @@ std::cout << "Set options seq q/kv" << std::endl;
 //            .set_seq_len_kv(seq_kv);
         //scaled_dpa_options.set_padding_mask(true)
         //scaled_dpa_options.set_seq_len_q(seq_q).set_seq_len_kv(seq_kv);
+    if (dropout_probability != 0.0f) {
         scaled_dpa_options.set_padding_mask(true).set_seq_len_q(seq_q).set_seq_len_kv(seq_kv);
     //}
+    }
 
 std::cout << "Call sdpa " << std::endl;
     auto [O, Stats] = mha_graph.scaled_dot_product_flash_attention(
@@ -732,9 +741,13 @@ std::cout << "Create variant pack" << std::endl;
         {K, devPtrK},
         {V, devPtrV},
         {attn_scale, &scaling_factor},
-        {seed, devPtrDropoutSeed},
-        {offset, devPtrDropoutOffset},
         {O, devPtrO}};
+        //{seed, devPtrDropoutSeed},
+        //{offset, devPtrDropoutOffset},
+    if (dropout_probability != 0.0f) {
+        variant_pack[seed] = devPtrDropoutSeed;
+        variant_pack[offset] = devPtrDropoutOffset;
+    }
         //{bias, nullptr},
         //{attn_scale, &attn_scale_cpu},
         //{bias, bTensor.devPtr},
@@ -766,8 +779,10 @@ std::cout << "Create actual seqs" << std::endl;
         static_cast<const int32_t *>(devPtrCuSeqlensKV),
         static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenKV));
 
+    if (dropout_probability != 0.0f) {
     variant_pack[seq_q]  = devActualSeqlenQ;
     variant_pack[seq_kv] = devActualSeqlenKV;
+    }
 #endif
 
     //Surface<float> statsTensor(b * h * s_q * 1, false);
@@ -1183,7 +1198,7 @@ std::cout << "Get qkv strides" << std::endl;
 std::cout << "Create options" << std::endl;
     auto scaled_dot_product_flash_attention_backward_options = fe::graph::Scaled_dot_product_flash_attention_backward_attributes()
                                   .set_name("flash_attention_backward")
-                                  .set_causal_mask(true)
+                                  .set_causal_mask(false)
                                   .set_attn_scale(attn_scale);
 
     if (is_bias) {
