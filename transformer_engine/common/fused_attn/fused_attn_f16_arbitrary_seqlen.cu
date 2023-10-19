@@ -582,7 +582,7 @@ std::cout << "Get qkv strides " << std::endl;
     int64_t k_stride[4];
     int64_t v_stride[4];
     generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
-    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
+    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix); //_Transpose);
     generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
     std::vector<int64_t> q_strides(q_stride, q_stride + 4);
     std::vector<int64_t> k_strides(k_stride, k_stride + 4);
@@ -594,8 +594,9 @@ std::cout << "Get qkv strides " << std::endl;
                                   //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
     auto K = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("K")
-                                  .set_dim({b, h, d, s_kv})
+                                  .set_dim({b, h, s_kv, d})
                                   .set_stride(k_strides));
+                                  //.set_dim({b, h, d, s_kv})
                                   //.set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
     auto V = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("V")
@@ -706,24 +707,24 @@ std::cout << "Call sdpa " << std::endl;
 
 std::cout << "Call sdpa validate " << std::endl;
     if (!mha_graph.validate().is_good()) {
-        NVTE_ERROR("MHA Graph validation is false.");
+        NVTE_ERROR("MHA FWD Graph validation is false.");
         return;
     }
 
     if (!mha_graph.build_operation_graph(handle).is_good()) {
-        NVTE_ERROR("MHA Graph build is unsuccessful.");
+        NVTE_ERROR("MHA FWD Graph build is unsuccessful.");
         return;
     }
 
-    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+    auto plans = mha_graph.get_execution_plan_list({fe::HeurMode_t::A});
     
     if (!plans.check_support(handle).is_good()) {
-        NVTE_ERROR("MHA Graph check support is unsuccessful.");
+        NVTE_ERROR("MHA FWD Graph check support is unsuccessful.");
         return;
     }
 
     if (!mha_graph.set_execution_plans(plans).is_good()) {
-        NVTE_ERROR("MHA Graph set execution plan is unsuccessful.");
+        NVTE_ERROR("MHA FWD Graph set execution plan is unsuccessful.");
         return;
     }
 
@@ -815,7 +816,7 @@ std::cout << "Execute " << std::endl;
     //Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
     //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
     if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
-        NVTE_ERROR("MHA Graph execution is unsuccessful.");
+        NVTE_ERROR("MHA FWD Graph execution is unsuccessful.");
         return;
     }
 
@@ -1011,8 +1012,8 @@ std::cout << "Get qkv strides" << std::endl;
     int64_t k_stride[4];
     int64_t v_stride[4];
     generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
-    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
-    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix_Transpose);
+    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix); //_Transpose);
+    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix); //_Transpose);
     std::vector<int64_t> q_strides(q_stride, q_stride + 4);
     std::vector<int64_t> k_strides(k_stride, k_stride + 4);
     std::vector<int64_t> v_strides(v_stride, v_stride + 4);
@@ -1029,14 +1030,16 @@ std::cout << "Get qkv strides" << std::endl;
                                   //.set_stride({h * s_q * d, s_q * d, d, 1}));
     auto k = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("K")
-                                  .set_dim({b, h, d, s_kv})
+                                  .set_dim({b, h, s_kv, d})
                                   .set_stride(k_strides));
+                                  //.set_dim({b, h, d, s_kv})
                                   //.set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
                                   //.set_stride({h * s_kv * d, s_kv * d, 1, d}));
     auto v = mha_graph.tensor(fe::graph::Tensor_attributes()
                                   .set_name("V")
-                                  .set_dim({b, h, d, s_kv})
+                                  .set_dim({b, h, s_kv, d})
                                   .set_stride(v_strides));
+                                  //.set_dim({b, h, d, s_kv})
                                   //.set_stride({3 * h * d, 3 * d, 1, 3 * b * h * d}));
                                   ////.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1}));
                                   //.set_stride({h * s_kv * d, s_kv * d, 1, d}));
@@ -1104,10 +1107,10 @@ std::cout << "Call sdpa" << std::endl;
     auto [dQ, dK, dV] = mha_graph.scaled_dot_product_flash_attention_backward(
         q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
 
-    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
-    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
-    std::vector<int64_t> k_strides1(k_stride, k_stride + 4);
-    std::vector<int64_t> v_strides1(v_stride, v_stride + 4);
+    //generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+    //generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+    //std::vector<int64_t> k_strides1(k_stride, k_stride + 4);
+    //std::vector<int64_t> v_strides1(v_stride, v_stride + 4);
     dQ->set_output(true)
             .set_dim({b, h, s_q, d})
             .set_stride(q_strides);
@@ -1115,12 +1118,12 @@ std::cout << "Call sdpa" << std::endl;
             //.set_stride({h * s_q * d, s_q * d, d, 1});
     dK->set_output(true)
             .set_dim({b, h, s_kv, d})
-            .set_stride(k_strides1);
+            .set_stride(k_strides);
             //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
             //.set_stride({h * s_kv * d, s_kv * d, d, 1});
     dV->set_output(true)
             .set_dim({b, h, s_kv, d})
-            .set_stride(v_strides1);
+            .set_stride(v_strides);
             //.set_stride({3 * h * d, 3 * d, 3 * b * h * d, 1});
             //.set_stride({h * s_kv * d, s_kv * d, d, 1});
 
@@ -1138,24 +1141,24 @@ std::cout << "Call sdpa" << std::endl;
 std::cout << "Validate etc" << std::endl;
     //REQUIRE(mha_graph.set_execution_plans(plans).is_good());
     if (!mha_graph.validate().is_good()) {
-        NVTE_ERROR("MHA Graph validation is false.");
+        NVTE_ERROR("MHA BWD Graph validation is false.");
         return;
     }
 
     if (!mha_graph.build_operation_graph(handle).is_good()) {
-        NVTE_ERROR("MHA Graph build is unsuccessful.");
+        NVTE_ERROR("MHA BWD Graph build is unsuccessful.");
         return;
     }
 
-    auto plans = mha_graph.get_execution_plan_list(fe::HeurMode_t::HEUR_MODE_A);
+    auto plans = mha_graph.get_execution_plan_list({fe::HeurMode_t::A});
     
     if (!plans.check_support(handle).is_good()) {
-        NVTE_ERROR("MHA Graph check support is unsuccessful.");
+        NVTE_ERROR("MHA BWD Graph check support is unsuccessful.");
         return;
     }
 
     if (!mha_graph.set_execution_plans(plans).is_good()) {
-        NVTE_ERROR("MHA Graph set execution plan is unsuccessful.");
+        NVTE_ERROR("MHA BWD Graph set execution plan is unsuccessful.");
         return;
     }
 
@@ -1220,7 +1223,7 @@ std::cout << "Bwd execute " << plan_workspace_size << std::endl;
 //    Surface<int8_t> workspace(mha_graph.get_workspace_size(), false);
     //REQUIRE(mha_graph.execute(handle, variant_pack, workspace.devPtr).is_good());
     if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
-        NVTE_ERROR("MHA graph execution is unsuccessful!");
+        NVTE_ERROR("MHA BWD graph execution is unsuccessful!");
         return;
     }
 
