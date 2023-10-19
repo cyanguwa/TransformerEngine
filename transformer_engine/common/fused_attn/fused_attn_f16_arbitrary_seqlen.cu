@@ -9,6 +9,7 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cudnn_frontend.h>
+#include <cudnn_frontend_utils.h>
 #include <map>
 #include <vector>
 
@@ -543,6 +544,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                                 bool is_training, float scaling_factor, float dropout_probability,
                                 NVTE_QKV_Layout layout,
+				NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                 void *devPtrQ, void *devPtrK, void *devPtrV,
                                 void *devPtrSoftmaxStats, void *devPtrO,
                                 void* devPtrDropoutSeed, void* devPtrDropoutOffset,
@@ -570,7 +572,8 @@ std::cout << "Enter fwd impl " << std::endl;
 
     namespace fe = cudnn_frontend;
     fe::graph::Graph mha_graph;
-    mha_graph.set_io_data_type(fe::DataType_t::HALF)
+    //mha_graph.set_io_data_type(fe::DataType_t::HALF)
+    mha_graph.set_io_data_type(fe::detail::convert_from_cudnn_type(tensorType))
         .set_intermediate_data_type(fe::DataType_t::FLOAT)
         .set_compute_data_type(fe::DataType_t::FLOAT);
 
@@ -607,6 +610,10 @@ std::cout << "Get qkv strides " << std::endl;
                                            .set_is_pass_by_value(true)
                                            .set_data_type(fe::DataType_t::FLOAT));
 
+
+    bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
+    bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
+    bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
     //auto bias = mha_graph.tensor(fe::graph::Tensor_attributes()
     //                                 .set_name("bias")
     //                                 .set_dim({b, 1, s_q, s_kv})
@@ -625,21 +632,21 @@ std::cout << "Get qkv strides " << std::endl;
                                        .set_data_type(fe::DataType_t::INT32));
     //}
 std::cout << "Set options seq q/kv" << std::endl;
-    auto scaled_dpa_options = fe::graph::Scaled_dot_product_flash_attention_attributes()
+    auto scaled_dot_product_flash_attention_options = fe::graph::Scaled_dot_product_flash_attention_attributes()
                                                           .set_name("flash_attention")
                                                           .set_is_inference(is_inference)
-                                                          .set_causal_mask(false)
+                                                          .set_causal_mask(is_causal)
                                                           .set_attn_scale(attn_scale);
                                                           //.set_causal_mask(true)
                                                           //.set_dropout(dropout_probability, seed, offset);
     if (dropout_probability != 0.0f) {
-        scaled_dpa_options.set_dropout(dropout_probability, seed, offset);
+        scaled_dot_product_flash_attention_options.set_dropout(dropout_probability, seed, offset);
     }
 
     // Optional bias in flash attention is only supported 8.9.3 onwards
     //if (cudnnGetVersion() >= 8904) {
     //    scaled_dot_product_flash_attention_options.set_alibi_mask(true);
-        scaled_dpa_options.set_alibi_mask(false);
+        scaled_dot_product_flash_attention_options.set_alibi_mask(false);
     //}
 
     //if (dropout_probability != 0.0f) {
@@ -661,14 +668,15 @@ std::cout << "Set options seq q/kv" << std::endl;
 //            .set_seq_len_kv(seq_kv);
         //scaled_dpa_options.set_padding_mask(true)
         //scaled_dpa_options.set_seq_len_q(seq_q).set_seq_len_kv(seq_kv);
-    if (dropout_probability != 0.0f) {
-        scaled_dpa_options.set_padding_mask(true).set_seq_len_q(seq_q).set_seq_len_kv(seq_kv);
+    //if (dropout_probability != 0.0f) {
+    if (is_padding) {
+        scaled_dot_product_flash_attention_options.set_padding_mask(is_padding).set_seq_len_q(seq_q).set_seq_len_kv(seq_kv);
     //}
     }
 
 std::cout << "Call sdpa " << std::endl;
     auto [O, Stats] = mha_graph.scaled_dot_product_flash_attention(
-        Q, K, V, scaled_dpa_options);
+        Q, K, V, scaled_dot_product_flash_attention_options);
 
     int64_t o_stride[4];
     generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
@@ -679,7 +687,9 @@ std::cout << "Call sdpa " << std::endl;
     //int64_t s_stride[4];
     //generateMatrixStrides(b, h, s_q, s_kv, d, s_stride, layout, NVTE_QKV_Matrix::NVTE_S_Matrix);
     if (Stats) {
-        Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT);
+        Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT)
+                                  .set_dim({b, h, s_q, 1})
+                                  .set_stride({h * s_q, s_q, 1, 1});
     }
 
     //cudnnHandle_t handle;
@@ -789,7 +799,8 @@ std::cout << "Create actual seqs" << std::endl;
         static_cast<const int32_t *>(devPtrCuSeqlensKV),
         static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenKV));
 
-    if (dropout_probability != 0.0f) {
+    //if (dropout_probability != 0.0f) {
+    if (is_padding) {
     variant_pack[seq_q]  = devActualSeqlenQ;
     variant_pack[seq_kv] = devActualSeqlenKV;
     }
@@ -955,6 +966,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl_old(
 void fused_attn_arbitrary_seqlen_bwd_impl(
                             int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                             float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
+			    NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                             void* devPtrQ, void* devPtrKTranspose, void* devPtrVTranspose,
                             void* devPtrO, void* devPtrSoftmaxStats,
                             void* devPtrdQ, void* devPtrdK, void* devPtrdV, void* devPtrdO,
@@ -978,11 +990,16 @@ std::cout << "Enter bwd impl" << std::endl;
     //    return;
     //}
 
-    bool is_bias = false; //true;
+    //bool is_bias = false; //true;
+    bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
+    bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
+    bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
+    std::cout << "is bias " << is_bias << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
 
     namespace fe = cudnn_frontend;
     fe::graph::Graph mha_graph;
-    mha_graph.set_io_data_type(fe::DataType_t::HALF)
+    //mha_graph.set_io_data_type(fe::DataType_t::HALF)
+    mha_graph.set_io_data_type(fe::detail::convert_from_cudnn_type(tensorType))
                       .set_intermediate_data_type(fe::DataType_t::FLOAT)
                       .set_compute_data_type(fe::DataType_t::FLOAT);
 
@@ -1071,7 +1088,7 @@ std::cout << "Get qkv strides" << std::endl;
 std::cout << "Create options" << std::endl;
     auto scaled_dot_product_flash_attention_backward_options = fe::graph::Scaled_dot_product_flash_attention_backward_attributes()
                                   .set_name("flash_attention_backward")
-                                  .set_causal_mask(false)
+                                  .set_causal_mask(is_causal)
                                   .set_attn_scale(attn_scale);
 
     if (is_bias) {
@@ -1807,6 +1824,7 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(
 
     fused_attn_arbitrary_seqlen_fwd_impl(batch, num_head, max_seqlen, max_seqlen, head_dim,
                                 is_training, attn_scale, p_dropout, qkv_layout,
+				bias_type, mask_type,
                                 devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO,
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 devPtrCuSeqlens, devPtrCuSeqlens,  
@@ -1897,6 +1915,7 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
 
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen, max_seqlen, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
+				bias_type, mask_type,
                                 devPtrQ, devPtrK, devPtrV, devPtrO, devPtrSoftmaxStats,
                                 devPtrdQ, devPtrdK, devPtrdV, devPtrdO,
                                 devPtrDropoutSeed, devPtrDropoutOffset,
@@ -1978,6 +1997,7 @@ void fused_attn_arbitrary_seqlen_fwd(
     } else {
     fused_attn_arbitrary_seqlen_fwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 is_training, attn_scale, p_dropout, qkv_layout,
+				bias_type, mask_type,
                                 devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO,
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 devPtrCuSeqlensQ, devPtrCuSeqlensKV,
@@ -2078,6 +2098,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
     } else {
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
+				bias_type, mask_type,
                                 devPtrQ, devPtrK, devPtrV, devPtrO, devPtrSoftmaxStats,
                                 devPtrdQ, devPtrdK, devPtrdV, devPtrdO,
                                 devPtrDropoutSeed, devPtrDropoutOffset,
