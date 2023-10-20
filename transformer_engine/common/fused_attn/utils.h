@@ -12,6 +12,7 @@
 
 #include <cudnn.h>
 #include <cudnn_frontend.h>
+#include <cudnn_frontend_utils.h>
 
 #include <cstdint>
 #include <mutex>
@@ -107,6 +108,7 @@ __global__ void cu_seqlens_to_actual_seqlens(size_t b,
 }  // namespace fused_attn
 
 cudnnDataType_t get_cudnn_dtype(const transformer_engine::DType t);
+cudnn_frontend::DataType_t get_cudnn_fe_dtype(const transformer_engine::DType t);
 
 class cudnnExecutionPlanManager {
  public:
