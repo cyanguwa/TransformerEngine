@@ -469,6 +469,7 @@ def setup_pytorch_extension() -> setuptools.Extension:
     include_dirs = [
         root_path / "transformer_engine" / "common" / "include",
         root_path / "transformer_engine" / "pytorch" / "csrc",
+        root_path / "transformer_engine",
         root_path / "3rdparty" / "cudnn-frontend" / "include",
     ]
 
@@ -541,6 +542,7 @@ def setup_paddle_extension() -> setuptools.Extension:
     include_dirs = [
         root_path / "transformer_engine" / "common" / "include",
         root_path / "transformer_engine" / "paddle" / "csrc",
+        root_path / "transformer_engine",
     ]
 
     # Compiler flags
