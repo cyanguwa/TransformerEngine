@@ -102,8 +102,8 @@ batch_sizes = [1, 32]
 
 model_configs_lean = {
     #"test6": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
-    #"test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"), #"causal"),
-    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.1, "causal"),
+    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"),
+    "test8": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "causal"),
 }
 
 param_types_lean = [torch.bfloat16, torch.float16]
@@ -302,49 +302,22 @@ def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
     print('fused_attn_supported', fused_attn_supported)
     # FusedAttention backend
     if fused_attn_supported:
-        if (os.environ["NVTE_FUSED_ATTN_OLD"] == "0"):
-            fused_attn_fwd, fused_attn_bwd = _run_dpa_qkv_layout(
-                dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
-        #os.environ["NVTE_FUSED_ATTN_OLD"] = "1"
-            print('new fwd')
-            print(fused_attn_fwd.shape, unfused_attn_fwd.shape)
-            print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
-            print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
-            torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
-        else:
-            fused_attn_fwd_old, fused_attn_bwd_old = _run_dpa_qkv_layout(
-                dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
-            print('old fwd')
-            print(fused_attn_fwd_old.shape, unfused_attn_fwd.shape)
-            print(fused_attn_fwd_old.min().item(), fused_attn_fwd_old.max().item())
-            print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
-            torch.save(fused_attn_fwd_old, 'fused_attn_fwd_old.pt')
-            fused_attn_fwd_tmp = torch.load('fused_attn_fwd.pt')
-            torch.testing.assert_close(fused_attn_fwd_tmp, fused_attn_fwd_old, **tols)
+        fused_attn_fwd, fused_attn_bwd = _run_dpa_qkv_layout(
+            dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
+        print(fused_attn_fwd.shape, unfused_attn_fwd.shape)
+        print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
+        print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
+        #torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
         #torch.save(unfused_attn_fwd, 'unfused_attn_fwd.pt')
-        #torch.testing.assert_close(fused_attn_fwd, fused_attn_fwd_old, **tols)
-        #torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
-        #torch.testing.assert_close(fused_attn_fwd_old, unfused_attn_fwd, **tols)
+        torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
         for i in range(len(unfused_attn_bwd)):
-            if (os.environ["NVTE_FUSED_ATTN_OLD"] == "0"):
-                print('iiii new',i)
-                print(fused_attn_bwd[i].shape, unfused_attn_bwd[i].shape)
-                print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
-                print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
-                torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
-            else:
-                print('iiii old',i)
-                print(fused_attn_bwd_old[i].shape, unfused_attn_bwd[i].shape)
-                print(fused_attn_bwd_old[i].min().item(), fused_attn_bwd_old[i].max().item())
-                print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
-                torch.save(fused_attn_bwd_old[i], 'fused_attn_bwd_old_'+str(i)+'.pt')
-                fused_attn_bwd_tmp = torch.load('fused_attn_bwd_'+str(i)+'.pt')
-                torch.testing.assert_close(fused_attn_bwd_tmp, fused_attn_bwd_old[i], **tols)
-
+            print('iiii new',i)
+            print(fused_attn_bwd[i].shape, unfused_attn_bwd[i].shape)
+            print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
+            print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
+            #torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
             #torch.save(unfused_attn_bwd[i], 'unfused_attn_bwd_'+str(i)+'.pt')
-            #torch.testing.assert_close(fused_attn_bwd[i], fused_attn_bwd_old[i], **tols)
-            #torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
-            #torch.testing.assert_close(fused_attn_bwd_old[i], unfused_attn_bwd[i], **tols)
+            torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
 
     ## FlashAttention backend
     #if flash_attn_supported:
