@@ -103,7 +103,7 @@ batch_sizes = [1, 32]
 model_configs_lean = {
     #"test6": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
     #"test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"), #"causal"),
-    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "causal"),
+    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.1, "causal"),
 }
 
 param_types_lean = [torch.bfloat16, torch.float16]

@@ -173,7 +173,7 @@ def fused_attn_fwd_qkvpacked(
     qkv_layout: str = "qkv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
-    rng_gen_or_dropout_mask: Union[torch.Generator, torch.Tensor] = None,
+    rng_gen: torch.Generator = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for packed QKV input.
 
@@ -222,10 +222,9 @@ def fused_attn_fwd_qkvpacked(
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
-    rng_gen_or_dropout_mask: Union[torch.Generator, torch.Tensor], default = None
+    rng_gen: torch.Generator, default = None
                 random number generator;
-                if None, uses the default CUDA generator from PyTorch;
-                otherwise, uses rng_gen_or_dropout_mask as the dropout mask.
+                if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
 
     Returns
     ----------
@@ -318,7 +317,7 @@ def fused_attn_fwd_qkvpacked(
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens, qkv, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o, attn_bias,
-            rng_gen_or_dropout_mask, rng_elts_per_thread,
+            rng_gen, rng_elts_per_thread,
     )
 
     # out, aux_ctx_tensors
@@ -505,7 +504,7 @@ def fused_attn_fwd_kvpacked(
     qkv_layout: str = "kv_interleaved",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
-    rng_gen_or_dropout_mask: Union[torch.Generator, torch.Tensor] = None,
+    rng_gen: torch.Generator = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for packed KV input.
 
@@ -563,10 +562,9 @@ def fused_attn_fwd_kvpacked(
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
-    rng_gen_or_dropout_mask: Union[torch.Generator, torch.Tensor], default = None
+    rng_gen: torch.Generator, default = None
                 random number generator;
-                if None, uses the default CUDA generator from PyTorch;
-                otherwise, uses rng_gen_or_dropout_mask as the dropout mask.
+                if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
 
     Returns
     ----------
@@ -651,7 +649,7 @@ def fused_attn_fwd_kvpacked(
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens_q, cu_seqlens_kv, q, kv, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o,
-            attn_bias, rng_gen_or_dropout_mask, rng_elts_per_thread,
+            attn_bias, rng_gen, rng_elts_per_thread,
     )
 
     # out, aux_ctx_tensors
@@ -861,7 +859,7 @@ def fused_attn_fwd(
     qkv_layout: str = "sbh3d",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
-    rng_gen_or_dropout_mask: Union[torch.Generator, torch.Tensor] = None,
+    rng_gen: torch.Generator = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for separate QKV input.
 
@@ -935,10 +933,9 @@ def fused_attn_fwd(
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
-    rng_gen_or_dropout_mask: Union[torch.Generator, torch.Tensor], default = None
+    rng_gen: torch.Generator, default = None
                 random number generator;
-                if None, uses the default CUDA generator from PyTorch;
-                otherwise, uses rng_gen_or_dropout_mask as the dropout mask.
+                if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
 
     Returns
     ----------
@@ -1012,7 +1009,7 @@ def fused_attn_fwd(
             QKVLayout[qkv_layout], AttnBiasType[attn_bias_type], AttnMaskType[attn_mask_type],
             cu_seqlens_q, cu_seqlens_kv, q, k, v, qkv_dtype,
             d_scale_qkv, q_scale_s, q_scale_o, amax_s, amax_o,
-            attn_bias, rng_gen_or_dropout_mask, rng_elts_per_thread,
+            attn_bias, rng_gen, rng_elts_per_thread,
     )
 
     # out, aux_ctx_tensors

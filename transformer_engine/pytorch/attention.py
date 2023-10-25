@@ -1376,13 +1376,13 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
     @staticmethod
     def forward(ctx, is_training, max_seqlen, cu_seqlens, qkv, qkv_dtype, attn_bias, attn_scale,
                 dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-                rng_gen_or_dropout_mask, fused_attention_backend, use_FAv2_bwd):
+                rng_gen, fused_attention_backend, use_FAv2_bwd):
         out, aux_ctx_tensors = fused_attn_fwd_qkvpacked(
             is_training, max_seqlen, cu_seqlens, qkv, qkv_dtype,
             fused_attention_backend, attn_bias,
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-            rng_gen_or_dropout_mask)
+            rng_gen)
 
         ctx.save_for_backward(qkv, out, cu_seqlens)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -1403,7 +1403,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
     def backward(ctx, d_out):
         qkv, out, cu_seqlens = ctx.saved_tensors
         if ctx.use_FAv2_bwd:
-            softmax_lse, rng_state_or_dropout_mask = ctx.aux_ctx_tensors
+            softmax_lse, rng_state = ctx.aux_ctx_tensors
             dqkv = torch.empty_like(qkv)
             maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
             d_out, q, k, v, out = [maybe_contiguous(x)
@@ -1412,8 +1412,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dqkv[:,0], dqkv[:,1], dqkv[:,2],
                 cu_seqlens, cu_seqlens, ctx.max_seqlen, ctx.max_seqlen,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None,
-                rng_state_or_dropout_mask if !isinstance(rng_state_or_dropout_mask, torch.Tensor),
+                ctx.attn_mask_type == "causal", None, rng_state,
             )
             dqkv = dqkv[..., :d_out.shape[-1]]
         else:
@@ -1442,13 +1441,13 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
     def forward(ctx, is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
                 q, kv, qkv_dtype, attn_bias, attn_scale, dropout_p, fast_zero_fill,
                 qkv_layout, attn_bias_type, attn_mask_type,
-                rng_gen_or_dropout_mask, fused_attention_backend, use_FAv2_bwd):
+                rng_gen, fused_attention_backend, use_FAv2_bwd):
         out, aux_ctx_tensors = fused_attn_fwd_kvpacked(
             is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
             q, kv, qkv_dtype, fused_attention_backend, attn_bias,
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-            rng_gen_or_dropout_mask)
+            rng_gen)
 
         ctx.save_for_backward(q, kv, out, cu_seqlens_q, cu_seqlens_kv)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -1470,7 +1469,7 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
     def backward(ctx, d_out):
         q, kv, out, cu_seqlens_q, cu_seqlens_kv = ctx.saved_tensors
         if ctx.use_FAv2_bwd:
-            softmax_lse, rng_state_or_dropout_mask = ctx.aux_ctx_tensors
+            softmax_lse, rng_state = ctx.aux_ctx_tensors
             dq = torch.empty_like(q)
             dkv = torch.empty_like(kv)
             maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
@@ -1480,8 +1479,7 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dq, dkv[:,0], dkv[:,1],
                 cu_seqlens_q, cu_seqlens_kv, ctx.max_seqlen_q, ctx.max_seqlen_kv,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None,
-                rng_state_or_dropout_mask if !isinstance(rng_state_or_dropout_mask, torch.Tensor),
+                ctx.attn_mask_type == "causal", None, rng_state,
             )
             dq = dq[..., :d_out.shape[-1]]
             dkv = dkv[..., :d_out.shape[-1]]
@@ -1512,13 +1510,13 @@ class FusedAttnFunc(torch.autograd.Function):
     def forward(ctx, is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
                 q, k, v, qkv_dtype, attn_bias, attn_scale, dropout_p, fast_zero_fill,
                 qkv_layout, attn_bias_type, attn_mask_type,
-                rng_gen_or_dropout_mask, fused_attention_backend, use_FAv2_bwd):
+                rng_gen, fused_attention_backend, use_FAv2_bwd):
         out, aux_ctx_tensors = fused_attn_fwd(
             is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
             q, k, v, qkv_dtype, fused_attention_backend, attn_bias,
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-            rng_gen_or_dropout_mask)
+            rng_gen)
 
         ctx.save_for_backward(q, k, v, out, cu_seqlens_q, cu_seqlens_kv)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -1540,7 +1538,7 @@ class FusedAttnFunc(torch.autograd.Function):
     def backward(ctx, d_out):
         q, k, v, out, cu_seqlens_q, cu_seqlens_kv = ctx.saved_tensors
         if ctx.use_FAv2_bwd:
-            softmax_lse, rng_state_or_dropout_mask = ctx.aux_ctx_tensors
+            softmax_lse, rng_state = ctx.aux_ctx_tensors
             dq = torch.empty_like(q)
             dk = torch.empty_like(k)
             dv = torch.empty_like(v)
@@ -1551,8 +1549,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dq, dk, dv,
                 cu_seqlens_q, cu_seqlens_kv, ctx.max_seqlen_q, ctx.max_seqlen_kv,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None,
-                rng_state_or_dropout_mask if !isinstance(rng_state_or_dropout_mask, torch.Tensor),
+                ctx.attn_mask_type == "causal", None, rng_state,
             )
             dq = dq[..., :d_out.shape[-1]]
             dk = dk[..., :d_out.shape[-1]]
@@ -1640,13 +1637,11 @@ class FusedAttention(torch.nn.Module):
         cu_seqlens_kv: Optional[torch.Tensor] = None,
         attn_mask_type: str = "causal",
         attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
-        dropout_mask: Optional[torch.Tensor]] = None,
         fused_attention_backend:
             tex.NVTE_Fused_Attn_Backend = tex.NVTE_Fused_Attn_Backend.NVTE_No_Backend,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         fast_zero_fill: bool = True,
-        dropout_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """fused attention fprop"""
 
@@ -1681,8 +1676,8 @@ class FusedAttention(torch.nn.Module):
                         and cu_seqlens_kv is not None
                         and attention_mask is not None):
                     warnings.warn(
-                        "FusedAttention: Ignoring attention mask since cu_seqlens_q
-                        and cu_seqlens_kv are provided."
+                        """FusedAttention: Ignoring attention mask since cu_seqlens_q
+                        and cu_seqlens_kv are provided."""
                     )
                     if self.layer_number == 1:
                         _cu_seqlens_q, _cu_seqlens_kv = cu_seqlens_q, cu_seqlens_kv
@@ -1742,7 +1737,7 @@ class FusedAttention(torch.nn.Module):
                 qkv_layout,
                 core_attention_bias_type,
                 attn_mask_type,
-                dropout_mask, # rng_gen
+                None, # rng_gen
                 fused_attention_backend,
                 use_FAv2_bwd,
             )
@@ -1990,7 +1985,6 @@ class DotProductAttention(torch.nn.Module):
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         fast_zero_fill: bool = True,
-        dropout_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Dot Product Attention Layer.
@@ -2071,12 +2065,6 @@ class DotProductAttention(torch.nn.Module):
                     It should be 'None' for 'no_bias' and 'alibi' bias types.
         fast_zero_fill: bool, default = `True`
                     Whether to use the fast path to set output tensors to 0 or not.
-        dropout_mask: Optional[torch.Tensor], default = `None`
-                    Custom dropout mask, Boolean, broadcastable to the shape of softmax output.
-                    If 'None', PyTorch's random number generator will be used;
-                    otherwise, this mask and 'scale = attention_dropout/(1.0 - attention_dropout)'
-                    will be used. The number of True's in the mask is not checked against
-                    'attention_dropout'. 
         """
 
         assert (
@@ -2254,8 +2242,7 @@ class DotProductAttention(torch.nn.Module):
                               fused_attention_backend = fused_attention_backend,
                               core_attention_bias_type = core_attention_bias_type,
                               core_attention_bias = core_attention_bias,
-                              fast_zero_fill = fast_zero_fill,
-                              dropout_mask = dropout_mask)
+                              fast_zero_fill = fast_zero_fill)
             return self.fused_attention(query_layer, key_layer, value_layer,
                               qkv_layout = qkv_layout,
                               cu_seqlens_q = cu_seqlens_q,
@@ -2265,8 +2252,7 @@ class DotProductAttention(torch.nn.Module):
                               fused_attention_backend = fused_attention_backend,
                               core_attention_bias_type = core_attention_bias_type,
                               core_attention_bias = core_attention_bias,
-                              fast_zero_fill = fast_zero_fill,
-                              dropout_mask = dropout_mask)
+                              fast_zero_fill = fast_zero_fill)
 
         if checkpoint_core_attention:
             return self._checkpointed_attention_forward(
@@ -2673,7 +2659,6 @@ class MultiheadAttention(torch.nn.Module):
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         fast_zero_fill: bool = True,
-        dropout_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         """
         Forward propagation for MultiheadAttention layer.
@@ -2727,12 +2712,6 @@ class MultiheadAttention(torch.nn.Module):
                     It should be 'None' for 'no_bias' and 'alibi' bias types.
         fast_zero_fill: bool, default = `True`
                     Whether to set output tensors to 0 or not before use.
-        dropout_mask: Optional[torch.Tensor], default = `None`
-                    Custom dropout mask, Boolean, broadcastable to the shape of softmax output.
-                    If 'None', PyTorch's random number generator will be used;
-                    otherwise, this mask and 'scale = attention_dropout/(1.0 - attention_dropout)'
-                    will be used. The number of True's in the mask is not checked against
-                    'attention_dropout'. 
         """
         # hidden_states: [sq, b, h]
 
