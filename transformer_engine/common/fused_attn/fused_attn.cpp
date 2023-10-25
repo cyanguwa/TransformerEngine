@@ -130,7 +130,9 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
 #endif
             && (max_seqlen_q == max_seqlen_kv)
             && ((head_dim == 64) || (head_dim == 128))
-            && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
+            && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
+                || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS)
+                || (bias_type == NVTE_Bias_Type::NVTE_ALIBI))
             && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
             && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)

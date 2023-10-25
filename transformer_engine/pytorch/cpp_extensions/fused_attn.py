@@ -57,6 +57,7 @@ AttnBiasType = {
     "no_bias": NVTE_Bias_Type.NVTE_NO_BIAS,
     "pre_scale_bias": NVTE_Bias_Type.NVTE_PRE_SCALE_BIAS,
     "post_scale_bias": NVTE_Bias_Type.NVTE_POST_SCALE_BIAS,
+    "alibi": NVTE_Bias_Type.NVTE_ALIBI,
     }
 
 AttnMaskType = {
@@ -219,7 +220,7 @@ def fused_attn_fwd_qkvpacked(
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
     rng_gen: torch.Generator, default = None
@@ -269,9 +270,9 @@ def fused_attn_fwd_qkvpacked(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    if attn_bias_type != "no_bias":
+    if attn_bias_type not in ["no_bias", "alibi"]:
         assert (attn_bias is not None
-                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias."
+                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias or alibi."
         assert (attn_bias.shape == torch.Size([1, h, max_seqlen, max_seqlen])
                 ), "attn_bias tensor must be in [1, h, max_seqlen, max_seqlen] shape."
         assert (attn_bias.dtype == qkv.dtype
@@ -404,7 +405,7 @@ def fused_attn_bwd_qkvpacked(
     qkv_layout: str, default = "qkv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
 
@@ -475,8 +476,8 @@ def fused_attn_bwd_qkvpacked(
             q_scale_s, q_scale_dp, q_scale_dqkv, amax_dp, amax_dqkv,
     )
 
-    if attn_bias_type == "no_bias":
-        # return d_qkv when attn_bias_type is no_bias
+    if attn_bias_type in ["no_bias", "alibi"]:
+        # return d_qkv when attn_bias_type is no_bias or alibi
         return output_tensors
     # otherwise return (d_qkv, d_bias)
     return output_tensors[0], output_tensors[1]
@@ -559,7 +560,7 @@ def fused_attn_fwd_kvpacked(
     qkv_layout: str, default = "kv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
     rng_gen: torch.Generator, default = None
@@ -617,9 +618,9 @@ def fused_attn_fwd_kvpacked(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    if attn_bias_type != "no_bias":
+    if attn_bias_type not in ["no_bias", "alibi"]:
         assert (attn_bias is not None
-                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias."
+                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias or alibi."
         assert (attn_bias.shape == torch.Size([1, h, max_seqlen_q, max_seqlen_kv])
                 ), "attn_bias tensor must be in [1, h, max_seqlen_q, max_seqlen_kv] shape."
         assert (attn_bias.dtype == q.dtype
@@ -749,7 +750,7 @@ def fused_attn_bwd_kvpacked(
     qkv_layout: str, default = "kv_interleaved"
                 layout of QKV; {"qkv_interleaved", "kv_interleaved", "not_interleaved"}
     attn_bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
 
@@ -830,8 +831,8 @@ def fused_attn_bwd_kvpacked(
             q_scale_s, q_scale_dp, q_scale_dqkv, amax_dp, amax_dqkv,
     )
 
-    if attn_bias_type == "no_bias":
-        # return (d_q, d_kv) when attn_bias_type is no_bias
+    if attn_bias_type in ["no_bias", "alibi"]:
+        # return (d_q, d_kv) when attn_bias_type is no_bias or alibi
         return output_tensors
     # otherwise return (d_q, d_kv), d_bias
     return output_tensors[:2], output_tensors[2]
@@ -930,7 +931,7 @@ def fused_attn_fwd(
                 "bs3hd", "bsh3d", "bshd_bs2hd", "bshd_bsh2d", "bshd_bshd_bshd",
                 "t3hd", "th3d", "thd_t2hd", "thd_th2d", "thd_thd_thd"}
     attn_bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
     rng_gen: torch.Generator, default = None
@@ -978,9 +979,9 @@ def fused_attn_fwd(
     if attn_scale is None:
         attn_scale = 1.0 / math.sqrt(d)
 
-    if attn_bias_type != "no_bias":
+    if attn_bias_type not in ["no_bias", "alibi"]:
         assert (attn_bias is not None
-                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias."
+                ), "attn_bias tensor cannot be None when attn_bias_type is not no_bias or alibi."
         assert (attn_bias.shape == torch.Size([1, h, max_seqlen_q, max_seqlen_kv])
                 ), "attn_bias tensor must be in [1, h, max_seqlen_q, max_seqlen_kv] shape."
         assert (attn_bias.dtype == q.dtype
@@ -1125,7 +1126,7 @@ def fused_attn_bwd(
                 "bs3hd", "bsh3d", "bshd_bs2hd", "bshd_bsh2d", "bshd_bshd_bshd",
                 "t3hd", "th3d", "thd_t2hd", "thd_th2d", "thd_thd_thd"}
     attn_bias_type: str, default = "no_bias"
-                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias"}
+                type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
                 type of the attention mask; {"padding", "causal", "no_mask"}
 

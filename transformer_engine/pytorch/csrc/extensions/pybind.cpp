@@ -149,7 +149,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::enum_<NVTE_Bias_Type>(m, "NVTE_Bias_Type")
       .value("NVTE_NO_BIAS", NVTE_Bias_Type::NVTE_NO_BIAS)
       .value("NVTE_PRE_SCALE_BIAS", NVTE_Bias_Type::NVTE_PRE_SCALE_BIAS)
-      .value("NVTE_POST_SCALE_BIAS", NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
+      .value("NVTE_POST_SCALE_BIAS", NVTE_Bias_Type::NVTE_POST_SCALE_BIAS)
+      .value("NVTE_ALIBI", NVTE_Bias_Type::NVTE_ALIBI);
 
   py::enum_<NVTE_Mask_Type>(m, "NVTE_Mask_Type")
       .value("NVTE_NO_MASK", NVTE_Mask_Type::NVTE_NO_MASK)

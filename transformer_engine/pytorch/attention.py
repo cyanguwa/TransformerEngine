@@ -1424,8 +1424,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 ctx.attn_scale, ctx.dropout_p, ctx.fast_zero_fill,
                 ctx.qkv_layout, ctx.attn_bias_type, ctx.attn_mask_type)
 
-        # if no_bias, return dqkv
-        if ctx.attn_bias_type == "no_bias":
+        # if no_bias or alibi, return dqkv
+        if ctx.attn_bias_type in ["no_bias", "alibi"]:
             return (None, None, None, dqkv, None, None, None,
                     None, None, None, None, None, None,
                     None, None, None, None, None, None)
@@ -1493,8 +1493,8 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
                 ctx.attn_scale, ctx.dropout_p, ctx.fast_zero_fill,
                 ctx.qkv_layout, ctx.attn_bias_type, ctx.attn_mask_type)
 
-        # if no_bias, return dqkv
-        if ctx.attn_bias_type == "no_bias":
+        # if no_bias or alibi, return dqkv
+        if ctx.attn_bias_type in ["no_bias", "alibi"]:
             return (None, None, None, None, None, dq, dkv, None, None, None,
                     None, None, None, None, None, None,
                     None, None, None, None, None, None)
@@ -1564,8 +1564,8 @@ class FusedAttnFunc(torch.autograd.Function):
                 ctx.attn_scale, ctx.dropout_p, ctx.fast_zero_fill,
                 ctx.qkv_layout, ctx.attn_bias_type, ctx.attn_mask_type)
 
-        # if no_bias, return dqkv
-        if ctx.attn_bias_type == "no_bias":
+        # if no_bias or alibi, return dqkv
+        if ctx.attn_bias_type in ["no_bias", "alibi"]:
             return (None, None, None, None, None, dq, dk, dv, None, None, None,
                     None, None, None, None, None, None,
                     None, None, None, None, None, None)

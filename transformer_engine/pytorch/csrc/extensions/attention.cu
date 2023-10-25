@@ -142,7 +142,7 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   } else {
     NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
   }
-  if ((bias_type != NVTE_NO_BIAS) && (Bias.has_value())) {
+  if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI) && (Bias.has_value())) {
     auto bias_shape = Bias.value().sizes().vec();
     std::vector<size_t> shape{bias_shape.begin(), bias_shape.end()};
     te_Bias = makeTransformerEngineTensor(Bias.value().data_ptr(), shape,
@@ -255,7 +255,7 @@ std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
   auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
   at::Tensor dBias;
   TensorWrapper te_dBias;
-  if (bias_type != NVTE_NO_BIAS) {
+  if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI)) {
     dBias = torch::empty({1, static_cast<int64_t>(h),
                     static_cast<int64_t>(max_seqlen),
                     static_cast<int64_t>(max_seqlen)}, options);
@@ -447,7 +447,7 @@ std::vector<at::Tensor> fused_attn_fwd_kvpacked(
   } else {
     NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
   }
-  if ((bias_type != NVTE_NO_BIAS) && (Bias.has_value())) {
+  if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI) && (Bias.has_value())) {
     auto bias_shape = Bias.value().sizes().vec();
     std::vector<size_t> shape{bias_shape.begin(), bias_shape.end()};
     te_Bias = makeTransformerEngineTensor(Bias.value().data_ptr(), shape,
@@ -570,7 +570,7 @@ std::vector<at::Tensor> fused_attn_bwd_kvpacked(
   auto options = torch::TensorOptions().dtype(GetATenDType(qkv_type)).device(torch::kCUDA);
   at::Tensor dBias;
   TensorWrapper te_dBias;
-  if (bias_type != NVTE_NO_BIAS) {
+  if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI)) {
     dBias = torch::empty({1, static_cast<int64_t>(h),
                     static_cast<int64_t>(max_seqlen_q),
                     static_cast<int64_t>(max_seqlen_kv)}, options);
@@ -792,7 +792,7 @@ std::vector<at::Tensor> fused_attn_fwd(
   } else {
     NVTE_ERROR("Fused attention only supports FP8 and BF16/FP16 data types. \n");
   }
-  if ((bias_type != NVTE_NO_BIAS) && (Bias.has_value())) {
+  if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI) && (Bias.has_value())) {
     auto bias_sizes = Bias.value().sizes().vec();
     std::vector<size_t> bias_shape{bias_sizes.begin(), bias_sizes.end()};
     te_Bias = makeTransformerEngineTensor(Bias.value().data_ptr(), bias_shape,
@@ -988,7 +988,7 @@ std::vector<at::Tensor> fused_attn_bwd(
 
   at::Tensor dBias;
   TensorWrapper te_dBias;
-  if (bias_type != NVTE_NO_BIAS) {
+  if ((bias_type != NVTE_NO_BIAS) && (bias_type != NVTE_ALIBI)) {
     dBias = torch::empty({1, static_cast<int64_t>(Q.size(-2)),
                     static_cast<int64_t>(max_seqlen_q),
                     static_cast<int64_t>(max_seqlen_kv)}, options);

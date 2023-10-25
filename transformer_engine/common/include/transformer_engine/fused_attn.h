@@ -133,7 +133,9 @@ enum NVTE_Bias_Type {
     /*! Bias before scale */
     NVTE_PRE_SCALE_BIAS = 1,
     /*! Bias after scale */
-    NVTE_POST_SCALE_BIAS = 2
+    NVTE_POST_SCALE_BIAS = 2,
+    /*! ALiBi */
+    NVTE_ALIBI = 3,
 };
 
 /*! \enum NVTE_Mask_Type
