@@ -1907,6 +1907,7 @@ void fused_attn_arbitrary_seqlen_fwd(
     void *devPtrQ = input_Q->data.dptr;
     void *devPtrK = input_K->data.dptr;
     void *devPtrV = input_V->data.dptr;
+    void *devPtrBias = input_Bias->data.dptr;
     void *devPtrO = output_O->data.dptr;
     void *devPtrS = nullptr;
 

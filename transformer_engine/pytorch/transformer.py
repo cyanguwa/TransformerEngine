@@ -473,7 +473,7 @@ class TransformerLayer(torch.nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         self_attn_mask_type: Optional[str] = None,
         encoder_output: Optional[torch.Tensor] = None,
-        enc_dec_attn_mask: Optional[torch.Tensor] = None,
+        enc_dec_attn_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
         is_first_microbatch: Optional[bool] = None,
         checkpoint_core_attention: bool = False,
         inference_params: Optional[InferenceParams] = None,
@@ -494,17 +494,22 @@ class TransformerLayer(torch.nn.Module):
         ----------
         hidden_states : torch.Tensor
              Input tensor.
-        attention_mask : Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], default = `None`
+        attention_mask : Optional[torch.Tensor], default = `None`
                         Boolean tensor used to mask out self-attention softmax input.
-                        Can be a tuple of 2 masks for cross attention with padding masks.
+                        It should be in [batch_size, 1, 1, seqlen_q] for 'padding' mask type,
+                        and broadcastable to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv]
+                        for 'arbitrary'. It should be 'None' for 'causal' and 'no_mask'.
         self_attn_mask_type: {'causal', 'padding', 'no_mask', 'arbitrary'}, default = `causal`
-                            type of attention mask passed into softmax operation.
+                            Type of attention mask passed into softmax operation.
         encoder_output : Optional[torch.Tensor], default = `None`
              Output of the encoder block to be fed into the decoder block if using
              `layer_type="decoder"`.
-        enc_dec_attn_mask : Optional[torch.Tensor], default = `None`
+        enc_dec_attn_mask : Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
              Boolean tensor used to mask out inter-attention softmax input if using
-             `layer_type="decoder"`.
+             `layer_type="decoder"`. It should be a tuple of two masks in [batch_size, 1, 1, seqlen_q]
+             and [batch_size, 1, 1, seqlen_kv] for 'padding' mask type. It should be broadcastable
+             to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv] for 'arbitrary' type.
+             It should be 'None' for 'causal' and 'no_mask'.
         is_first_microbatch : {True, False, None}, default = None
                              During training using either gradient accumulation or
                              pipeline parallelism a minibatch of data is further split

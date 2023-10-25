@@ -1376,13 +1376,13 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
     @staticmethod
     def forward(ctx, is_training, max_seqlen, cu_seqlens, qkv, qkv_dtype, attn_bias, attn_scale,
                 dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-                rng_gen, fused_attention_backend, use_FAv2_bwd):
+                rng_gen_or_dropout_mask, fused_attention_backend, use_FAv2_bwd):
         out, aux_ctx_tensors = fused_attn_fwd_qkvpacked(
             is_training, max_seqlen, cu_seqlens, qkv, qkv_dtype,
             fused_attention_backend, attn_bias,
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-            rng_gen)
+            rng_gen_or_dropout_mask)
 
         ctx.save_for_backward(qkv, out, cu_seqlens)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -1403,7 +1403,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
     def backward(ctx, d_out):
         qkv, out, cu_seqlens = ctx.saved_tensors
         if ctx.use_FAv2_bwd:
-            softmax_lse, rng_state = ctx.aux_ctx_tensors
+            softmax_lse, rng_state_or_dropout_mask = ctx.aux_ctx_tensors
             dqkv = torch.empty_like(qkv)
             maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
             d_out, q, k, v, out = [maybe_contiguous(x)
@@ -1412,7 +1412,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dqkv[:,0], dqkv[:,1], dqkv[:,2],
                 cu_seqlens, cu_seqlens, ctx.max_seqlen, ctx.max_seqlen,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None, rng_state
+                ctx.attn_mask_type == "causal", None,
+                rng_state_or_dropout_mask if !isinstance(rng_state_or_dropout_mask, torch.Tensor),
             )
             dqkv = dqkv[..., :d_out.shape[-1]]
         else:
@@ -1441,13 +1442,13 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
     def forward(ctx, is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
                 q, kv, qkv_dtype, attn_bias, attn_scale, dropout_p, fast_zero_fill,
                 qkv_layout, attn_bias_type, attn_mask_type,
-                rng_gen, fused_attention_backend, use_FAv2_bwd):
+                rng_gen_or_dropout_mask, fused_attention_backend, use_FAv2_bwd):
         out, aux_ctx_tensors = fused_attn_fwd_kvpacked(
             is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
             q, kv, qkv_dtype, fused_attention_backend, attn_bias,
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-            rng_gen)
+            rng_gen_or_dropout_mask)
 
         ctx.save_for_backward(q, kv, out, cu_seqlens_q, cu_seqlens_kv)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -1469,7 +1470,7 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
     def backward(ctx, d_out):
         q, kv, out, cu_seqlens_q, cu_seqlens_kv = ctx.saved_tensors
         if ctx.use_FAv2_bwd:
-            softmax_lse, rng_state = ctx.aux_ctx_tensors
+            softmax_lse, rng_state_or_dropout_mask = ctx.aux_ctx_tensors
             dq = torch.empty_like(q)
             dkv = torch.empty_like(kv)
             maybe_contiguous = lambda x: x.contiguous() if x.stride(-1) != 1 else x
@@ -1479,7 +1480,8 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dq, dkv[:,0], dkv[:,1],
                 cu_seqlens_q, cu_seqlens_kv, ctx.max_seqlen_q, ctx.max_seqlen_kv,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None, rng_state
+                ctx.attn_mask_type == "causal", None,
+                rng_state_or_dropout_mask if !isinstance(rng_state_or_dropout_mask, torch.Tensor),
             )
             dq = dq[..., :d_out.shape[-1]]
             dkv = dkv[..., :d_out.shape[-1]]
@@ -1510,13 +1512,13 @@ class FusedAttnFunc(torch.autograd.Function):
     def forward(ctx, is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
                 q, k, v, qkv_dtype, attn_bias, attn_scale, dropout_p, fast_zero_fill,
                 qkv_layout, attn_bias_type, attn_mask_type,
-                rng_gen, fused_attention_backend, use_FAv2_bwd):
+                rng_gen_or_dropout_mask, fused_attention_backend, use_FAv2_bwd):
         out, aux_ctx_tensors = fused_attn_fwd(
             is_training, max_seqlen_q, max_seqlen_kv, cu_seqlens_q, cu_seqlens_kv,
             q, k, v, qkv_dtype, fused_attention_backend, attn_bias,
             None, None, None, None, None,
             attn_scale, dropout_p, fast_zero_fill, qkv_layout, attn_bias_type, attn_mask_type,
-            rng_gen)
+            rng_gen_or_dropout_mask)
 
         ctx.save_for_backward(q, k, v, out, cu_seqlens_q, cu_seqlens_kv)
         ctx.aux_ctx_tensors = aux_ctx_tensors
@@ -1538,7 +1540,7 @@ class FusedAttnFunc(torch.autograd.Function):
     def backward(ctx, d_out):
         q, k, v, out, cu_seqlens_q, cu_seqlens_kv = ctx.saved_tensors
         if ctx.use_FAv2_bwd:
-            softmax_lse, rng_state = ctx.aux_ctx_tensors
+            softmax_lse, rng_state_or_dropout_mask = ctx.aux_ctx_tensors
             dq = torch.empty_like(q)
             dk = torch.empty_like(k)
             dv = torch.empty_like(v)
@@ -1549,7 +1551,8 @@ class FusedAttnFunc(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dq, dk, dv,
                 cu_seqlens_q, cu_seqlens_kv, ctx.max_seqlen_q, ctx.max_seqlen_kv,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None, rng_state
+                ctx.attn_mask_type == "causal", None,
+                rng_state_or_dropout_mask if !isinstance(rng_state_or_dropout_mask, torch.Tensor),
             )
             dq = dq[..., :d_out.shape[-1]]
             dk = dk[..., :d_out.shape[-1]]
@@ -1588,7 +1591,7 @@ class FusedAttention(torch.nn.Module):
     | flash based   | no                      | yes                            |
     | cuDNN based   | yes                     | yes                            |
     | qkv dtype     | fp16/bf16               | fp16/bf16                      |
-    | attn_type     | self/cross              | self                           |
+    | attn_type     | self/cross              | self/cross                     |
     | qkv_layout    |                         |                                |
     |  - qkv        | qkv_interleaved         | qkv_interleaved                |
     |  - (q,kv)     | kv_interleaved          |                                |
@@ -1596,11 +1599,12 @@ class FusedAttention(torch.nn.Module):
     |               | sbhd_sb2hd, bshd_bs2hd  | sbhd_sb2hd, bshd_bs2hd         |
     |               | bshd_bshd_bshd          | sbhd_sbh2d, bshd_bsh2d         |
     |               |                         | sbhd_sbhd_sbhd, bshd_bshd_bshd |
-    | mask_type     | causal/no_mask          | causal                         |
-    | bias_type     | no_bias/post_scale_bias | no_bias                        |
-    | dropout       | yes                     | yes                            |
-    | max_seqlen    | <=512                   | any                            |
-    | head_dim      | 64                      | 64,128                         |
+    | mask_type     | causal/padding/no_mask  | causal/padding/custom/no_mask  |
+    |               |                         | causal + padding               |
+    | bias_type     | post_scale_bias/no_bias | alibi/post_scale_bias/no_bias  |
+    | dropout       | framework rng           | framework rng/user custom mask |
+    | max_seqlen    | <=512, multiple of 64   | any, multiple of 64            |
+    | head_dim      | 64                      | <=128, multiple of 8           |
     | output dtype  | fp16/bf16               | fp16/bf16                      |
     """
 
@@ -1610,6 +1614,8 @@ class FusedAttention(torch.nn.Module):
         attention_dropout: float = 0.0,
         attention_dropout_ctx: Optional[Callable] = nullcontext,
         attention_type: str = "self",
+        layer_number: Optional[int] = None,
+        deterministic: bool = False,
     ) -> None:
         super().__init__()
 
@@ -1620,6 +1626,9 @@ class FusedAttention(torch.nn.Module):
         self.use_FAv2_bwd = (os.getenv("NVTE_FUSED_ATTN_USE_FAv2_BWD", "0") == "1"
                         and _flash_attn_2_available
                         and get_device_compute_capability() == (9, 0))
+        self.layer_number = 1 if layer_number is None else layer_number
+        if deterministic:
+            os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] = "0" # change to DP_WORKSPACE_LIMIT???
 
     def forward(
         self,
@@ -1630,11 +1639,14 @@ class FusedAttention(torch.nn.Module):
         cu_seqlens_q: Optional[torch.Tensor] = None,
         cu_seqlens_kv: Optional[torch.Tensor] = None,
         attn_mask_type: str = "causal",
+        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
+        dropout_mask: Optional[torch.Tensor]] = None,
         fused_attention_backend:
             tex.NVTE_Fused_Attn_Backend = tex.NVTE_Fused_Attn_Backend.NVTE_No_Backend,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         fast_zero_fill: bool = True,
+        dropout_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """fused attention fprop"""
 
@@ -1654,6 +1666,9 @@ class FusedAttention(torch.nn.Module):
             ), f"FusedAttention does not support qkv_layout = {qkv_layout}!"
 
         qkv_format = ''.join([i for i in qkv_layout.split('_')[0] if i.isalpha()])
+        assert (
+            qkv_format != 'thd'
+            ), f"FusedAttention does not support qkv_format = thd!"
         if qkv_format in ['sbhd', 'bshd']:
             if qkv_format == 'sbhd':
                 batch_size, max_seqlen_q, max_seqlen_kv = (
@@ -1661,27 +1676,52 @@ class FusedAttention(torch.nn.Module):
             if qkv_format == 'bshd':
                 batch_size, max_seqlen_q, max_seqlen_kv = (
                     query_layer.shape[0], query_layer.shape[1], key_layer.shape[1])
-            if cu_seqlens_q is None:
-                cu_seqlens_q = torch.arange(
-                        0,
-                        (batch_size + 1) * max_seqlen_q,
-                        step=max_seqlen_q,
-                        dtype=torch.int32,
-                        device=query_layer.device)
-            if cu_seqlens_kv is None:
-                cu_seqlens_kv = torch.arange(
-                        0,
-                        (batch_size + 1) * max_seqlen_kv,
-                        step=max_seqlen_kv,
-                        dtype=torch.int32,
-                        device=key_layer.device)
-        if qkv_format == 'thd':
-            assert (cu_seqlens_q is not None and cu_seqlens_kv is not None
-                ), "cu_seqlens_q and cu_seqlens_kv can not be None when qkv_format = thd!"
-            seqlens_q = cu_seqlens_q[1:] - cu_seqlens_q[:-1]
-            seqlens_kv = cu_seqlens_kv[1:] - cu_seqlens_kv[:-1]
-            max_seqlen_q = seqlens_q.max().item()
-            max_seqlen_kv = seqlens_kv.max().item()
+            if attn_mask_type == 'padding':
+                if (cu_seqlens_q is not None
+                        and cu_seqlens_kv is not None
+                        and attention_mask is not None):
+                    warnings.warn(
+                        "FusedAttention: Ignoring attention mask since cu_seqlens_q
+                        and cu_seqlens_kv are provided."
+                    )
+                    if self.layer_number == 1:
+                        _cu_seqlens_q, _cu_seqlens_kv = cu_seqlens_q, cu_seqlens_kv
+                else:
+                    if self.attention_type == "self":
+                        if self.layer_number == 1:
+                            _cu_seqlens_q, _ = get_cu_seqlens_and_indices(attention_mask)
+                        _cu_seqlens_kv = _cu_seqlens_q
+                    else:
+                        if self.layer_number == 1:
+                            _cu_seqlens_q, _ = get_cu_seqlens_and_indices(attention_mask[0])
+                            _cu_seqlens_kv, _ = get_cu_seqlens_and_indices(attention_mask[1])
+                cu_seqlens_q, cu_seqlens_kv = _cu_seqlens_q, _cu_seqlens_kv
+            elif attn_mask_type == 'arbitrary':
+                if core_attention_bias_type == 'post_scale_bias':
+                    core_attention_bias.masked_fill_(attention_mask, -10000.0)
+                else:
+                    core_attention_bias_type = 'post_scale_bias'
+                    core_attention_bias = attention_mask.to(query_layer.dtype)
+                    core_attention_bias.masked_fill_(attention_mask, -10000.0)
+            else:
+                if self.layer_number == 1:
+                    if cu_seqlens_q is None:
+                        cu_seqlens_q = torch.arange(
+                                0,
+                                (batch_size + 1) * max_seqlen_q,
+                                step=max_seqlen_q,
+                                dtype=torch.int32,
+                                device=query_layer.device)
+                    if cu_seqlens_kv is None:
+                        cu_seqlens_kv = torch.arange(
+                                0,
+                                (batch_size + 1) * max_seqlen_kv,
+                                step=max_seqlen_kv,
+                                dtype=torch.int32,
+                                device=key_layer.device)
+                    _cu_seqlens_q, _cu_seqlens_kv = cu_seqlens_q, cu_seqlens_kv
+                else:
+                    cu_seqlens_q, cu_seqlens_kv = _cu_seqlens_q, _cu_seqlens_kv
 
         qkv_dtype = TE_DType[query_layer.dtype]
 
@@ -1702,7 +1742,7 @@ class FusedAttention(torch.nn.Module):
                 qkv_layout,
                 core_attention_bias_type,
                 attn_mask_type,
-                None, # rng_gen
+                dropout_mask, # rng_gen
                 fused_attention_backend,
                 use_FAv2_bwd,
             )
@@ -1746,17 +1786,20 @@ class DotProductAttention(torch.nn.Module):
                       dropout probability for the dropout op during multi-head attention.
     attn_mask_type: str, default = `causal`
                    type of attention mask passed into softmax operation, options are "`causal`",
-                   "`padding`", "`arbitrary`", "`no_mask`". For the "`causal`" mask,
-                   TransformerEngine calculates and applies an upper triangular mask to
-                   the softmax input. An "`arbitrary`" mask is an arbitrary user defined mask
-                   broadcastable to the shape of softmax input. The "`padding`" mask is used
-                   for providing locations of padded tokens in the batch, which should be of
-                   the shape [batch_size, 1, 1, seq_len]. No mask is applied for the "`no_mask`"
-                   option. For the `"arbitrary"` and `"padding"` mask types, the argument
-                   :attr:`attention_mask` must be passed into `forward` call. The "`causal`"
-                   mask can also be applied in conjunction with "`padding`" mask by passing
-                   in multiple mask type as a comma separated string, for example,
-                   `attn_mask_type="causal,padding"`.
+                   "`padding`", "`arbitrary`", "`no_mask`". Overridden by :attr:`attn_mask_type`
+                   in the `forward` method. The forward arg is useful for dynamically changing
+                   mask types, e.g. a different mask for training and inference. The init arg
+                   is useful for cases involving compilation/tracing, e.g. ONNX export.
+                   For the "`causal`" mask, TransformerEngine calculates and applies
+                   an upper triangular mask to the softmax input. An "`arbitrary`" mask is
+                   an arbitrary user defined mask broadcastable to the shape of softmax input.
+                   The "`padding`" mask is used for providing locations of padded tokens
+                   in the batch, which should be of the shape [batch_size, 1, 1, seq_len].
+                   No mask is applied for the "`no_mask`" option. For the `"arbitrary"`
+                   and `"padding"` mask types, the argument :attr:`attention_mask` must be
+                   passed into `forward` call. The "`causal`" mask can also be applied
+                   in conjunction with "`padding`" mask by passing in multiple mask types
+                   as a comma separated string, for example, `attn_mask_type="causal,padding"`.
     attention_type: str, default = `self`
                    type of attention, either "`self`" and "`cross`".
     layer_number: int, default = `None`
@@ -1772,12 +1815,6 @@ class DotProductAttention(torch.nn.Module):
                have different lengths. Please note that these formats do not reflect how
                tensors `query_layer`, `key_layer`, `value_layer` are laid out in memory.
                For that, please use `_get_qkv_layout` to gain the layout information.
-    attn_mask_type: {'causal', 'padding', 'no_mask', 'arbitrary'}, default = `causal`
-                   type of attention mask passed into softmax operation. Overridden by
-                   :attr:`attn_mask_type` in the `forward` method. The forward
-                   arg is useful for dynamically changing mask types, e.g. a different
-                   mask for training and inference. The init arg is useful for cases
-                   involving compilation/tracing, e.g. ONNX export.
 
     Parallelism parameters
     ----------------------
@@ -1886,9 +1923,11 @@ class DotProductAttention(torch.nn.Module):
         # Instantiating three types since use of flash-attn and FusedAttention
         # might be ruled out due to forward inputs.
         if self.use_fused_attention:
-            self.fused_attention = FusedAttention(
-                norm_factor, **attn_kwargs,
-                attention_type=attention_type)
+            self.fused_attention = FusedAttention(norm_factor,
+                                                  attention_type=attention_type,
+                                                  layer_number=layer_number,
+                                                  deterministic=self.deterministic,
+                                                  **attn_kwargs)
         self.unfused_attention = UnfusedDotProductAttention(
             norm_factor, **attn_kwargs, layer_number=layer_number)
 
@@ -1951,6 +1990,7 @@ class DotProductAttention(torch.nn.Module):
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         fast_zero_fill: bool = True,
+        dropout_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Dot Product Attention Layer.
@@ -2002,9 +2042,13 @@ class DotProductAttention(torch.nn.Module):
                    Key tensor.
         value_layer : torch.Tensor
                      Value tensor.
-        attention_mask : Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], default = `None`
-                        Boolean tensor used to mask out softmax input when not using flash-attn.
-                        Can be a tuple of 2 masks for cross attention with padding masks.
+        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
+             Boolean tensor(s) used to mask out attention softmax input.
+             It should be 'None' for 'causal' and 'no_mask' types. For 'padding', it should be
+             a single tensor of [batch_size, 1, 1, seqlen_q] for self-attention, and a tuple of
+             two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
+             for cross-attention. For 'arbitrary' mask type, it should be in a shape that is
+             broadcastable to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv].
         qkv_format: str, default = `None`
                    If provided, overrides :attr:`qkv_format` from initialization.
         cu_seqlens_q: Optional[torch.Tensor], default = `None`
@@ -2013,7 +2057,7 @@ class DotProductAttention(torch.nn.Module):
         cu_seqlens_kv: Optional[torch.Tensor], default = `None`
                    Cumulative sum of sequence lengths in a batch for `key_layer` and `value_layer`,
                    with shape [batch_size + 1] and dtype torch.int32.
-        attn_mask_type: {'causal', 'padding', 'no_mask', 'arbitrary'}, default = `None`
+        attn_mask_type: {`causal`, `padding`, `no_mask`, `arbitrary`}, default = `None`
                        type of attention mask passed into softmax operation.
         checkpoint_core_attention : bool, default = `False`
                                    If true, forward activations for attention are recomputed
@@ -2021,11 +2065,18 @@ class DotProductAttention(torch.nn.Module):
                                    otherwise be occupied to store the forward activations until
                                    backprop.
         core_attention_bias_type: str, default = `no_bias`
-                    Bias type, {`no_bias`, `pre_scale_bias`, 'post_scale_bias`}
+                    Bias type, {`no_bias`, `pre_scale_bias`, `post_scale_bias`, `alibi`}
         core_attention_bias: Optional[torch.Tensor], default = `None`
-                    Bias tensor for Q * K.T
+                    Bias tensor for Q * K.T, broadcastable to the shape of softmax input.
+                    It should be 'None' for 'no_bias' and 'alibi' bias types.
         fast_zero_fill: bool, default = `True`
                     Whether to use the fast path to set output tensors to 0 or not.
+        dropout_mask: Optional[torch.Tensor], default = `None`
+                    Custom dropout mask, Boolean, broadcastable to the shape of softmax output.
+                    If 'None', PyTorch's random number generator will be used;
+                    otherwise, this mask and 'scale = attention_dropout/(1.0 - attention_dropout)'
+                    will be used. The number of True's in the mask is not checked against
+                    'attention_dropout'. 
         """
 
         assert (
@@ -2081,6 +2132,27 @@ class DotProductAttention(torch.nn.Module):
                 assert (all(seqlens_kv <= max_seqlen_kv)
                     ), """Sequence lengths indicated by cu_seqlens_kv must be no greater than
                     the sequence dimention in 'key_layer' and 'value_layer'!"""
+        if attn_mask_type == 'padding':
+            if self.attention_type == 'self':
+                assert (isinstance(attention_mask, torch.Tensor)
+                    ), """Attention mask should be a single tensor of 
+                    shape [batch_size, 1, 1, seqlen_q]!"""
+            if self.attention_type == 'cross':
+                assert (isinstance(attention_mask, tuple)
+                    and len(attention_mask) == 2
+                    ), """Attention mask should be a tuple of two tensors in shapes
+                    [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]!"""
+        if attn_mask_type == 'arbitrary':
+            assert (len(attention_mask.shape) == 4), """Attention mask should be 4D!"""
+            b, h, sq, skv = attention_mask.shape
+            batch_size = query_layer.shape[1] if qkv_format == 'sbhd' else query_layer.shape[0]
+            head_dim = query_layer.shape[-1]
+            assert ((b == batch_size) or (b == 1)
+                    and (h == head_dim) or (h == 1)
+                    and (sq == max_seqlen_q) or (sq == 1)
+                    and (skv == max_seqlen_kv) or (skv == 1)
+                    ), """Attention mask should be in a shape broadcastable to
+                    [batch_size, num_heads, max_seqlen_q, max_seqlen_kv]!"""
 
         qkv_layout = _get_qkv_layout(query_layer, key_layer, value_layer,
             qkv_format = qkv_format)
@@ -2126,18 +2198,13 @@ class DotProductAttention(torch.nn.Module):
         #    attn_mask_type(s)   |     supported backends
         # ------------------------------------------------
         #   causal               |     All
-        #   padding              |     UnfusedDotProductAttention, FlashAttention
-        #   arbitrary            |     UnfusedDotProductAttention
+        #   padding              |     UnfusedDotProductAttention, FlashAttention, FusedAttention
+        #   arbitrary            |     UnfusedDotProductAttention, FusedAttention
         #   no_mask              |     All
-        #   causal + padding     |     FlashAttention
+        #   causal + padding     |     FlashAttention, FusedAttention
         #
         if attn_mask_type == "arbitrary":
             use_flash_attention = False
-            use_fused_attention = False
-        elif attn_mask_type == "padding" and causal_mask:
-            assert use_flash_attention, "No attention backend available for causal + padding masks."
-        elif attn_mask_type == "padding":
-            use_fused_attention = False
 
         if use_fused_attention:
             fused_attention_backend = tex.get_fused_attn_backend(
@@ -2155,13 +2222,6 @@ class DotProductAttention(torch.nn.Module):
             use_fused_attention = (use_fused_attention
                                   and is_backend_avail
                                   and self.num_gqa_groups == self.num_attention_heads)
-            if (self.deterministic
-                and fused_attention_backend == FusedAttnBackend["F16_arbitrary_seqlen"]):
-                use_fused_attention = False
-                warnings.warn(
-                    "Disabling usage of FusedAttention since the FusedAttention"
-                    "backend does not support deterministic exection."
-                )
 
         if use_flash_attention:
             return self.flash_attention(query_layer,
@@ -2190,19 +2250,23 @@ class DotProductAttention(torch.nn.Module):
                               cu_seqlens_q = cu_seqlens_q,
                               cu_seqlens_kv = cu_seqlens_kv,
                               attn_mask_type = attn_mask_type,
+                              attention_mask = attention_mask,
                               fused_attention_backend = fused_attention_backend,
                               core_attention_bias_type = core_attention_bias_type,
                               core_attention_bias = core_attention_bias,
-                              fast_zero_fill = fast_zero_fill)
+                              fast_zero_fill = fast_zero_fill,
+                              dropout_mask = dropout_mask)
             return self.fused_attention(query_layer, key_layer, value_layer,
                               qkv_layout = qkv_layout,
                               cu_seqlens_q = cu_seqlens_q,
                               cu_seqlens_kv = cu_seqlens_kv,
                               attn_mask_type = attn_mask_type,
+                              attention_mask = attention_mask,
                               fused_attention_backend = fused_attention_backend,
                               core_attention_bias_type = core_attention_bias_type,
                               core_attention_bias = core_attention_bias,
-                              fast_zero_fill = fast_zero_fill)
+                              fast_zero_fill = fast_zero_fill,
+                              dropout_mask = dropout_mask)
 
         if checkpoint_core_attention:
             return self._checkpointed_attention_forward(
@@ -2609,6 +2673,7 @@ class MultiheadAttention(torch.nn.Module):
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
         fast_zero_fill: bool = True,
+        dropout_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         """
         Forward propagation for MultiheadAttention layer.
@@ -2622,9 +2687,14 @@ class MultiheadAttention(torch.nn.Module):
         ----------
         hidden_states : torch.Tensor
              Input tensor.
-        attention_mask : Optional[torch.Tensor], default = `None`
-             Boolean tensor used to mask out self-attention softmax input.
-        attn_mask_type: {'causal', 'padding', 'no_mask', arbitrary}, default = `None`
+        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
+             Boolean tensor(s) used to mask out attention softmax input.
+             It should be 'None' for 'causal' and 'no_mask' types. For 'padding', it should be
+             a single tensor of [batch_size, 1, 1, seqlen_q] for self-attention, and a tuple of
+             two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
+             for cross-attention. For 'arbitrary' mask type, it should be in a shape that is
+             broadcastable to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv].
+        attn_mask_type: {'causal', 'padding', 'no_mask', 'arbitrary'}, default = `None`
                        type of attention mask passed into softmax operation.
         encoder_output : Optional[torch.Tensor], default = `None`
              Output of the encoder block to be fed into the decoder block if using
@@ -2651,11 +2721,18 @@ class MultiheadAttention(torch.nn.Module):
                        Embeddings for query and key tensors for applying rotary position
                        embedding. By default no input embedding is applied.
         core_attention_bias_type: str, default = `no_bias`
-                    Bias type, {`no_bias`, `pre_scale_bias`, 'post_scale_bias`}
+                    Bias type, {`no_bias`, `pre_scale_bias`, 'post_scale_bias`, `alibi`}
         core_attention_bias: Optional[torch.Tensor], default = `None`
-                    Bias tensor for Q * K.T
+                    Bias tensor for Q * K.T, broadcastable to the shape of softmax input.
+                    It should be 'None' for 'no_bias' and 'alibi' bias types.
         fast_zero_fill: bool, default = `True`
                     Whether to set output tensors to 0 or not before use.
+        dropout_mask: Optional[torch.Tensor], default = `None`
+                    Custom dropout mask, Boolean, broadcastable to the shape of softmax output.
+                    If 'None', PyTorch's random number generator will be used;
+                    otherwise, this mask and 'scale = attention_dropout/(1.0 - attention_dropout)'
+                    will be used. The number of True's in the mask is not checked against
+                    'attention_dropout'. 
         """
         # hidden_states: [sq, b, h]
 
