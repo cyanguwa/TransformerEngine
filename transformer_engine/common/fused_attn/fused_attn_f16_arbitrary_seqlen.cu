@@ -8,8 +8,8 @@
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
-#include <cudnn_frontend.h>
-#include <cudnn_frontend_utils.h>
+//#include <cudnn_frontend.h>
+//#include <cudnn_frontend_utils.h>
 #include <map>
 #include <vector>
 
@@ -551,24 +551,38 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
                 cudnn_frontend::DataType_t tensorType,
                 void *workspace, size_t *workspace_size,
-                cudaStream_t stream, cudnnHandle_t handle) {
+                cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
 std::cout << "Enter fwd impl " << std::endl;
+    NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
+
     if (cudnnGetCudartVersion() < 12000) {
-        NVTE_ERROR("cuDNN MHA Graph (FWD) requires CUDA Toolkit 12.0 or above!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (FWD) requires CUDA Toolkit 12.0 or above!");
+	}
     }
 
     if (cudnnGetVersion() < 8901) {
-        NVTE_ERROR("cuDNN MHA Graph (FWD) requires cuDNN 8.9.1 or above!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (FWD) requires cuDNN 8.9.1 or above!");
+	}
     }
 
     const int device_id = transformer_engine::cuda::current_device();
     const int sm_arch_ = transformer_engine::cuda::sm_arch(device_id);
     std::cout << "sm_arch " << sm_arch_ << std::endl;
     if (sm_arch_ < 80) {
-        NVTE_ERROR("cuDNN MHA Graph (FWD) requires Ampere or above!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (FWD) requires Ampere or above!");
+	}
     }
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
@@ -695,26 +709,47 @@ std::cout << "Call sdpa " << std::endl;
     }
 
 std::cout << "Call sdpa validate " << std::endl;
+    //if (*check_support) {
+    //    *check_support = mha_graph.validate().is_good();
+    //    return;
+    //}
+
     if (!mha_graph.validate().is_good()) {
-        NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
+	}
     }
 
+    //if (*check_support) {
+    //    *check_support = mha_graph.build_operation_graph(handle).is_good();
+    //    return;
+    //}
+
     if (!mha_graph.build_operation_graph(handle).is_good()) {
-        NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
+	}
     }
 
     auto plans = mha_graph.get_execution_plan_list({fe::HeurMode_t::A});
     
+    if (*check_support) {
+        *check_support = plans.check_support(handle).is_good();
+	return;
+    }
+
     if (!plans.check_support(handle).is_good()) {
         NVTE_ERROR("cuDNN MHA Graph (FWD): support check is unsuccessful!");
-        return;
     }
 
     if (!mha_graph.set_execution_plans(plans).is_good()) {
         NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
-        return;
     }
 
     auto plan_workspace_size = mha_graph.get_workspace_size();
@@ -770,7 +805,6 @@ std::cout << "Create actual seqs" << std::endl;
 std::cout << "Execute " << std::endl;
     if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
         NVTE_ERROR("cuDNN MHA Graph (FWD): execution is unsuccessful!");
-        return;
     }
 }
 
@@ -914,35 +948,47 @@ void fused_attn_arbitrary_seqlen_fwd_impl_old(
 }
 
 void fused_attn_arbitrary_seqlen_bwd_impl(
-                            int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
-                            float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
-                            NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
-                            void* devPtrQ, void* devPtrKTranspose, void* devPtrVTranspose,
-                            void* devPtrO, void* devPtrSoftmaxStats,
-                            void* devPtrdQ, void* devPtrdK, void* devPtrdV, void* devPtrdO,
-                            void* devPtrDropoutSeed, void* devPtrDropoutOffset,
-                            void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
-                            cudnn_frontend::DataType_t tensorType, void *workspace, size_t *workspace_size,
-                            cudaStream_t stream, cudnnHandle_t handle, bool use_workspace_opt) {
-
+                int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
+                float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
+                NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
+                void* devPtrQ, void* devPtrKTranspose, void* devPtrVTranspose,
+                void* devPtrO, void* devPtrSoftmaxStats,
+                void* devPtrdQ, void* devPtrdK, void* devPtrdV, void* devPtrdO,
+                void* devPtrDropoutSeed, void* devPtrDropoutOffset,
+                void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
+                cudnn_frontend::DataType_t tensorType, void *workspace, size_t *workspace_size,
+                cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
 std::cout << "Enter bwd impl" << std::endl;
+    NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
     if (cudnnGetCudartVersion() < 12000) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD) requires CUDA Toolkit 12.0 or above!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (BWD) requires CUDA Toolkit 12.0 or above!");
+        }
     }
 
     // inconsistent with fwd??
     if (cudnnGetVersion() < 8903) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD) requires cuDNN 8.9.3 or above!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (BWD) requires cuDNN 8.9.3 or above!");
+        }
     }
 
     const int device_id = transformer_engine::cuda::current_device();
     const int sm_arch_ = transformer_engine::cuda::sm_arch(device_id);
     std::cout << "sm_arch " << sm_arch_ << std::endl;
     if (sm_arch_ < 80) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD) requires Ampere or above!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (BWD) requires Ampere or above!");
+        }
     }
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
@@ -1075,25 +1121,36 @@ std::cout << "Call sdpa" << std::endl;
 
 std::cout << "Validate etc" << std::endl;
     if (!mha_graph.validate().is_good()) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
+        }
     }
 
     if (!mha_graph.build_operation_graph(handle).is_good()) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
-        return;
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
+        }
     }
 
     auto plans = mha_graph.get_execution_plan_list({fe::HeurMode_t::A});
+
+    if (*check_support) {
+        *check_support = plans.check_support(handle).is_good();
+	return;
+    }
     
     if (!plans.check_support(handle).is_good()) {
         NVTE_ERROR("cuDNN MHA Graph (BWD): support check is unsuccessful!");
-        return;
     }
 
     if (!mha_graph.set_execution_plans(plans).is_good()) {
         NVTE_ERROR("cuDNN MHA Graph (BWD): setting execution plans is unsuccessful!");
-        return;
     }
 
     auto plan_workspace_size = mha_graph.get_workspace_size();
@@ -1132,7 +1189,6 @@ std::cout << "Variant Pack" << plan_workspace_size << std::endl;
 std::cout << "Bwd execute " << plan_workspace_size << std::endl;
     if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
         NVTE_ERROR("cuDNN MHA graph (BWD): execution is unsuccessful!");
-        return;
     }
 }
 
@@ -1950,6 +2006,7 @@ void fused_attn_arbitrary_seqlen_fwd(
                                 get_cudnn_dtype(QKV_type),
                                 workspace->data.dptr, &workspace_size, stream, handle);
     } else {
+    bool check_support = false;
     fused_attn_arbitrary_seqlen_fwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 is_training, attn_scale, p_dropout, qkv_layout,
                                 bias_type, mask_type,
@@ -1957,7 +2014,7 @@ void fused_attn_arbitrary_seqlen_fwd(
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 devPtrCuSeqlensQ, devPtrCuSeqlensKV,
                                 get_cudnn_fe_dtype(QKV_type),
-                                workspace->data.dptr, &workspace_size, stream, handle);
+                                workspace->data.dptr, &workspace_size, stream, handle, &check_support);
     }
 
     if (workspace_size > 0) {
@@ -2012,6 +2069,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
 
     size_t workspace_size = 0;
 
+    //can be removed ?????
     bool use_workspace_opt = false;
 #if (CUDNN_VERSION >= 8905)
     const int device_id = cuda::current_device();
@@ -2051,6 +2109,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
                                 get_cudnn_dtype(QKV_type), workspace->data.dptr,
                                 &workspace_size, stream, handle, use_workspace_opt);
     } else {
+    bool check_support = false;
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
                                 bias_type, mask_type,
@@ -2059,7 +2118,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 devPtrCuSeqlensQ, devPtrCuSeqlensKV,
                                 get_cudnn_fe_dtype(QKV_type), workspace->data.dptr,
-                                &workspace_size, stream, handle, use_workspace_opt);
+                                &workspace_size, stream, handle, &check_support);
     }
 
     if (workspace_size > 0) {
