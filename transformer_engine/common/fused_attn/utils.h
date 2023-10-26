@@ -96,6 +96,34 @@ struct FADescriptor {
   }
 };
 
+struct FADescriptor_v1 {
+  std::int64_t b;
+  std::int64_t h;
+  std::int64_t s_q;
+  std::int64_t s_kv;
+  std::int64_t d;
+  float attnScale;
+  bool isTraining;
+  float dropoutProbability;
+  NVTE_QKV_Layout layout;
+  NVTE_Bias_Type bias_type;
+  NVTE_Mask_Type mask_type;
+  cudnn_frontend::DataType_t tensor_type;
+  bool use_workspace_opt;
+
+  bool operator<(const FADescriptor_v1 &rhs) const {
+    return std::tie(b, h, s_q, s_kv, d,
+                    attnScale, isTraining, dropoutProbability,
+                    layout, mask_type, bias_type, tensor_type, use_workspace_opt)
+                    < std::tie(
+                      rhs.b, rhs.h, rhs.s_q, rhs.s_kv, rhs.d,
+                      rhs.attnScale, rhs.isTraining,
+                      rhs.dropoutProbability, rhs.layout,
+                      rhs.mask_type, rhs.bias_type,
+                      rhs.tensor_type, rhs.use_workspace_opt);
+  }
+};
+
 __global__ void cu_seqlens_to_offsets(size_t b, size_t h, size_t d,
                 int32_t *cu_seqlens_q, int32_t *actual_seqlens_q,
                 int32_t *qkv_ragged_offset, int32_t *o_ragged_offset);
