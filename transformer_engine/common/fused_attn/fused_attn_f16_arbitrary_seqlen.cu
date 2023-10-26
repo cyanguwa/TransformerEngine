@@ -620,7 +620,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 cudnn_frontend::DataType_t tensorType,
                 void *workspace, size_t *workspace_size,
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
-std::cout << "Enter fwd impl " << std::endl;
+    std::cout << "Enter fwd impl " << std::endl;
     NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
@@ -645,10 +645,10 @@ std::cout << "Enter fwd impl " << std::endl;
                                 mask_type,   tensorType,
                                 false};
 
-        using CacheType = std::map<FADescriptor_v1, cudnn_frontend::graph::Graph>;
+        namespace fe = cudnn_frontend;
+        using CacheType = std::map<FADescriptor_v1, std::shared_ptr<fe::graph::Graph>>;
         static thread_local CacheType sdpa_flash_f16_fprop_cache;
 
-        namespace fe = cudnn_frontend;
         std::shared_ptr<fe::graph::Tensor_attributes> Q, K, V, attn_scale;
         fe::graph::Scaled_dot_product_flash_attention_attributes scaled_dot_product_flash_attention_options;
         std::shared_ptr<fe::graph::Tensor_attributes> bias, dropout_seed, dropout_offset;
@@ -656,17 +656,17 @@ std::cout << "Enter fwd impl " << std::endl;
         std::shared_ptr<fe::graph::Tensor_attributes> O, Stats;
 	std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 2> O_Stats;
         // Get plan from cache if cache is available, otherwise create one
-        auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) {
-            // if hit, return
-            auto it = cache.find(descriptor);
-            if (it != cache.end()) {
-                auto graph = it->second;
-                return graph;
-            }
+        //auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) {
+        //    // if hit, return
+        //    auto it = cache.find(descriptor);
+        //    if (it != cache.end()) {
+        //        auto graph = it->second;
+        //        return graph;
+        //    }
 
             // otherwise, build the op_graph and the plan. Then update cache
-            fe::graph::Graph mha_graph;
-            mha_graph.set_io_data_type(tensorType)
+	    auto mha_graph = std::make_shared<fe::graph::Graph>();
+            mha_graph->set_io_data_type(tensorType)
                     .set_intermediate_data_type(fe::DataType_t::FLOAT)
                     .set_compute_data_type(fe::DataType_t::FLOAT);
 
@@ -680,20 +680,20 @@ std::cout << "Enter fwd impl " << std::endl;
             std::vector<int64_t> k_strides(k_stride, k_stride + 4);
             std::vector<int64_t> v_strides(v_stride, v_stride + 4);
             std::cout << "Get qkv strides " << q_strides.size() << std::endl;
-            Q = mha_graph.tensor(fe::graph::Tensor_attributes()
+            Q = mha_graph->tensor(fe::graph::Tensor_attributes()
                             .set_name("Q")
                             .set_dim({b, h, s_q, d})
                             .set_stride(q_strides));
-            K = mha_graph.tensor(fe::graph::Tensor_attributes()
+            K = mha_graph->tensor(fe::graph::Tensor_attributes()
                             .set_name("K")
                             .set_dim({b, h, s_kv, d})
                             .set_stride(k_strides));
-            V = mha_graph.tensor(fe::graph::Tensor_attributes()
+            V = mha_graph->tensor(fe::graph::Tensor_attributes()
                             .set_name("V")
                             .set_dim({b, h, s_kv, d})
                             .set_stride(v_strides));
 
-            attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
+            attn_scale = mha_graph->tensor(fe::graph::Tensor_attributes()
                             .set_name("attn_scale")
                             .set_dim({1, 1, 1, 1})
                             .set_stride({1, 1, 1, 1})
@@ -701,19 +701,19 @@ std::cout << "Enter fwd impl " << std::endl;
                             .set_data_type(fe::DataType_t::FLOAT));
 
             if (is_bias) {
-                bias = mha_graph.tensor(fe::graph::Tensor_attributes()
+                bias = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("bias")
                                 .set_dim({b, 1, s_q, s_kv})
                                 .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
             }
 
             if (dropout_probability != 0.0f) {
-                dropout_seed = mha_graph.tensor(fe::graph::Tensor_attributes()
+                dropout_seed = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("Seed")
                                 .set_dim({1, 1, 1, 1})
                                 .set_stride({1, 1, 1, 1})
                                 .set_data_type(fe::DataType_t::INT32));
-                dropout_offset = mha_graph.tensor(fe::graph::Tensor_attributes()
+                dropout_offset = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("Offset")
                                 .set_dim({1, 1, 1, 1})
                                 .set_stride({1, 1, 1, 1})
@@ -721,12 +721,12 @@ std::cout << "Enter fwd impl " << std::endl;
             }
 
             if (is_padding) {
-                seq_q  = mha_graph.tensor(fe::graph::Tensor_attributes()
+                seq_q  = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("seq_q")
                                 .set_dim({b, 1, 1, 1})
                                 .set_stride({1, 1, 1, 1})
                                 .set_data_type(fe::DataType_t::INT32));
-                seq_kv = mha_graph.tensor(fe::graph::Tensor_attributes()
+                seq_kv = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("seq_kv")
                                 .set_dim({b, 1, 1, 1})
                                 .set_stride({1, 1, 1, 1})
@@ -760,7 +760,7 @@ std::cout << "Enter fwd impl " << std::endl;
 
             std::cout << "Call sdpa " << std::endl;
 
-            O_Stats = mha_graph.scaled_dot_product_flash_attention(
+            O_Stats = mha_graph->scaled_dot_product_flash_attention(
                             Q, K, V, scaled_dot_product_flash_attention_options);
 	    O = O_Stats[0];
 	    Stats = O_Stats[1];
@@ -778,56 +778,56 @@ std::cout << "Enter fwd impl " << std::endl;
 
             std::cout << "Call sdpa validate " << std::endl;
             //if (*check_support) {
-            //    *check_support = mha_graph.validate().is_good();
+            //    *check_support = mha_graph->validate().is_good();
             //    return;
             //}
 
-            if (!mha_graph.validate().is_good()) {
+            if (!mha_graph->validate().is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    return;
+                    //return;
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
                 }
             }
 
             //if (*check_support) {
-            //    *check_support = mha_graph.build_operation_graph(handle).is_good();
+            //    *check_support = mha_graph->build_operation_graph(handle).is_good();
             //    return;
             //}
 
-            if (!mha_graph.build_operation_graph(handle).is_good()) {
+            if (!mha_graph->build_operation_graph(handle).is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    return;
+                    //return;
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
                 }
             }
 
-            auto plans = mha_graph.get_execution_plan_list({fe::HeurMode_t::A});
+            auto plans = mha_graph->get_execution_plan_list({fe::HeurMode_t::A});
             //std::string tag = plans.list_of_engine_configs.operation_tag;
             
             if (*check_support) {
                 *check_support = plans.check_support(handle).is_good();
-                return; // TODO
+                //return; // TODO
             }
 
             if (!plans.check_support(handle).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (FWD): support check is unsuccessful!");
             }
 
-            if (!mha_graph.set_execution_plans(plans).is_good()) {
+            if (!mha_graph->set_execution_plans(plans).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
             }
 
-            cache.insert({descriptor, mha_graph});
-            return mha_graph;
-        };
+        //    cache.insert({descriptor, mha_graph});
+        //    return mha_graph;
+        //};
 
-        auto mha_graph = get_graph(sdpa_flash_f16_fprop_cache, descriptor);
+        //auto mha_graph = get_graph(sdpa_flash_f16_fprop_cache, descriptor);
 
-        auto plan_workspace_size = mha_graph.get_workspace_size();
+        auto plan_workspace_size = mha_graph->get_workspace_size();
         std::cout << "Plan size " << plan_workspace_size << std::endl;
 
         // Exit to request upper level API to allocate memory if needed
@@ -876,7 +876,7 @@ std::cout << "Enter fwd impl " << std::endl;
         }
         
         std::cout << "Execute " << std::endl;
-        if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
+        if (!mha_graph->execute(handle, variant_pack, workspace).is_good()) {
             NVTE_ERROR("cuDNN MHA Graph (FWD): execution is unsuccessful!");
         }
 
@@ -1035,7 +1035,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
                 cudnn_frontend::DataType_t tensorType, void *workspace, size_t *workspace_size,
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
-std::cout << "Enter bwd impl" << std::endl;
+    std::cout << "Enter bwd impl" << std::endl;
     NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
@@ -1043,7 +1043,7 @@ std::cout << "Enter bwd impl" << std::endl;
     bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
     bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-std::cout << "is bias " << is_bias << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
+    std::cout << "is bias " << is_bias << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
@@ -1052,194 +1052,231 @@ std::cout << "is bias " << is_bias << " is causal " << is_causal << " is_padding
         return;
     }
 
-    namespace fe = cudnn_frontend;
-    fe::graph::Graph mha_graph;
-    mha_graph.set_io_data_type(tensorType)
-            .set_intermediate_data_type(fe::DataType_t::FLOAT)
-            .set_compute_data_type(fe::DataType_t::FLOAT);
+    try {
+        FADescriptor_v1 descriptor{b,           h,
+                                s_q,         s_kv,
+                                d,           scaling_factor,
+                                true, dropout_probability,
+                                layout,      bias_type,
+                                mask_type,   tensorType,
+                                false};
 
-std::cout << "Get qkv strides" << std::endl;
-    int64_t q_stride[4];
-    int64_t k_stride[4];
-    int64_t v_stride[4];
-    int64_t o_stride[4];
-    generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
-    generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
-    generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
-    generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
-    std::vector<int64_t> q_strides(q_stride, q_stride + 4);
-    std::vector<int64_t> k_strides(k_stride, k_stride + 4);
-    std::vector<int64_t> v_strides(v_stride, v_stride + 4);
-    std::vector<int64_t> o_strides(o_stride, o_stride + 4);
-    auto q = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("Q")
+        namespace fe = cudnn_frontend;
+        using CacheType = std::map<FADescriptor_v1, std::shared_ptr<fe::graph::Graph>>;
+        static thread_local CacheType sdpa_flash_f16_bprop_cache;
+
+        std::shared_ptr<fe::graph::Tensor_attributes> q, k, v, o, dO, stats, attn_scale;
+        fe::graph::Scaled_dot_product_flash_attention_backward_attributes scaled_dot_product_flash_attention_backward_options;
+        std::shared_ptr<fe::graph::Tensor_attributes> bias, dropout_seed, dropout_offset;
+        std::shared_ptr<fe::graph::Tensor_attributes> seq_q, seq_kv;
+        std::shared_ptr<fe::graph::Tensor_attributes> dQ, dK, dV;
+	std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 3> dQKV;
+        // Get plan from cache if cache is available, otherwise create one
+        //auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) {
+        //    // if hit, return
+        //    auto it = cache.find(descriptor);
+        //    if (it != cache.end()) {
+        //        auto graph = it->second;
+        //        return graph;
+        //    }
+
+            // otherwise, build the op_graph and the plan. Then update cache
+	    auto mha_graph = std::make_shared<fe::graph::Graph>();
+            mha_graph->set_io_data_type(tensorType)
+                    .set_intermediate_data_type(fe::DataType_t::FLOAT)
+                    .set_compute_data_type(fe::DataType_t::FLOAT);
+
+            std::cout << "Get qkv strides" << std::endl;
+            int64_t q_stride[4];
+            int64_t k_stride[4];
+            int64_t v_stride[4];
+            int64_t o_stride[4];
+            generateMatrixStrides(b, h, s_q, s_kv, d, q_stride, layout, NVTE_QKV_Matrix::NVTE_Q_Matrix);
+            generateMatrixStrides(b, h, s_q, s_kv, d, k_stride, layout, NVTE_QKV_Matrix::NVTE_K_Matrix);
+            generateMatrixStrides(b, h, s_q, s_kv, d, v_stride, layout, NVTE_QKV_Matrix::NVTE_V_Matrix);
+            generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
+            std::vector<int64_t> q_strides(q_stride, q_stride + 4);
+            std::vector<int64_t> k_strides(k_stride, k_stride + 4);
+            std::vector<int64_t> v_strides(v_stride, v_stride + 4);
+            std::vector<int64_t> o_strides(o_stride, o_stride + 4);
+            q = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("Q")
+                            .set_dim({b, h, s_q, d})
+                            .set_stride(q_strides));
+            k = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("K")
+                            .set_dim({b, h, s_kv, d})
+                            .set_stride(k_strides));
+            v = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("V")
+                            .set_dim({b, h, s_kv, d})
+                            .set_stride(v_strides));
+            o = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("O")
+                            .set_dim({b, h, s_q, d})
+                            .set_stride(o_strides));
+            dO = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("dO")
+                            .set_dim({b, h, s_q, d})
+                            .set_stride(o_strides));
+            stats = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("stats")
+                            .set_dim({b, h, s_q, 1})
+                            .set_stride({h * s_q, s_q, 1, 1})
+                            .set_data_type(fe::DataType_t::FLOAT));
+
+            attn_scale = mha_graph->tensor(fe::graph::Tensor_attributes()
+                            .set_name("attn_scale")
+                            .set_dim({1, 1, 1, 1})
+                            .set_stride({1, 1, 1, 1})
+                            .set_is_pass_by_value(true)
+                            .set_data_type(fe::DataType_t::FLOAT));
+
+            if (is_bias) {
+                bias = mha_graph->tensor(fe::graph::Tensor_attributes()
+                                .set_name("bias")
+                                .set_dim({b, 1, s_q, s_kv})
+                                .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
+            }
+            if (dropout_probability != 0.0f) {
+                dropout_seed = mha_graph->tensor(fe::graph::Tensor_attributes()
+                                .set_name("Seed")
+                                .set_dim({1, 1, 1, 1})
+                                .set_stride({1, 1, 1, 1})
+                                .set_data_type(fe::DataType_t::INT32));
+                dropout_offset = mha_graph->tensor(fe::graph::Tensor_attributes()
+                                .set_name("Offset")
+                                .set_dim({1, 1, 1, 1})
+                                .set_stride({1, 1, 1, 1})
+                                .set_data_type(fe::DataType_t::INT32));
+            }
+
+            if (is_padding) {
+                seq_q  = mha_graph->tensor(fe::graph::Tensor_attributes()
+                                .set_name("seq_q")
+                                .set_dim({b, 1, 1, 1})
+                                .set_stride({1, 1, 1, 1})
+                                .set_data_type(fe::DataType_t::INT32));
+                seq_kv = mha_graph->tensor(fe::graph::Tensor_attributes()
+                                .set_name("seq_kv")
+                                .set_dim({b, 1, 1, 1})
+                                .set_stride({1, 1, 1, 1})
+                                .set_data_type(fe::DataType_t::INT32));
+            }
+
+            std::cout << "Create options" << std::endl;
+            scaled_dot_product_flash_attention_backward_options =
+                    fe::graph::Scaled_dot_product_flash_attention_backward_attributes()
+                    .set_name("flash_attention_backward")
+                    .set_causal_mask(is_causal)
+                    .set_attn_scale(attn_scale);
+
+            scaled_dot_product_flash_attention_backward_options.set_alibi_mask(is_alibi);
+
+            if (is_bias) {
+                scaled_dot_product_flash_attention_backward_options.set_bias(bias);
+            }
+
+            if (dropout_probability != 0.0f) {
+                scaled_dot_product_flash_attention_backward_options.set_dropout(
+                                dropout_probability, dropout_seed, dropout_offset);
+            }
+
+            std::cout << "Call sdpa" << std::endl;
+            dQKV = mha_graph->scaled_dot_product_flash_attention_backward(
+                            q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
+	    dQ = dQKV[0];
+	    dK = dQKV[1];
+	    dV = dQKV[2];
+
+            dQ->set_output(true)
                     .set_dim({b, h, s_q, d})
-                    .set_stride(q_strides));
-    auto k = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("K")
+                    .set_stride(q_strides);
+            dK->set_output(true)
                     .set_dim({b, h, s_kv, d})
-                    .set_stride(k_strides));
-    auto v = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("V")
+                    .set_stride(k_strides);
+            dV->set_output(true)
                     .set_dim({b, h, s_kv, d})
-                    .set_stride(v_strides));
-    auto o = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("O")
-                    .set_dim({b, h, s_q, d})
-                    .set_stride(o_strides));
-    auto dO = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("dO")
-                    .set_dim({b, h, s_q, d})
-                    .set_stride(o_strides));
-    auto stats = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("stats")
-                    .set_dim({b, h, s_q, 1})
-                    .set_stride({h * s_q, s_q, 1, 1})
-                    .set_data_type(fe::DataType_t::FLOAT));
+                    .set_stride(v_strides);
 
-    auto attn_scale = mha_graph.tensor(fe::graph::Tensor_attributes()
-                    .set_name("attn_scale")
-                    .set_dim({1, 1, 1, 1})
-                    .set_stride({1, 1, 1, 1})
-                    .set_is_pass_by_value(true)
-                    .set_data_type(fe::DataType_t::FLOAT));
+            std::cout << "Validate etc" << std::endl;
+            if (!mha_graph->validate().is_good()) {
+                if (*check_support) {
+                    *check_support = false;
+                    //return;
+                } else {
+                    NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
+                }
+            }
 
-    std::shared_ptr<fe::graph::Tensor_attributes> bias, dropout_seed, dropout_offset;
-    if (is_bias) {
-        bias = mha_graph.tensor(fe::graph::Tensor_attributes()
-                        .set_name("bias")
-                        .set_dim({b, 1, s_q, s_kv})
-                        .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
-    }
-    if (dropout_probability != 0.0f) {
-        dropout_seed = mha_graph.tensor(fe::graph::Tensor_attributes()
-                        .set_name("Seed")
-                        .set_dim({1, 1, 1, 1})
-                        .set_stride({1, 1, 1, 1})
-                        .set_data_type(fe::DataType_t::INT32));
-        dropout_offset = mha_graph.tensor(fe::graph::Tensor_attributes()
-                        .set_name("Offset")
-                        .set_dim({1, 1, 1, 1})
-                        .set_stride({1, 1, 1, 1})
-                        .set_data_type(fe::DataType_t::INT32));
-    }
+            if (!mha_graph->build_operation_graph(handle).is_good()) {
+                if (*check_support) {
+                    *check_support = false;
+                    //return;
+                } else {
+                    NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
+                }
+            }
 
-    std::shared_ptr<fe::graph::Tensor_attributes> seq_q, seq_kv;
-    if (is_padding) {
-        seq_q  = mha_graph.tensor(fe::graph::Tensor_attributes()
-                        .set_name("seq_q")
-                        .set_dim({b, 1, 1, 1})
-                        .set_stride({1, 1, 1, 1})
-                        .set_data_type(fe::DataType_t::INT32));
-        seq_kv = mha_graph.tensor(fe::graph::Tensor_attributes()
-                        .set_name("seq_kv")
-                        .set_dim({b, 1, 1, 1})
-                        .set_stride({1, 1, 1, 1})
-                        .set_data_type(fe::DataType_t::INT32));
-    }
+            auto plans = mha_graph->get_execution_plan_list({fe::HeurMode_t::A});
 
-std::cout << "Create options" << std::endl;
-    auto scaled_dot_product_flash_attention_backward_options =
-            fe::graph::Scaled_dot_product_flash_attention_backward_attributes()
-            .set_name("flash_attention_backward")
-            .set_causal_mask(is_causal)
-            .set_attn_scale(attn_scale);
+            if (*check_support) {
+                *check_support = plans.check_support(handle).is_good();
+                //return;
+            }
+            
+            if (!plans.check_support(handle).is_good()) {
+                NVTE_ERROR("cuDNN MHA Graph (BWD): support check is unsuccessful!");
+            }
 
-    scaled_dot_product_flash_attention_backward_options.set_alibi_mask(is_alibi);
+            if (!mha_graph->set_execution_plans(plans).is_good()) {
+                NVTE_ERROR("cuDNN MHA Graph (BWD): setting execution plans is unsuccessful!");
+            }
+        //    cache.insert({descriptor, mha_graph});
+        //    return mha_graph;
+        //};
 
-    if (is_bias) {
-        scaled_dot_product_flash_attention_backward_options.set_bias(bias);
-    }
+        //auto mha_graph = get_graph(sdpa_flash_f16_bprop_cache, descriptor);
 
-    if (dropout_probability != 0.0f) {
-        scaled_dot_product_flash_attention_backward_options.set_dropout(
-                        dropout_probability, dropout_seed, dropout_offset);
-    }
+        auto plan_workspace_size = mha_graph->get_workspace_size();
+        std::cout << "Plan size " << plan_workspace_size << std::endl;
 
-std::cout << "Call sdpa" << std::endl;
-    auto [dQ, dK, dV] = mha_graph.scaled_dot_product_flash_attention_backward(
-                    q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
-
-    dQ->set_output(true)
-            .set_dim({b, h, s_q, d})
-            .set_stride(q_strides);
-    dK->set_output(true)
-            .set_dim({b, h, s_kv, d})
-            .set_stride(k_strides);
-    dV->set_output(true)
-            .set_dim({b, h, s_kv, d})
-            .set_stride(v_strides);
-
-std::cout << "Validate etc" << std::endl;
-    if (!mha_graph.validate().is_good()) {
-	if (*check_support) {
-	    *check_support = false;
+        // Exit to request upper level API to allocate memory if needed
+        if (workspace == nullptr) {
+            *workspace_size = plan_workspace_size;
             return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
         }
-    }
 
-    if (!mha_graph.build_operation_graph(handle).is_good()) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
+        // build variant pack
+        std::cout << "Variant Pack" << plan_workspace_size << std::endl;
+        std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
+            {q, devPtrQ},
+            {k, devPtrKTranspose},
+            {v, devPtrVTranspose},
+            {o, devPtrO},
+            {dO, devPtrdO},
+            {stats, devPtrSoftmaxStats},
+            {dQ, devPtrdQ},
+            {dK, devPtrdK},
+            {dV, devPtrdV},
+            {attn_scale, &scaling_factor}
+        };
+
+        //if (is_bias) {
+        //    variant_pack[bias] = devPtrBias;
+        //}
+
+        if (dropout_probability != 0.0f) {
+            variant_pack[dropout_seed] = devPtrDropoutSeed;
+            variant_pack[dropout_offset] = devPtrDropoutOffset;
         }
-    }
 
-    auto plans = mha_graph.get_execution_plan_list({fe::HeurMode_t::A});
-
-    if (*check_support) {
-        *check_support = plans.check_support(handle).is_good();
-	return;
-    }
-    
-    if (!plans.check_support(handle).is_good()) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD): support check is unsuccessful!");
-    }
-
-    if (!mha_graph.set_execution_plans(plans).is_good()) {
-        NVTE_ERROR("cuDNN MHA Graph (BWD): setting execution plans is unsuccessful!");
-    }
-
-    auto plan_workspace_size = mha_graph.get_workspace_size();
-std::cout << "Plan size " << plan_workspace_size << std::endl;
-
-    // Exit to request upper level API to allocate memory if needed
-    if (workspace == nullptr) {
-        *workspace_size = plan_workspace_size;
-        return;
-    }
-
-    // build variant pack
-std::cout << "Variant Pack" << plan_workspace_size << std::endl;
-    std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
-        {q, devPtrQ},
-        {k, devPtrKTranspose},
-        {v, devPtrVTranspose},
-        {o, devPtrO},
-        {dO, devPtrdO},
-        {stats, devPtrSoftmaxStats},
-        {dQ, devPtrdQ},
-        {dK, devPtrdK},
-        {dV, devPtrdV},
-        {attn_scale, &scaling_factor}
-    };
-
-    //if (is_bias) {
-    //    variant_pack[bias] = devPtrBias;
-    //}
-
-    if (dropout_probability != 0.0f) {
-        variant_pack[dropout_seed] = devPtrDropoutSeed;
-        variant_pack[dropout_offset] = devPtrDropoutOffset;
-    }
-
-std::cout << "Bwd execute " << plan_workspace_size << std::endl;
-    if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
-        NVTE_ERROR("cuDNN MHA graph (BWD): execution is unsuccessful!");
+        std::cout << "Bwd execute " << plan_workspace_size << std::endl;
+        if (!mha_graph->execute(handle, variant_pack, workspace).is_good()) {
+            NVTE_ERROR("cuDNN MHA graph (BWD): execution is unsuccessful!");
+        }
+    } catch (cudnn_frontend::cudnnException &e) {
+        NVTE_ERROR(e.what());
     }
 }
 
