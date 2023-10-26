@@ -128,7 +128,6 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
 #else
         (sm_arch_ == 80 || sm_arch_ == 90)
 #endif
-            && (max_seqlen_q == max_seqlen_kv)
             && ((head_dim == 64) || (head_dim == 128))
             && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
                 || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS)
