@@ -188,6 +188,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
       } else if ((flag_m512 == true) && (flag_arb == false)) {
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
+      }
     }
     const char* env_backend = std::getenv("NVTE_FUSED_ATTN_BACKEND");
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
