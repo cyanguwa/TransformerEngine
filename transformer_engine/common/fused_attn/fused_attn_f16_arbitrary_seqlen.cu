@@ -539,6 +539,74 @@ createSVBMM(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
     ops->push_back(std::move(matmul_op2));
 }
 
+void cudnn_version_checks(
+		bool is_bias, bool is_alibi, bool is_padding,
+		bool* check_support) {
+    if (cudnnGetCudartVersion() < 12000) {
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph requires CUDA Toolkit 12.0 or above!");
+	}
+    }
+
+    size_t cudnn_version = cudnnGetVersion();
+    if (cudnn_version < 8901) {
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph requires cuDNN 8.9.1 or above!");
+	}
+    }
+    if (is_bias && (cudnn_version < 8903)) {
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph bias support requires cuDNN 8.9.3 or above!");
+	}
+    }
+    if (is_padding && (cudnn_version < 8903)) {
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph padding mask support requires cuDNN 8.9.3 or above!");
+	}
+    }
+    if (is_alibi && (cudnn_version < 8904)) {
+	if (*check_support) {
+	    *check_support = false;
+            return;
+	} else {
+            NVTE_ERROR("cuDNN MHA Graph ALiBi support requires cuDNN 8.9.4 or above!");
+	}
+    }
+
+    const int device_id = transformer_engine::cuda::current_device();
+    const int sm_arch_ = transformer_engine::cuda::sm_arch(device_id);
+    if (cudnn_version >= 8903) {
+	if (sm_arch_ < 80) {
+	    if (*check_support) {
+	        *check_support = false;
+                return;
+	    } else {
+                NVTE_ERROR("cuDNN MHA Graph requires Ampere or above!");
+	    }
+	}
+    } else {
+        if ((sm_arch_ != 80) && (sm_arch_ != 90)) {
+	    if (*check_support) {
+	        *check_support = false;
+                return;
+	    } else {
+                NVTE_ERROR("cuDNN MHA Graph requires Ampere or Hopper!");
+	    }
+	}
+    }
+}
 
 void fused_attn_arbitrary_seqlen_fwd_impl(
                 int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
@@ -555,43 +623,41 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
 std::cout << "Enter fwd impl " << std::endl;
     NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 
-    if (cudnnGetCudartVersion() < 12000) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (FWD) requires CUDA Toolkit 12.0 or above!");
-	}
-    }
-
-    if (cudnnGetVersion() < 8901) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (FWD) requires cuDNN 8.9.1 or above!");
-	}
-    }
-
-    const int device_id = transformer_engine::cuda::current_device();
-    const int sm_arch_ = transformer_engine::cuda::sm_arch(device_id);
-    std::cout << "sm_arch " << sm_arch_ << std::endl;
-    if (sm_arch_ < 80) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (FWD) requires Ampere or above!");
-	}
-    }
-
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
-    bool is_alibi = false;
+    bool is_alibi = (bias_type == NVTE_Bias_Type::NVTE_ALIBI);
     bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
     bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
-    bool is_dropout_mask = false;
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-    //bool is_inference         = !is_training; //false;
+
+    bool tmp_check = *check_support;
+    cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
+    if (*check_support && !tmp_check) {
+	*check_support = tmp_check;
+        return;
+    }
+
+//    try {
+//        FADescriptor descriptor{b,           h,
+//                                s_q,         s_kv,
+//                                d,           scaling_factor,
+//                                is_training, dropout_probability,
+//                                layout,      bias_type,
+//                                mask_type,   tensorType,
+//                                false};
+//
+//        using CacheType = std::map<FADescriptor, cudnn_frontend::ExecutionPlan>;
+//        static thread_local CacheType sdpa_flash_f16_fprop_cache;
+//
+//        // Get plan from cache if cache is available, otherwise create one
+//        auto get_plan = [&](CacheType &cache, const FADescriptor &descriptor) {
+//            // if hit, return
+//            auto it = cache.find(descriptor);
+//            if (it != cache.end()) {
+//                auto plan = it->second;
+//                return plan;
+//            }
+//
+//            // otherwise, build the op_graph and the plan. Then update cache
 
     namespace fe = cudnn_frontend;
     fe::graph::Graph mha_graph;
@@ -672,19 +738,16 @@ std::cout << "Set options seq q/kv" << std::endl;
             .set_causal_mask(is_causal)
             .set_attn_scale(attn_scale);
 
-    if (cudnnGetVersion() >= 8904) {
-        scaled_dot_product_flash_attention_options.set_alibi_mask(is_alibi);
+    scaled_dot_product_flash_attention_options.set_alibi_mask(is_alibi);
+
+    if (is_bias) {
+        scaled_dot_product_flash_attention_options.set_bias(bias);
     }
 
-    if (cudnnGetVersion() >= 8903) {
-        if (is_bias) {
-            scaled_dot_product_flash_attention_options.set_bias(bias);
-        }
-        if (is_padding) {
-            scaled_dot_product_flash_attention_options.set_padding_mask(is_padding)
-                    .set_seq_len_q(seq_q)
-                    .set_seq_len_kv(seq_kv);
-        }
+    if (is_padding) {
+        scaled_dot_product_flash_attention_options.set_padding_mask(is_padding)
+                .set_seq_len_q(seq_q)
+                .set_seq_len_kv(seq_kv);
     }
 
     if (dropout_probability != 0.0f) {
@@ -752,6 +815,12 @@ std::cout << "Call sdpa validate " << std::endl;
         NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
     }
 
+//            cache.insert({descriptor, plan});
+//            return plan;
+//        };
+//
+//        auto plan = get_plan(fmha_fprop_cache, descriptor);
+
     auto plan_workspace_size = mha_graph.get_workspace_size();
 std::cout << "Plan size " << plan_workspace_size << std::endl;
 
@@ -776,20 +845,18 @@ std::cout << "Create variant pack" << std::endl;
     //    variant_pack[bias] = devPtrBias;
     //}
 
-    if (cudnnGetVersion() >= 8903) {
 std::cout << "Create actual seqs" << std::endl;
-        if (is_padding) {
-            constexpr size_t nthreads_per_block = 128;
-            const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
-            void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
-            void *devActualSeqlenKV = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
-            cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
-                b, static_cast<const int32_t *>(devPtrCuSeqlensQ),
-                static_cast<const int32_t *>(devPtrCuSeqlensKV),
-                static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenKV));
-            variant_pack[seq_q]  = devActualSeqlenQ;
-            variant_pack[seq_kv] = devActualSeqlenKV;
-        }
+    if (is_padding) {
+        constexpr size_t nthreads_per_block = 128;
+        const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
+        void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
+        void *devActualSeqlenKV = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
+        cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
+            b, static_cast<const int32_t *>(devPtrCuSeqlensQ),
+            static_cast<const int32_t *>(devPtrCuSeqlensKV),
+            static_cast<int32_t *>(devActualSeqlenQ), static_cast<int32_t *>(devActualSeqlenKV));
+        variant_pack[seq_q]  = devActualSeqlenQ;
+        variant_pack[seq_kv] = devActualSeqlenKV;
     }
 
     if (dropout_probability != 0.0f) {
@@ -806,6 +873,11 @@ std::cout << "Execute " << std::endl;
     if (!mha_graph.execute(handle, variant_pack, workspace).is_good()) {
         NVTE_ERROR("cuDNN MHA Graph (FWD): execution is unsuccessful!");
     }
+
+
+//    } catch (cudnn_frontend::cudnnException &e) {
+//        NVTE_ERROR(e.what());
+//    }
 }
 
 void fused_attn_arbitrary_seqlen_fwd_impl_old(
@@ -960,44 +1032,20 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
 std::cout << "Enter bwd impl" << std::endl;
     NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
-    if (cudnnGetCudartVersion() < 12000) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (BWD) requires CUDA Toolkit 12.0 or above!");
-        }
-    }
-
-    // inconsistent with fwd??
-    if (cudnnGetVersion() < 8903) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (BWD) requires cuDNN 8.9.3 or above!");
-        }
-    }
-
-    const int device_id = transformer_engine::cuda::current_device();
-    const int sm_arch_ = transformer_engine::cuda::sm_arch(device_id);
-    std::cout << "sm_arch " << sm_arch_ << std::endl;
-    if (sm_arch_ < 80) {
-	if (*check_support) {
-	    *check_support = false;
-            return;
-	} else {
-            NVTE_ERROR("cuDNN MHA Graph (BWD) requires Ampere or above!");
-        }
-    }
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
-    bool is_alibi = false;
+    bool is_alibi = (bias_type == NVTE_Bias_Type::NVTE_ALIBI);
     bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
     bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
-    bool is_dropout_mask = false;
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
 std::cout << "is bias " << is_bias << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
+
+    bool tmp_check = *check_support;
+    cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
+    if (*check_support && !tmp_check) {
+	*check_support = tmp_check;
+        return;
+    }
 
     namespace fe = cudnn_frontend;
     fe::graph::Graph mha_graph;
@@ -1092,9 +1140,7 @@ std::cout << "Create options" << std::endl;
             .set_causal_mask(is_causal)
             .set_attn_scale(attn_scale);
 
-    if (cudnnGetVersion() >= 8904) {
-        scaled_dot_product_flash_attention_backward_options.set_alibi_mask(is_alibi);
-    }
+    scaled_dot_product_flash_attention_backward_options.set_alibi_mask(is_alibi);
 
     if (is_bias) {
         scaled_dot_product_flash_attention_backward_options.set_bias(bias);
