@@ -657,12 +657,14 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
 	std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 2> O_Stats;
         // Get plan from cache if cache is available, otherwise create one
         //auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) {
-        //    // if hit, return
-        //    auto it = cache.find(descriptor);
-        //    if (it != cache.end()) {
-        //        auto graph = it->second;
-        //        return graph;
-        //    }
+        auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) -> std::shared_ptr<fe::graph::Graph> {
+            // if hit, return
+            auto it = cache.find(descriptor);
+            if (it != cache.end()) {
+                auto graph = it->second;
+		std::cout << "Hit cache, returning ..." << graph << std::endl;
+                return graph;
+            }
 
             // otherwise, build the op_graph and the plan. Then update cache
 	    auto mha_graph = std::make_shared<fe::graph::Graph>();
@@ -785,7 +787,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             if (!mha_graph->validate().is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    //return;
+                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
                 }
@@ -800,6 +802,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 if (*check_support) {
                     *check_support = false;
                     //return;
+                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
                 }
@@ -811,21 +814,25 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             if (*check_support) {
                 *check_support = plans.check_support(handle).is_good();
                 //return; // TODO
+                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
             }
 
             if (!plans.check_support(handle).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (FWD): support check is unsuccessful!");
+                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
             }
 
             if (!mha_graph->set_execution_plans(plans).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
+                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
             }
 
-        //    cache.insert({descriptor, mha_graph});
-        //    return mha_graph;
-        //};
+            cache.insert({descriptor, mha_graph});
+            return mha_graph;
+        };
 
-        //auto mha_graph = get_graph(sdpa_flash_f16_fprop_cache, descriptor);
+        auto mha_graph = get_graph(sdpa_flash_f16_fprop_cache, descriptor);
+	std::cout << "Getting graph ..."<< mha_graph << std::endl;
 
         auto plan_workspace_size = mha_graph->get_workspace_size();
         std::cout << "Plan size " << plan_workspace_size << std::endl;
