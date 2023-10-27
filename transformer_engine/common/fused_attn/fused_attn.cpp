@@ -11,6 +11,7 @@
 #include "fused_attn_f16_arbitrary_seqlen.h"
 #include "fused_attn_fp8.h"
 #include "../util/cuda_runtime.h"
+#include "../util/system.h"
 
 // map NVTE_QKV_Layout to NVTE_QKV_Layout_Group
 NVTE_QKV_Layout_Group nvte_get_qkv_layout_group(NVTE_QKV_Layout qkv_layout) {
@@ -189,15 +190,20 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
       } else if ((flag_m512 == true) && (flag_arb == false)) {
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
       }
+      std::cout << "before backend is "<<(int)backend << std::endl;
+      int env_backend = static_cast<int>(backend);
+      env_backend = transformer_engine::getenv<int>("NVTE_FUSED_ATTN_BACKEND", env_backend);
+      backend = static_cast<NVTE_Fused_Attn_Backend>(env_backend);
+      std::cout << "after backend is "<<(int)backend << std::endl;
     }
-    const char* env_backend = std::getenv("NVTE_FUSED_ATTN_BACKEND");
-    if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
-            && (flag_arb == true)
-            && (env_backend != nullptr)
-            && (std::string(env_backend) == std::to_string(
-                    NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))) {
-      backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
-    }
+    //const char* env_backend = std::getenv("NVTE_FUSED_ATTN_BACKEND");
+    //if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)
+    //        && (flag_arb == true)
+    //        && (env_backend != nullptr)
+    //        && (std::string(env_backend) == std::to_string(
+    //                NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))) {
+    //  backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
+    //}
 #if (CUDNN_VERSION < 8901)
     if (backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
       backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;

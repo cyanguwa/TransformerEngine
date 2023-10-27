@@ -377,7 +377,7 @@ class CMakeBuildExtension(BuildExtension):
             if isinstance(ext, CMakeExtension):
                 print(f"Building CMake extension {ext.name}")
                 with tempfile.TemporaryDirectory() as build_dir:
-                    build_dir = '/code/fmha/github3/pr-graph-api/TransformerEngine/build' 
+                    build_dir = '/code/pr-graph-api/TransformerEngine/build' 
                     #build_dir = '/code/TransformerEngine/build' 
                     build_dir = Path(build_dir)
                     package_path = Path(self.get_ext_fullpath(ext.name))

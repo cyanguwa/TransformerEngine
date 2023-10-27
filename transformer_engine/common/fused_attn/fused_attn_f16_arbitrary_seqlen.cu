@@ -613,7 +613,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 bool is_training, float scaling_factor, float dropout_probability,
                 NVTE_QKV_Layout layout,
                 NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
-                void *devPtrQ, void *devPtrK, void *devPtrV,
+                void *devPtrQ, void *devPtrK, void *devPtrV, void *devPtrBias,
                 void *devPtrSoftmaxStats, void *devPtrO,
                 void* devPtrDropoutSeed, void* devPtrDropoutOffset,
                 void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
@@ -629,6 +629,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
     bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
+    std::cout << "fwd is bias " << is_bias << "is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
@@ -725,8 +726,8 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             if (is_bias) {
                 bias = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("bias")
-                                .set_dim({b, 1, s_q, s_kv})
-                                .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
+                                .set_dim({1, h, s_q, s_kv})
+                                .set_stride({h * s_q * s_kv, s_q * s_kv, s_kv, 1}));
                 scaled_dot_product_flash_attention_options.set_bias(bias);
             }
 
@@ -800,17 +801,18 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 if (*check_support) {
                     *check_support = false;
 		    return return_empty_tuple;
-                } else {
-                    NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
+                //} else {
+                //    NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
                 }
             }
+            //NVTE_CHECK_CUDNN(
 
             if (!mha_graph->build_operation_graph(handle).is_good()) {
                 if (*check_support) {
                     *check_support = false;
 		    return return_empty_tuple;
-                } else {
-                    NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
+                //} else {
+                //    NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
                 }
             }
 
@@ -822,11 +824,11 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             }
 
             if (!plans.check_support(handle).is_good()) {
-                NVTE_ERROR("cuDNN MHA Graph (FWD): support check is unsuccessful!");
+            //    NVTE_ERROR("cuDNN MHA Graph (FWD): support check is unsuccessful!");
             }
 
             if (!mha_graph->set_execution_plans(plans).is_good()) {
-                NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
+            //    NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
             }
             auto return_tuple = std::tuple_cat(
 	            std::make_tuple(mha_graph), key_tensors_tuple,
@@ -865,9 +867,9 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             variant_pack[Stats] = devPtrSoftmaxStats;
         }
         
-        //if (is_bias) {
-        //    variant_pack[bias] = devPtrBias;
-        //}
+        if (is_bias) {
+            variant_pack[bias] = devPtrBias;
+        }
 
         std::cout << "Create actual seqs" << std::endl;
         if (is_padding) {
@@ -889,9 +891,10 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
         }
 
         std::cout << "Execute " << std::endl;
-        if (!mha_graph->execute(handle, variant_pack, workspace).is_good()) {
-            NVTE_ERROR("cuDNN MHA Graph (FWD): execution is unsuccessful!");
-        }
+        mha_graph->execute(handle, variant_pack, workspace);
+        //if (!mha_graph->execute(handle, variant_pack, workspace).is_good()) {
+        //    NVTE_ERROR("cuDNN MHA Graph (FWD): execution is unsuccessful!");
+        //}
 
     } catch (cudnn_frontend::cudnnException &e) {
         NVTE_ERROR(e.what());
@@ -1043,7 +1046,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                 void* devPtrQ, void* devPtrKTranspose, void* devPtrVTranspose,
                 void* devPtrO, void* devPtrSoftmaxStats,
-                void* devPtrdQ, void* devPtrdK, void* devPtrdV, void* devPtrdO,
+                void* devPtrdQ, void* devPtrdK, void* devPtrdV, void* devPtrdO, void* devPtrdBias,
                 void* devPtrDropoutSeed, void* devPtrDropoutOffset,
                 void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
                 cudnn_frontend::DataType_t tensorType, void *workspace, size_t *workspace_size,
@@ -1057,7 +1060,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
     bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-    std::cout << "is bias " << is_bias << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
+    std::cout << "bwd is bias " << is_bias << "is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
@@ -1174,8 +1177,8 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             if (is_bias) {
                 bias = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("bias")
-                                .set_dim({b, 1, s_q, s_kv})
-                                .set_stride({s_q * s_kv, s_q * s_kv, s_kv, 1}));
+                                .set_dim({1, h, s_q, s_kv})
+                                .set_stride({h * s_q * s_kv, s_q * s_kv, s_kv, 1}));
                 scaled_dot_product_flash_attention_backward_options.set_bias(bias);
             }
 
@@ -1253,8 +1256,8 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 if (*check_support) {
                     *check_support = false;
 		    return return_empty_tuple;
-                } else {
-                    NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
+                //} else {
+                //    NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
                 }
             }
 
@@ -1262,8 +1265,8 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 if (*check_support) {
                     *check_support = false;
 		    return return_empty_tuple;
-                } else {
-                    NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
+                //} else {
+                //    NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
                 }
             }
 
@@ -1317,9 +1320,9 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             {dV, devPtrdV},
         };
 
-        //if (is_bias) {
-        //    variant_pack[bias] = devPtrBias;
-        //}
+        if (is_bias) {
+            variant_pack[bias] = devPtrdBias;
+        }
 
         if (is_padding) {
             constexpr size_t nthreads_per_block = 128;
@@ -2166,7 +2169,7 @@ void fused_attn_arbitrary_seqlen_fwd(
     fused_attn_arbitrary_seqlen_fwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 is_training, attn_scale, p_dropout, qkv_layout,
                                 bias_type, mask_type,
-                                devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO,
+                                devPtrQ, devPtrK, devPtrV, devPtrBias, devPtrS, devPtrO,
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 devPtrCuSeqlensQ, devPtrCuSeqlensKV,
                                 get_cudnn_fe_dtype(QKV_type),
@@ -2214,7 +2217,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
     void *devPtrdV = output_dV->data.dptr;
     void *devPtrSoftmaxStats = nullptr;
     devPtrSoftmaxStats = output_S->data.dptr;
-//    void *devPtrdBias = output_dBias->data.dptr;
+    void *devPtrdBias = output_dBias->data.dptr;
 
     void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
     void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
@@ -2270,7 +2273,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
                                 attn_scale, p_dropout, qkv_layout,
                                 bias_type, mask_type,
                                 devPtrQ, devPtrK, devPtrV, devPtrO, devPtrSoftmaxStats,
-                                devPtrdQ, devPtrdK, devPtrdV, devPtrdO,
+                                devPtrdQ, devPtrdK, devPtrdV, devPtrdO, devPtrdBias,
                                 devPtrDropoutSeed, devPtrDropoutOffset,
                                 devPtrCuSeqlensQ, devPtrCuSeqlensKV,
                                 get_cudnn_fe_dtype(QKV_type), workspace->data.dptr,

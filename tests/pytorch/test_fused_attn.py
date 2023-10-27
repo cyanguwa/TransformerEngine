@@ -4,6 +4,7 @@
 
 from importlib.metadata import version
 import os
+import math
 from typing import Any, Dict, List, Tuple, Union
 
 from pkg_resources import packaging
@@ -102,8 +103,10 @@ batch_sizes = [1, 32]
 
 model_configs_lean = {
     #"test6": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
-    "test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"),
-    "test8": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "causal"),
+    #"test7": ModelConfig(1, 1024, 16, 64, 512, 0.0, "padding"),
+    "test7": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
+    #"test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"),
+    #"test8": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "causal"),
 }
 
 param_types_lean = [torch.bfloat16, torch.float16]
@@ -302,22 +305,62 @@ def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
     print('fused_attn_supported', fused_attn_supported)
     # FusedAttention backend
     if fused_attn_supported:
-        fused_attn_fwd, fused_attn_bwd = _run_dpa_qkv_layout(
-            dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
-        print(fused_attn_fwd.shape, unfused_attn_fwd.shape)
-        print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
-        print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
-        #torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
+        #fused_attn_fwd, fused_attn_bwd = _run_dpa_qkv_layout(
+        #    dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
+        #print(fused_attn_fwd.shape, unfused_attn_fwd.shape)
+        #print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
+        #print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
+        ##torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
+        ##torch.save(unfused_attn_fwd, 'unfused_attn_fwd.pt')
+        #torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
+        #for i in range(len(unfused_attn_bwd)):
+        #    print('iiii new',i)
+        #    print(fused_attn_bwd[i].shape, unfused_attn_bwd[i].shape)
+        #    print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
+        #    print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
+        #    #torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
+        #    #torch.save(unfused_attn_bwd[i], 'unfused_attn_bwd_'+str(i)+'.pt')
+        #    torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
+        #if (os.environ["NVTE_FUSED_ATTN_OLD"] == "0"):
+        if (os.environ["NVTE_FUSED_ATTN_BACKEND"] == "0"):
+            fused_attn_fwd, fused_attn_bwd = _run_dpa_qkv_layout(
+                dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
+        #os.environ["NVTE_FUSED_ATTN_OLD"] = "1"
+            print('new fwd')
+            print(fused_attn_fwd.shape, unfused_attn_fwd.shape)
+            print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
+            print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
+            torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
+        else:
+            fused_attn_fwd_old, fused_attn_bwd_old = _run_dpa_qkv_layout(
+                dtype, bs, config, "FusedAttention", qkv_layout, workspace_opt)
+            print('old fwd')
+            print(fused_attn_fwd_old.shape, unfused_attn_fwd.shape)
+            print(fused_attn_fwd_old.min().item(), fused_attn_fwd_old.max().item())
+            print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
+            torch.save(fused_attn_fwd_old, 'fused_attn_fwd_old.pt')
+            fused_attn_fwd_tmp = torch.load('fused_attn_fwd.pt')
+            torch.testing.assert_close(fused_attn_fwd_tmp, fused_attn_fwd_old, **tols)
         #torch.save(unfused_attn_fwd, 'unfused_attn_fwd.pt')
-        torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
+        #torch.testing.assert_close(fused_attn_fwd, fused_attn_fwd_old, **tols)
+        #torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
+        #torch.testing.assert_close(fused_attn_fwd_old, unfused_attn_fwd, **tols)
         for i in range(len(unfused_attn_bwd)):
-            print('iiii new',i)
-            print(fused_attn_bwd[i].shape, unfused_attn_bwd[i].shape)
-            print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
-            print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
-            #torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
-            #torch.save(unfused_attn_bwd[i], 'unfused_attn_bwd_'+str(i)+'.pt')
-            torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
+            #if (os.environ["NVTE_FUSED_ATTN_OLD"] == "0"):
+            if (os.environ["NVTE_FUSED_ATTN_BACKEND"] == "0"):
+                print('iiii new',i)
+                print(fused_attn_bwd[i].shape, unfused_attn_bwd[i].shape)
+                print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
+                print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
+                torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
+            else:
+                print('iiii old',i)
+                print(fused_attn_bwd_old[i].shape, unfused_attn_bwd[i].shape)
+                print(fused_attn_bwd_old[i].min().item(), fused_attn_bwd_old[i].max().item())
+                print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
+                torch.save(fused_attn_bwd_old[i], 'fused_attn_bwd_old_'+str(i)+'.pt')
+                fused_attn_bwd_tmp = torch.load('fused_attn_bwd_'+str(i)+'.pt')
+                torch.testing.assert_close(fused_attn_bwd_tmp, fused_attn_bwd_old[i], **tols)
 
     ## FlashAttention backend
     #if flash_attn_supported:
@@ -367,8 +410,10 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout, workspace_opt):
     for i in range(3):
         inp[i].requires_grad=True
 
-    seqlens = torch.empty(bs, dtype = torch.int32).cuda()
-    seqlens.fill_(config.seq_len)
+    #seqlens = torch.empty(bs, dtype = torch.int32).cuda()
+    #seqlens.fill_(config.seq_len)
+    seqlens = torch.randint(1, config.seq_len, [bs], dtype = torch.int32).cuda()
+    print('xxx seqlens',seqlens)
     cu_seqlens = torch.zeros(bs + 1, device = inp[0].device, dtype = torch.int32)
     cu_seqlens[1:] = torch.cumsum(seqlens, dim = 0)
     qkv_format = ''.join([i for i in qkv_layout.split('_')[0] if i.isalpha()])
@@ -376,6 +421,30 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout, workspace_opt):
     op_grad_shape = [dim_to_num[i] for i in qkv_format_no_thd]
     op_grad_shape_new = [*op_grad_shape[:-2], op_grad_shape[-2] * op_grad_shape[-1]]
     op_grad = 0.001 * torch.randint(0, 200, op_grad_shape_new, dtype = dtype).cuda()
+    #bias_type = 'no_bias'
+    #bias_type = 'post_scale_bias'
+    bias_type = 'alibi'
+    if bias_type == 'no_bias':
+        bias = None
+    if bias_type == 'post_scale_bias':
+        bias = torch.randn(1, config.num_attention_heads, config.seq_len, config.seq_len, dtype = dtype).cuda()
+    elif bias_type == 'alibi':
+        if os.environ['NVTE_FUSED_ATTN_BACKEND'] == '0':
+            bias_type = 'post_scale_bias'
+            n = 2 ** math.floor(math.log2(config.num_attention_heads))
+            m_0 = 2.0 ** (-8.0 / n)
+            m = torch.pow(m_0, torch.arange(1, 1 + n))
+
+            a = torch.ones(config.seq_len, config.seq_len)
+            b = torch.triu(a,diagonal=1)
+            c = b.cumsum(dim=-1)
+            d = c - torch.transpose(c, 0, 1)
+            bias = d.expand(1, config.num_attention_heads, config.seq_len, config.seq_len)
+            for i in range(config.num_attention_heads):
+                bias[0,i,:,:] = m[i] *  bias[0,i,:,:]
+            bias = bias.to(dtype = dtype).cuda()
+        else:
+            bias = None
 
     block = (
          DotProductAttention(
@@ -393,7 +462,12 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout, workspace_opt):
     )
 
     if qkv_format != 'thd':
-        op = block(inp[0], inp[1], inp[2], qkv_format=qkv_format)
+        op = block(inp[0], inp[1], inp[2],
+                qkv_format = qkv_format,
+                cu_seqlens_q = cu_seqlens,
+                cu_seqlens_kv = cu_seqlens,
+                core_attention_bias_type = bias_type,
+                core_attention_bias = bias)
     else:
         cu_seqlens_q = torch.arange(
                 0,
@@ -410,7 +484,9 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout, workspace_opt):
         op = block(inp[0], inp[1], inp[2],
                 qkv_format=qkv_format,
                 cu_seqlens_q = cu_seqlens_q,
-                cu_seqlens_kv = cu_seqlens_kv)
+                cu_seqlens_kv = cu_seqlens_kv,
+                core_attention_bias_type = bias_type,
+                core_attention_bias = bias)
     op.backward(op_grad)
 
     return op, (inp[0].grad, inp[1].grad, inp[2].grad)

@@ -1672,24 +1672,35 @@ class FusedAttention(torch.nn.Module):
                 batch_size, max_seqlen_q, max_seqlen_kv = (
                     query_layer.shape[0], query_layer.shape[1], key_layer.shape[1])
             if attn_mask_type == 'padding':
-                if (cu_seqlens_q is not None
-                        and cu_seqlens_kv is not None
-                        and attention_mask is not None):
-                    warnings.warn(
-                        """FusedAttention: Ignoring attention mask since cu_seqlens_q
-                        and cu_seqlens_kv are provided."""
-                    )
+                global _cu_seqlens_q, _cu_seqlens_kv, _indices_q, _indices_kv
+                print('self layer number xxx ',self.layer_number, cu_seqlens_q, cu_seqlens_kv)
+                if (cu_seqlens_q is not None and cu_seqlens_kv is not None):
+                    if (attention_mask is not None):
+                        warnings.warn(
+                            """FusedAttention: Ignoring attention mask since cu_seqlens_q
+                            and cu_seqlens_kv are provided."""
+                        )
                     if self.layer_number == 1:
                         _cu_seqlens_q, _cu_seqlens_kv = cu_seqlens_q, cu_seqlens_kv
-                else:
+                elif attention_mask is not None:
                     if self.attention_type == "self":
+                        assert (isinstance(attention_mask, torch.Tensor)
+                            ), """Attention mask should be a single tensor of
+                            shape [batch_size, 1, 1, seqlen_q]!"""
                         if self.layer_number == 1:
                             _cu_seqlens_q, _ = get_cu_seqlens_and_indices(attention_mask)
                         _cu_seqlens_kv = _cu_seqlens_q
                     else:
+                        assert (isinstance(attention_mask, tuple)
+                            and len(attention_mask) == 2
+                            ), """Attention mask should be a tuple of two tensors in shapes
+                            [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]!"""
                         if self.layer_number == 1:
                             _cu_seqlens_q, _ = get_cu_seqlens_and_indices(attention_mask[0])
                             _cu_seqlens_kv, _ = get_cu_seqlens_and_indices(attention_mask[1])
+                else:
+                    assert False, """FusedAttention: Please provide cu_seqlens_q and cu_seqlens_kv,
+                        or attention mask for padding mask type."""
                 cu_seqlens_q, cu_seqlens_kv = _cu_seqlens_q, _cu_seqlens_kv
             elif attn_mask_type == 'arbitrary':
                 if core_attention_bias_type == 'post_scale_bias':
@@ -1723,6 +1734,7 @@ class FusedAttention(torch.nn.Module):
         use_FAv2_bwd = (self.use_FAv2_bwd
                 and (fused_attention_backend
                     == tex.NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen))
+        print('2    self layer number xxx ',self.layer_number, cu_seqlens_q, cu_seqlens_kv)
         with self.attention_dropout_ctx():
             output = FusedAttnFunc.apply(
                 self.training,
@@ -2120,16 +2132,6 @@ class DotProductAttention(torch.nn.Module):
                 assert (all(seqlens_kv <= max_seqlen_kv)
                     ), """Sequence lengths indicated by cu_seqlens_kv must be no greater than
                     the sequence dimention in 'key_layer' and 'value_layer'!"""
-        if attn_mask_type == 'padding':
-            if self.attention_type == 'self':
-                assert (isinstance(attention_mask, torch.Tensor)
-                    ), """Attention mask should be a single tensor of 
-                    shape [batch_size, 1, 1, seqlen_q]!"""
-            if self.attention_type == 'cross':
-                assert (isinstance(attention_mask, tuple)
-                    and len(attention_mask) == 2
-                    ), """Attention mask should be a tuple of two tensors in shapes
-                    [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]!"""
         if attn_mask_type == 'arbitrary':
             assert (len(attention_mask.shape) == 4), """Attention mask should be 4D!"""
             b, h, sq, skv = attention_mask.shape
