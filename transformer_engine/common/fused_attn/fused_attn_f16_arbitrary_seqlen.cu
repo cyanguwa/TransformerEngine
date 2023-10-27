@@ -646,23 +646,29 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 false};
 
         namespace fe = cudnn_frontend;
-        using CacheType = std::map<FADescriptor_v1, std::shared_ptr<fe::graph::Graph>>;
+        using graph_and_tensors = std::tuple<std::shared_ptr<fe::graph::Graph>,
+	      std::shared_ptr<fe::graph::Tensor_attributes>, // Q
+              std::shared_ptr<fe::graph::Tensor_attributes>, // K
+              std::shared_ptr<fe::graph::Tensor_attributes>, // V
+              std::shared_ptr<fe::graph::Tensor_attributes>, // attn_scale
+              std::shared_ptr<fe::graph::Tensor_attributes>, // Stats
+              std::shared_ptr<fe::graph::Tensor_attributes> >; // O
+
+        using CacheType = std::map<FADescriptor_v1, graph_and_tensors>;
         static thread_local CacheType sdpa_flash_f16_fprop_cache;
 
-        std::shared_ptr<fe::graph::Tensor_attributes> Q, K, V, attn_scale;
+        std::shared_ptr<fe::graph::Tensor_attributes> Q, K, V, attn_scale, Stats, O;
         fe::graph::Scaled_dot_product_flash_attention_attributes scaled_dot_product_flash_attention_options;
         std::shared_ptr<fe::graph::Tensor_attributes> bias, dropout_seed, dropout_offset;
         std::shared_ptr<fe::graph::Tensor_attributes> seq_q, seq_kv;
-        std::shared_ptr<fe::graph::Tensor_attributes> O, Stats;
 	std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 2> O_Stats;
         // Get plan from cache if cache is available, otherwise create one
-        //auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) {
-        auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) -> std::shared_ptr<fe::graph::Graph> {
+        auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) -> graph_and_tensors {
             // if hit, return
             auto it = cache.find(descriptor);
             if (it != cache.end()) {
                 auto graph = it->second;
-		std::cout << "Hit cache, returning ..." << graph << std::endl;
+		std::cout << "Hit cache, returning ..." << std::get<0>(graph)<< std::endl;
                 return graph;
             }
 
@@ -787,7 +793,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             if (!mha_graph->validate().is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
+		    return std::make_tuple(nullptr, Q, K, V, attn_scale, O, Stats);
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (FWD): validation is unsuccessful!");
                 }
@@ -801,37 +807,35 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             if (!mha_graph->build_operation_graph(handle).is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    //return;
-                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
+		    return std::make_tuple(nullptr, Q, K, V, attn_scale, O, Stats);
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (FWD): build is unsuccessful!");
                 }
             }
 
             auto plans = mha_graph->get_execution_plan_list({fe::HeurMode_t::A});
-            //std::string tag = plans.list_of_engine_configs.operation_tag;
             
             if (*check_support) {
                 *check_support = plans.check_support(handle).is_good();
-                //return; // TODO
-                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
+		return std::make_tuple(nullptr, Q, K, V, attn_scale, O, Stats);
             }
 
             if (!plans.check_support(handle).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (FWD): support check is unsuccessful!");
-                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
+		//return std::make_tuple(nullptr, Q, K, V, attn_scale, O, Stats);
             }
 
             if (!mha_graph->set_execution_plans(plans).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (FWD): setting execution plans is unsuccessful!");
-                    return (std::shared_ptr<fe::graph::Graph>)nullptr;
+		//return std::make_tuple(nullptr, Q, K, V, attn_scale, O, Stats);
             }
 
-            cache.insert({descriptor, mha_graph});
-            return mha_graph;
+            cache.insert({descriptor, std::make_tuple(mha_graph, Q,  K, V, attn_scale, O, Stats)});
+            return std::make_tuple(mha_graph, Q, K, V, attn_scale, O, Stats);
         };
 
-        auto mha_graph = get_graph(sdpa_flash_f16_fprop_cache, descriptor);
+        std::shared_ptr<fe::graph::Graph> mha_graph;
+        std::tie(mha_graph, Q, K, V, attn_scale, O, Stats) = get_graph(sdpa_flash_f16_fprop_cache, descriptor);
 	std::cout << "Getting graph ..."<< mha_graph << std::endl;
 
         auto plan_workspace_size = mha_graph->get_workspace_size();
@@ -1069,7 +1073,19 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 false};
 
         namespace fe = cudnn_frontend;
-        using CacheType = std::map<FADescriptor_v1, std::shared_ptr<fe::graph::Graph>>;
+        using graph_and_tensors = std::tuple<std::shared_ptr<fe::graph::Graph>,
+	      std::shared_ptr<fe::graph::Tensor_attributes>, // q
+              std::shared_ptr<fe::graph::Tensor_attributes>, // k
+              std::shared_ptr<fe::graph::Tensor_attributes>, // v
+              std::shared_ptr<fe::graph::Tensor_attributes>, // o
+              std::shared_ptr<fe::graph::Tensor_attributes>, // dO
+              std::shared_ptr<fe::graph::Tensor_attributes>, // stats
+              std::shared_ptr<fe::graph::Tensor_attributes>, // attn_scale
+	      std::shared_ptr<fe::graph::Tensor_attributes>, // dQ
+              std::shared_ptr<fe::graph::Tensor_attributes>, // dK
+              std::shared_ptr<fe::graph::Tensor_attributes> >; // dV
+
+        using CacheType = std::map<FADescriptor_v1, graph_and_tensors>;
         static thread_local CacheType sdpa_flash_f16_bprop_cache;
 
         std::shared_ptr<fe::graph::Tensor_attributes> q, k, v, o, dO, stats, attn_scale;
@@ -1079,13 +1095,13 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         std::shared_ptr<fe::graph::Tensor_attributes> dQ, dK, dV;
 	std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 3> dQKV;
         // Get plan from cache if cache is available, otherwise create one
-        //auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) {
-        //    // if hit, return
-        //    auto it = cache.find(descriptor);
-        //    if (it != cache.end()) {
-        //        auto graph = it->second;
-        //        return graph;
-        //    }
+        auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) -> graph_and_tensors {
+            // if hit, return
+            auto it = cache.find(descriptor);
+            if (it != cache.end()) {
+                auto graph = it->second;
+                return graph;
+            }
 
             // otherwise, build the op_graph and the plan. Then update cache
 	    auto mha_graph = std::make_shared<fe::graph::Graph>();
@@ -1210,7 +1226,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             if (!mha_graph->validate().is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    //return;
+		    return std::make_tuple(nullptr, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV);
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (BWD): validation is unsuccessful!");
                 }
@@ -1219,7 +1235,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             if (!mha_graph->build_operation_graph(handle).is_good()) {
                 if (*check_support) {
                     *check_support = false;
-                    //return;
+		    return std::make_tuple(nullptr, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV);
                 } else {
                     NVTE_ERROR("cuDNN MHA Graph (BWD): build is unsuccessful!");
                 }
@@ -1229,7 +1245,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
 
             if (*check_support) {
                 *check_support = plans.check_support(handle).is_good();
-                //return;
+		return std::make_tuple(nullptr, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV);
             }
             
             if (!plans.check_support(handle).is_good()) {
@@ -1239,11 +1255,13 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             if (!mha_graph->set_execution_plans(plans).is_good()) {
                 NVTE_ERROR("cuDNN MHA Graph (BWD): setting execution plans is unsuccessful!");
             }
-        //    cache.insert({descriptor, mha_graph});
-        //    return mha_graph;
-        //};
+            cache.insert({descriptor, std::make_tuple(
+				    mha_graph, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV)});
+            return std::make_tuple(mha_graph, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV);
+        };
 
-        //auto mha_graph = get_graph(sdpa_flash_f16_bprop_cache, descriptor);
+        std::shared_ptr<fe::graph::Graph> mha_graph;
+        std::tie(mha_graph, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV) = get_graph(sdpa_flash_f16_bprop_cache, descriptor);
 
         auto plan_workspace_size = mha_graph->get_workspace_size();
         std::cout << "Plan size " << plan_workspace_size << std::endl;
