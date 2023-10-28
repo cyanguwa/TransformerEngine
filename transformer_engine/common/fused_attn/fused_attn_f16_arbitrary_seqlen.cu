@@ -1926,6 +1926,7 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(
     input_V->data.shape = {batch, max_seqlen, num_head, head_dim};
     input_V->data.dtype = input_QKV->data.dtype;
 
+    std::cout << "-------------------- qkv packed " << batch << " " << max_seqlen << " " << num_head << " " << head_dim << " " << qkv_layout << std::endl;
     fused_attn_arbitrary_seqlen_fwd(
         batch, max_seqlen, max_seqlen, num_head, head_dim, is_training,
         attn_scale, p_dropout, qkv_layout, bias_type,
