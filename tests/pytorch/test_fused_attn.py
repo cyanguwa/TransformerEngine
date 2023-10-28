@@ -103,8 +103,9 @@ batch_sizes = [1, 32]
 
 model_configs_lean = {
     #"test6": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
-    #"test7": ModelConfig(1, 1024, 16, 64, 512, 0.0, "padding"),
-    "test7": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
+    "test7": ModelConfig(1, 1024, 16, 64, 512, 0.0, "padding"),
+    "test71": ModelConfig(1, 1024, 16, 64, 512, 0.0, "causal"),
+    "test72": ModelConfig(1, 1024, 16, 64, 512, 0.0, "no_mask"),
     #"test7": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "no_mask"),
     #"test8": ModelConfig(1, 2048, 16, 128, 2048, 0.0, "causal"),
 }
@@ -278,7 +279,7 @@ qkv_layouts = [
     _cudnn_version < [8,9,5], reason="cuDNN 8.9.5+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
-@pytest.mark.parametrize("model", ['test7']) #model_configs_lean.keys())
+@pytest.mark.parametrize("model", model_configs_lean.keys())
 @pytest.mark.parametrize("workspace_opt", [True])#, False])
 @pytest.mark.parametrize("qkv_layout", qkv_layouts)
 def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
@@ -410,9 +411,11 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout, workspace_opt):
     for i in range(3):
         inp[i].requires_grad=True
 
-    #seqlens = torch.empty(bs, dtype = torch.int32).cuda()
-    #seqlens.fill_(config.seq_len)
-    seqlens = torch.randint(1, config.seq_len, [bs], dtype = torch.int32).cuda()
+    if "padding" in config.attn_mask_type:
+        seqlens = torch.randint(1, config.seq_len, [bs], dtype = torch.int32).cuda()
+    else:
+        seqlens = torch.empty(bs, dtype = torch.int32).cuda()
+        seqlens.fill_(config.seq_len)
     print('xxx seqlens',seqlens)
     cu_seqlens = torch.zeros(bs + 1, device = inp[0].device, dtype = torch.int32)
     cu_seqlens[1:] = torch.cumsum(seqlens, dim = 0)
@@ -421,9 +424,9 @@ def _run_dpa_qkv_layout(dtype, bs, config, backend, qkv_layout, workspace_opt):
     op_grad_shape = [dim_to_num[i] for i in qkv_format_no_thd]
     op_grad_shape_new = [*op_grad_shape[:-2], op_grad_shape[-2] * op_grad_shape[-1]]
     op_grad = 0.001 * torch.randint(0, 200, op_grad_shape_new, dtype = dtype).cuda()
-    #bias_type = 'no_bias'
+    bias_type = 'no_bias'
     #bias_type = 'post_scale_bias'
-    bias_type = 'alibi'
+    #bias_type = 'alibi'
     if bias_type == 'no_bias':
         bias = None
     if bias_type == 'post_scale_bias':
