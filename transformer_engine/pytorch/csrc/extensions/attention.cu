@@ -167,7 +167,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
   // create workspace
   TensorWrapper workspace;
 
-  std::cout << "---------- calling first time " << std::endl;
   // populate tensors with appropriate shapes and dtypes
   nvte_fused_attn_fwd_qkvpacked(
                   te_QKV.data(),
@@ -189,7 +188,6 @@ std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
                   workspace_data.data_ptr(),
                   workspace.shape(), workspace.dtype());
 
-  std::cout << "---------- calling second time " << std::endl;
   // output_tensors = [O, nvte_aux_tensor_pack.tensors]
   std::vector<at::Tensor> output_tensors;
   output_tensors.push_back(O);

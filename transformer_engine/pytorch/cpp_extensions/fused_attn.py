@@ -312,7 +312,6 @@ def fused_attn_fwd_qkvpacked(
         check_scalar(amax_s)
         check_scalar(amax_o)
 
-    print('======== cpp ext qkv packed')
     # execute kernel
     output_tensors = tex.fused_attn_fwd_qkvpacked(
             b, max_seqlen, total_seqs, h, d,

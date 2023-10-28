@@ -1744,27 +1744,12 @@ class FusedAttention(torch.nn.Module):
                 and (fused_attention_backend
                     == tex.NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen))
         print('2    self layer number xxx ',self.layer_number, cu_seqlens_q, cu_seqlens_kv)
-        qkv = torch.Tensor().to(device=query_layer.device,
-                                dtype=query_layer.dtype)
-        new_shape = list(query_layer.shape)
-        strides = list(query_layer.stride())
-        new_shape.insert(2,3) #-2] = 3 #sum(split_sizes)
-        strides.insert(2, query_layer.shape[-1]*query_layer.shape[-2])
-        print('new shape',new_shape, strides)
-        qkv.set_(query_layer.untyped_storage(),
-                 query_layer.storage_offset(),
-                 new_shape,
-                 strides
-        )
-        qkv = qkv.view(qkv.shape[0] * qkv.shape[1], *qkv.shape[2:])
-        print('------------ qkv')
-        print(qkv.shape, qkv.stride(), qkv.storage_offset())
         with self.attention_dropout_ctx():
-            output = FusedAttnFunc_qkvpacked.apply(
+            output = FusedAttnFunc.apply(
                 self.training,
-                max_seqlen_q, 
-                cu_seqlens_q,
-                qkv,
+                max_seqlen_q, max_seqlen_kv,
+                cu_seqlens_q, cu_seqlens_kv,
+                query_layer, key_layer, value_layer,
                 qkv_dtype,
                 core_attention_bias,
                 1.0/self.norm_factor,
@@ -1777,23 +1762,6 @@ class FusedAttention(torch.nn.Module):
                 fused_attention_backend,
                 use_FAv2_bwd,
             )
-            #output = FusedAttnFunc.apply(
-            #    self.training,
-            #    max_seqlen_q, max_seqlen_kv,
-            #    cu_seqlens_q, cu_seqlens_kv,
-            #    query_layer, key_layer, value_layer,
-            #    qkv_dtype,
-            #    core_attention_bias,
-            #    1.0/self.norm_factor,
-            #    self.attention_dropout if self.training else 0.0,
-            #    fast_zero_fill,
-            #    qkv_layout,
-            #    core_attention_bias_type,
-            #    attn_mask_type,
-            #    None, # rng_gen
-            #    fused_attention_backend,
-            #    use_FAv2_bwd,
-            #)
 
         # ...hd -> ...(hd)
         return output.view(*output.shape[:-2], -1)
