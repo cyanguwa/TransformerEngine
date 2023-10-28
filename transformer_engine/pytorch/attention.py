@@ -1682,7 +1682,6 @@ class FusedAttention(torch.nn.Module):
                     query_layer.shape[0], query_layer.shape[1], key_layer.shape[1])
             if 'padding' in attn_mask_type:
                 global _cu_seqlens_q, _cu_seqlens_kv, _indices_q, _indices_kv
-                print('self layer number xxx ',self.layer_number, cu_seqlens_q, cu_seqlens_kv)
                 if (cu_seqlens_q is not None and cu_seqlens_kv is not None):
                     if (attention_mask is not None):
                         warnings.warn(
@@ -1743,7 +1742,6 @@ class FusedAttention(torch.nn.Module):
         use_FAv2_bwd = (self.use_FAv2_bwd
                 and (fused_attention_backend
                     == tex.NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen))
-        print('2    self layer number xxx ',self.layer_number, cu_seqlens_q, cu_seqlens_kv)
         with self.attention_dropout_ctx():
             output = FusedAttnFunc.apply(
                 self.training,

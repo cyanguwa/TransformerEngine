@@ -620,7 +620,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 cudnn_frontend::DataType_t tensorType,
                 void *workspace, size_t *workspace_size,
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
-    std::cout << "Enter fwd impl " << std::endl;
+    //std::cout << "Enter fwd impl " << std::endl;
     NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
@@ -631,7 +631,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
         || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-    std::cout << "fwd is bias " << is_bias << "is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
+    std::cout << "sdpa fwd: is bias " << is_bias << " is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << " is dropout" << dropout_probability << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
@@ -674,7 +674,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             auto it = cache.find(descriptor);
             if (it != cache.end()) {
                 auto graph = it->second;
-		std::cout << "Hit cache, returning ..." << std::get<0>(graph)<< std::endl;
+		//std::cout << "Hit cache, returning ..." << std::get<0>(graph)<< std::endl;
                 return graph;
             }
 
@@ -693,7 +693,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             std::vector<int64_t> q_strides(q_stride, q_stride + 4);
             std::vector<int64_t> k_strides(k_stride, k_stride + 4);
             std::vector<int64_t> v_strides(v_stride, v_stride + 4);
-            std::cout << "Get qkv strides " << q_strides.size() << std::endl;
+            //std::cout << "Get qkv strides " << q_strides.size() << std::endl;
             Q = mha_graph->tensor(fe::graph::Tensor_attributes()
                             .set_name("Q")
                             .set_dim({b, h, s_q, d})
@@ -715,7 +715,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                             .set_data_type(fe::DataType_t::FLOAT));
 
             fe::graph::Scaled_dot_product_flash_attention_attributes scaled_dot_product_flash_attention_options;
-            std::cout << "Set options seq q/kv" << std::endl;
+            //std::cout << "Set options seq q/kv" << std::endl;
             scaled_dot_product_flash_attention_options = 
                     fe::graph::Scaled_dot_product_flash_attention_attributes()
                     .set_name("flash_attention")
@@ -764,7 +764,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                                 dropout_probability, dropout_seed, dropout_offset);
             }
 
-            std::cout << "Call sdpa " << std::endl;
+            //std::cout << "Call sdpa " << std::endl;
 	    std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 2> O_Stats;
             O_Stats = mha_graph->scaled_dot_product_flash_attention(
                             Q, K, V, scaled_dot_product_flash_attention_options);
@@ -798,7 +798,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
 	            std::make_tuple(nullptr), key_tensors_tuple,
 		    Stats_tuple, bias_tuple, padding_tuple, dropout_tuple);
 
-            std::cout << "Call sdpa validate " << std::endl;
+            //std::cout << "Call sdpa validate " << std::endl;
             if (!mha_graph->validate().is_good()) {
                 if (*check_support) {
                     *check_support = false;
@@ -843,21 +843,21 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
         std::tie(mha_graph, Q, K, V, attn_scale, O, Stats,
 	    bias, seq_q, seq_kv, dropout_seed, dropout_offset) = get_graph(
 		    sdpa_flash_f16_fprop_cache, descriptor);
-	std::cout << "Getting graph ..."<< mha_graph << std::endl;
+	//std::cout << "Getting graph ..."<< mha_graph << std::endl;
 
         auto plan_workspace_size = mha_graph->get_workspace_size();
-        std::cout << "Plan size " << plan_workspace_size << std::endl;
+        //std::cout << "Plan size " << plan_workspace_size << std::endl;
 
         // Exit to request upper level API to allocate memory if needed
         size_t actual_seqlen_workspace_size = 2 * b * sizeof(int32_t);
         if (workspace == nullptr) {
             *workspace_size = plan_workspace_size + actual_seqlen_workspace_size;
-        std::cout << "workspace size " << *workspace_size << std::endl;
+        //std::cout << "workspace size " << *workspace_size << std::endl;
             return;
         }
 
         // Build variant pack
-        std::cout << "Create variant pack" << std::endl;
+        //std::cout << "Create variant pack" << std::endl;
         std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
             {Q, devPtrQ},
             {K, devPtrK},
@@ -873,7 +873,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             variant_pack[bias] = devPtrBias;
         }
 
-        std::cout << "Create actual seqs" << std::endl;
+        //std::cout << "Create actual seqs" << std::endl;
         if (is_padding) {
             constexpr size_t nthreads_per_block = 128;
             const size_t grid = (b + nthreads_per_block - 1) / nthreads_per_block;
@@ -892,7 +892,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             variant_pack[dropout_offset] = devPtrDropoutOffset;
         }
 
-        std::cout << "Execute " << std::endl;
+        //std::cout << "Execute " << std::endl;
         mha_graph->execute(handle, variant_pack, workspace);
         //if (!mha_graph->execute(handle, variant_pack, workspace).is_good()) {
         //    NVTE_ERROR("cuDNN MHA Graph (FWD): execution is unsuccessful!");
@@ -1053,7 +1053,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
                 cudnn_frontend::DataType_t tensorType, void *workspace, size_t *workspace_size,
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support) {
-    std::cout << "Enter bwd impl" << std::endl;
+    //std::cout << "Enter bwd impl" << std::endl;
     NVTE_CHECK_CUDNN(cudnnSetStream(handle, stream));
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
@@ -1064,7 +1064,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-    std::cout << "bwd is bias " << is_bias << "is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
+    std::cout << "sdpa bwd: is bias " << is_bias << " is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << " is dropout" << dropout_probability << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
@@ -1122,7 +1122,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                     .set_intermediate_data_type(fe::DataType_t::FLOAT)
                     .set_compute_data_type(fe::DataType_t::FLOAT);
 
-            std::cout << "Get qkv strides" << std::endl;
+            //std::cout << "Get qkv strides" << std::endl;
             int64_t q_stride[4];
             int64_t k_stride[4];
             int64_t v_stride[4];
@@ -1168,7 +1168,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                             .set_is_pass_by_value(true)
                             .set_data_type(fe::DataType_t::FLOAT));
 
-            std::cout << "Create options" << std::endl;
+            //std::cout << "Create options" << std::endl;
             fe::graph::Scaled_dot_product_flash_attention_backward_attributes scaled_dot_product_flash_attention_backward_options;
             scaled_dot_product_flash_attention_backward_options =
                     fe::graph::Scaled_dot_product_flash_attention_backward_attributes()
@@ -1217,7 +1217,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                                 dropout_probability, dropout_seed, dropout_offset);
             }
 
-            std::cout << "Call sdpa" << std::endl;
+            //std::cout << "Call sdpa" << std::endl;
 	    std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 3> dQKV;
             dQKV = mha_graph->scaled_dot_product_flash_attention_backward(
 	            q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
@@ -1255,7 +1255,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
 	            std::make_tuple(nullptr), key_tensors_tuple,
 		    bias_tuple, padding_tuple, dropout_tuple);
 
-            std::cout << "Validate etc" << std::endl;
+            //std::cout << "Validate etc" << std::endl;
             if (!mha_graph->validate().is_good()) {
                 if (*check_support) {
                     *check_support = false;
@@ -1301,7 +1301,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
 		    sdpa_flash_f16_bprop_cache, descriptor);
 
         auto plan_workspace_size = mha_graph->get_workspace_size();
-        std::cout << "Plan size " << plan_workspace_size << std::endl;
+        //std::cout << "Plan size " << plan_workspace_size << std::endl;
 
         // Exit to request upper level API to allocate memory if needed
         if (workspace == nullptr) {
@@ -1310,7 +1310,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         }
 
         // build variant pack
-        std::cout << "Variant Pack" << plan_workspace_size << std::endl;
+        //std::cout << "Variant Pack" << plan_workspace_size << std::endl;
         std::unordered_map<std::shared_ptr<fe::graph::Tensor_attributes>, void*> variant_pack = {
             {q, devPtrQ},
             {k, devPtrKTranspose},
@@ -1346,7 +1346,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             variant_pack[dropout_offset] = devPtrDropoutOffset;
         }
 
-        std::cout << "Bwd execute " << plan_workspace_size << std::endl;
+        //std::cout << "Bwd execute " << plan_workspace_size << std::endl;
         if (!mha_graph->execute(handle, variant_pack, workspace).is_good()) {
             NVTE_ERROR("cuDNN MHA graph (BWD): execution is unsuccessful!");
         }
@@ -2115,6 +2115,7 @@ void fused_attn_arbitrary_seqlen_fwd(
     bool use_old_impl = false;
     use_old_impl = transformer_engine::getenv<bool>("NVTE_FUSED_ATTN_OLD", use_old_impl);
     if (use_old_impl) {
+    std::cout << " ======= calling OLD imple fwd ======= " << std::endl;
     fused_attn_arbitrary_seqlen_fwd_impl_old(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 is_training, attn_scale, p_dropout, qkv_layout,
                                 devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO,
@@ -2124,6 +2125,7 @@ void fused_attn_arbitrary_seqlen_fwd(
                                 workspace->data.dptr, &workspace_size, stream, handle);
     } else {
     bool check_support = false;
+    std::cout << " ======= calling NEW imple fwd ======= " << std::endl;
     fused_attn_arbitrary_seqlen_fwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 is_training, attn_scale, p_dropout, qkv_layout,
                                 bias_type, mask_type,
@@ -2217,6 +2219,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
     bool use_old_impl = false;
     use_old_impl = transformer_engine::getenv<bool>("NVTE_FUSED_ATTN_OLD", use_old_impl);
     if (use_old_impl) {
+    std::cout << " ======= calling OLD imple bwd ======= " << std::endl;
     fused_attn_arbitrary_seqlen_bwd_impl_old(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
                                 devPtrQ, devPtrK, devPtrV, devPtrO, devPtrSoftmaxStats,
@@ -2226,6 +2229,7 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
                                 get_cudnn_dtype(QKV_type), workspace->data.dptr,
                                 &workspace_size, stream, handle, use_workspace_opt);
     } else {
+    std::cout << " ======= calling NEW imple bwd ======= " << std::endl;
     bool check_support = false;
     fused_attn_arbitrary_seqlen_bwd_impl(batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
                                 attn_scale, p_dropout, qkv_layout,
