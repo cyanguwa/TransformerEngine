@@ -625,8 +625,10 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
     bool is_alibi = (bias_type == NVTE_Bias_Type::NVTE_ALIBI);
-    bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
-    bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
+    bool is_causal = ((mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+        || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
+    bool is_padding = ((mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
+        || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
     std::cout << "fwd is bias " << is_bias << "is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 
@@ -1056,8 +1058,10 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
 
     bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
     bool is_alibi = (bias_type == NVTE_Bias_Type::NVTE_ALIBI);
-    bool is_causal = (mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK);
-    bool is_padding = (mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK);
+    bool is_causal = ((mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+        || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
+    bool is_padding = ((mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
+        || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
     std::cout << "bwd is bias " << is_bias << "is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << std::endl; 

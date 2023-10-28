@@ -311,7 +311,7 @@ def _unpack_attn_mask_type(attn_mask_type: str) -> Tuple[str, bool]:
         return "causal", True
     if len(mask_types) == 1 and causal_mask:  # Causal + padding masks
         assert mask_types[0] == "padding", f"Causal + {mask_types[0]} masking not supported."
-        return "padding", True
+        return "padding_causal", True
     if len(mask_types) == 1:  # Arbitrary or padding or no_mask
         return mask_types[0], False
     raise RuntimeError("Unsupported combination of mask types.")
@@ -1283,7 +1283,7 @@ class FlashAttention(torch.nn.Module):
                     for x in [query_layer, key_layer, value_layer]
                 ]
 
-            if attn_mask_type == 'padding':
+            if 'padding' in attn_mask_type:
                 assert not context_parallel, "Padding mask not supported with context parallelism."
 
                 if self.attention_type == "self":
@@ -1357,7 +1357,7 @@ class FlashAttention(torch.nn.Module):
                     **fa_optional_forward_kwargs
                 )
 
-        if attn_mask_type == 'padding':
+        if 'padding' in attn_mask_type:
             output = UnpackTensor.apply(_indices_q, batch_size * max_seqlen_q, output)
 
         if qkv_format == 'sbhd':
@@ -1597,7 +1597,7 @@ class FusedAttention(torch.nn.Module):
     |               | bshd_bshd_bshd          | sbhd_sbh2d, bshd_bsh2d         |
     |               |                         | sbhd_sbhd_sbhd, bshd_bshd_bshd |
     | mask_type     | causal/padding/no_mask  | causal/padding/custom/no_mask  |
-    |               |                         | causal + padding               |
+    |               |                         | padding_causal                 |
     | bias_type     | post_scale_bias/no_bias | alibi/post_scale_bias/no_bias  |
     | dropout       | framework rng           | framework rng/user custom mask |
     | max_seqlen    | <=512, multiple of 64   | any, multiple of 64            |
@@ -1671,7 +1671,7 @@ class FusedAttention(torch.nn.Module):
             if qkv_format == 'bshd':
                 batch_size, max_seqlen_q, max_seqlen_kv = (
                     query_layer.shape[0], query_layer.shape[1], key_layer.shape[1])
-            if attn_mask_type == 'padding':
+            if 'padding' in attn_mask_type:
                 global _cu_seqlens_q, _cu_seqlens_kv, _indices_q, _indices_kv
                 print('self layer number xxx ',self.layer_number, cu_seqlens_q, cu_seqlens_kv)
                 if (cu_seqlens_q is not None and cu_seqlens_kv is not None):
@@ -1793,17 +1793,18 @@ class DotProductAttention(torch.nn.Module):
                       dropout probability for the dropout op during multi-head attention.
     attn_mask_type: str, default = `causal`
                    type of attention mask passed into softmax operation, options are "`causal`",
-                   "`padding`", "`arbitrary`", "`no_mask`". Overridden by :attr:`attn_mask_type`
-                   in the `forward` method. The forward arg is useful for dynamically changing
-                   mask types, e.g. a different mask for training and inference. The init arg
-                   is useful for cases involving compilation/tracing, e.g. ONNX export.
-                   For the "`causal`" mask, TransformerEngine calculates and applies
-                   an upper triangular mask to the softmax input. An "`arbitrary`" mask is
+                   "`padding`", "`padding_causal`", ""`arbitrary`", "`no_mask`". Overridden by
+                   :attr:`attn_mask_type` in the `forward` method. The forward arg is useful for
+                   dynamically changing mask types, e.g. a different mask for training and
+                   inference. The init arg is useful for cases involving compilation/tracing,
+                   e.g. ONNX export. For the "`causal`" mask, TransformerEngine calculates and
+                   applies an upper triangular mask to the softmax input. An "`arbitrary`" mask is
                    an arbitrary user defined mask broadcastable to the shape of softmax input.
                    The "`padding`" mask is used for providing locations of padded tokens
-                   in the batch, which should be of the shape [batch_size, 1, 1, seq_len].
-                   No mask is applied for the "`no_mask`" option. For the `"arbitrary"`
-                   and `"padding"` mask types, the argument :attr:`attention_mask` must be
+                   in the batch, which can be provided either as :attr:`cu_seqlens_q` and
+                   :attr:`cu_seqlens_kv` in shape [batch_size + 1] or as :attr:`attention_mask`
+                   in [batch_size, 1, 1, seq_len]. No mask is applied for the "`no_mask`" option.
+                   For the `"arbitrary"` mask type, the argument :attr:`attention_mask` must be
                    passed into `forward` call. The "`causal`" mask can also be applied
                    in conjunction with "`padding`" mask by passing in multiple mask types
                    as a comma separated string, for example, `attn_mask_type="causal,padding"`.
@@ -2050,10 +2051,10 @@ class DotProductAttention(torch.nn.Module):
                      Value tensor.
         attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
              Boolean tensor(s) used to mask out attention softmax input.
-             It should be 'None' for 'causal' and 'no_mask' types. For 'padding', it should be
+             It should be 'None' for 'causal' and 'no_mask' types. For 'padding' masks, it should be
              a single tensor of [batch_size, 1, 1, seqlen_q] for self-attention, and a tuple of
              two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
-             for cross-attention. For 'arbitrary' mask type, it should be in a shape that is
+             for cross-attention. For the 'arbitrary' mask type, it should be in a shape that is
              broadcastable to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv].
         qkv_format: str, default = `None`
                    If provided, overrides :attr:`qkv_format` from initialization.
@@ -2676,10 +2677,10 @@ class MultiheadAttention(torch.nn.Module):
              Input tensor.
         attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
              Boolean tensor(s) used to mask out attention softmax input.
-             It should be 'None' for 'causal' and 'no_mask' types. For 'padding', it should be
+             It should be 'None' for 'causal' and 'no_mask' types. For 'padding' masks, it should be
              a single tensor of [batch_size, 1, 1, seqlen_q] for self-attention, and a tuple of
              two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
-             for cross-attention. For 'arbitrary' mask type, it should be in a shape that is
+             for cross-attention. For the 'arbitrary' mask type, it should be in a shape that is
              broadcastable to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv].
         attn_mask_type: {'causal', 'padding', 'no_mask', 'arbitrary'}, default = `None`
                        type of attention mask passed into softmax operation.
@@ -2720,10 +2721,11 @@ class MultiheadAttention(torch.nn.Module):
         if attn_mask_type is None:
             attn_mask_type = self.attn_mask_type
 
-        if attn_mask_type == "padding" and attention_mask is not None:
-            assert (
-                attention_mask.dtype == torch.bool
-            ), "Attention mask must be a boolean tensor"
+        if "padding" in attn_mask_type and attention_mask is not None:
+            for i in range(len(attention_mask)):
+                assert (
+                    attention_mask[i].dtype == torch.bool
+                ), "Attention mask must be in boolean type!"
 
         assert (core_attention_bias_type in AttnBiasTypes
                 ), f"core_attention_bias_type {core_attention_bias_type} is not supported!"

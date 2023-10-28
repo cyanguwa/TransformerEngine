@@ -155,7 +155,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   py::enum_<NVTE_Mask_Type>(m, "NVTE_Mask_Type")
       .value("NVTE_NO_MASK", NVTE_Mask_Type::NVTE_NO_MASK)
       .value("NVTE_PADDING_MASK", NVTE_Mask_Type::NVTE_PADDING_MASK)
-      .value("NVTE_CAUSAL_MASK", NVTE_Mask_Type::NVTE_CAUSAL_MASK);
+      .value("NVTE_CAUSAL_MASK", NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+      .value("NVTE_PADDING_CAUSAL_MASK", NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK);
 
   py::enum_<NVTE_QKV_Layout>(m, "NVTE_QKV_Layout")
       .value("NVTE_NOT_INTERLEAVED", NVTE_QKV_Layout::NVTE_NOT_INTERLEAVED)

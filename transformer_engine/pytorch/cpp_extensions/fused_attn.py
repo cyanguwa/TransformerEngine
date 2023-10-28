@@ -64,6 +64,7 @@ AttnMaskType = {
     "no_mask": NVTE_Mask_Type.NVTE_NO_MASK,
     "padding": NVTE_Mask_Type.NVTE_PADDING_MASK,
     "causal": NVTE_Mask_Type.NVTE_CAUSAL_MASK,
+    "padding_causal": NVTE_Mask_Type.NVTE_PADDING_CAUSAL_MASK,
     }
 
 FusedAttnBackend = {
@@ -222,7 +223,7 @@ def fused_attn_fwd_qkvpacked(
     attn_bias_type: str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
-                type of the attention mask; {"padding", "causal", "no_mask"}
+                type of the attention mask; {"padding", "causal", "padding_causal", "no_mask"}
     rng_gen: torch.Generator, default = None
                 random number generator;
                 if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
@@ -407,7 +408,7 @@ def fused_attn_bwd_qkvpacked(
     attn_bias_type: str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
-                type of the attention mask; {"padding", "causal", "no_mask"}
+                type of the attention mask; {"padding", "causal", "padding_causal", "no_mask"}
 
     Returns
     ----------
@@ -562,7 +563,7 @@ def fused_attn_fwd_kvpacked(
     attn_bias_type: str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
-                type of the attention mask; {"padding", "causal", "no_mask"}
+                type of the attention mask; {"padding", "causal", "padding_causal", "no_mask"}
     rng_gen: torch.Generator, default = None
                 random number generator;
                 if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
@@ -752,7 +753,7 @@ def fused_attn_bwd_kvpacked(
     attn_bias_type: str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
-                type of the attention mask; {"padding", "causal", "no_mask"}
+                type of the attention mask; {"padding", "causal", "padding_causal", "no_mask"}
 
     Returns
     ----------
@@ -933,7 +934,7 @@ def fused_attn_fwd(
     attn_bias_type: str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
-                type of the attention mask; {"padding", "causal", "no_mask"}
+                type of the attention mask; {"padding", "causal", "padding_causal", "no_mask"}
     rng_gen: torch.Generator, default = None
                 random number generator;
                 if None, uses the default CUDA generator from PyTorch; otherwise, uses rng_gen
@@ -1128,7 +1129,7 @@ def fused_attn_bwd(
     attn_bias_type: str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type: str, default = "padding"
-                type of the attention mask; {"padding", "causal", "no_mask"}
+                type of the attention mask; {"padding", "causal", "padding_causal", "no_mask"}
 
     Returns
     ----------
