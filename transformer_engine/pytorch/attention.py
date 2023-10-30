@@ -1635,7 +1635,21 @@ class FusedAttention(torch.nn.Module):
                         and get_device_compute_capability() == (9, 0))
         self.layer_number = 1 if layer_number is None else layer_number
         if deterministic:
-            os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] = "0" # change to DP_WORKSPACE_LIMIT???
+            # workspace optimization path is non-deterministic
+            os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
+
+        # CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
+        # - unset: enables workspace optimization when required space is <= 256MB
+        # - 99999999999: enables workspace optimization always
+        # - 0: disables workspace optimization
+        # - n: enables workspace optimization when required space is <=n byte
+        #os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] = "0"
+        if "NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT" in os.environ:
+            if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "0":
+                os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
+            if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "1":
+                os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = str(
+                        torch.cuda.get_device_properties(0).total_memory)
 
     def forward(
         self,
@@ -1682,7 +1696,7 @@ class FusedAttention(torch.nn.Module):
                 batch_size, max_seqlen_q, max_seqlen_kv = (
                     query_layer.shape[0], query_layer.shape[1], key_layer.shape[1])
             if 'padding' in attn_mask_type:
-                global _cu_seqlens_q, _cu_seqlens_kv, _indices_q, _indices_kv
+                global _cu_seqlens_q, _cu_seqlens_kv
                 if (cu_seqlens_q is not None and cu_seqlens_kv is not None):
                     if (attention_mask is not None):
                         warnings.warn(
@@ -1694,7 +1708,7 @@ class FusedAttention(torch.nn.Module):
                 elif attention_mask is not None:
                     if self.attention_type == "self":
                         assert (isinstance(attention_mask, torch.Tensor)
-                            ), """Attention mask should be a single tensor of
+                            ), """FusedAttention: Attention mask should be a single tensor of
                             shape [batch_size, 1, 1, seqlen_q]!"""
                         if self.layer_number == 1:
                             _cu_seqlens_q, _ = get_cu_seqlens_and_indices(attention_mask)
@@ -1702,14 +1716,14 @@ class FusedAttention(torch.nn.Module):
                     else:
                         assert (isinstance(attention_mask, tuple)
                             and len(attention_mask) == 2
-                            ), """Attention mask should be a tuple of two tensors in shapes
-                            [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]!"""
+                            ), """FusedAttention: Attention mask should be a tuple of two tensors
+                            in [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]!"""
                         if self.layer_number == 1:
                             _cu_seqlens_q, _ = get_cu_seqlens_and_indices(attention_mask[0])
                             _cu_seqlens_kv, _ = get_cu_seqlens_and_indices(attention_mask[1])
                 else:
-                    assert False, """FusedAttention: Please provide cu_seqlens_q and cu_seqlens_kv,
-                        or attention mask for padding mask type."""
+                    assert False, """FusedAttention: Please provide attention_mask or
+                        cu_seqlens_q and cu_seqlens_kv for padding mask."""
                 cu_seqlens_q, cu_seqlens_kv = _cu_seqlens_q, _cu_seqlens_kv
             elif attn_mask_type == 'arbitrary':
                 if core_attention_bias_type == 'post_scale_bias':
