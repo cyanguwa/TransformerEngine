@@ -142,15 +142,12 @@ class cudnnExecutionPlanManager {
  public:
     static cudnnExecutionPlanManager &Instance() {
         static thread_local cudnnExecutionPlanManager instance;
-	//std::cout << "cudnnExecutionPlanManager instance ... "<<std::endl;
         return instance;
     }
 
     cudnnHandle_t GetCudnnHandle() {
         static thread_local std::once_flag flag;
-        std::call_once(flag, [&] { cudnnCreate(&handle_); 
-			//std::cout <<"cudnnExecutionPlanManager create ..."<<std::endl;
-			});
+        std::call_once(flag, [&] { cudnnCreate(&handle_); });
         return handle_;
     }
 
@@ -159,7 +156,6 @@ class cudnnExecutionPlanManager {
         std::call_once(flag, [&] {
                         if (handle_ != nullptr) {
                           cudnnDestroy(handle_);
-	//std::cout << "cudnnExecutionPlanManager destroy... "<<std::endl;
                         }});
     }
 

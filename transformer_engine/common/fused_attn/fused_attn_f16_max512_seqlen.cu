@@ -218,7 +218,6 @@ static cudnn_frontend::Tensor createMask(int64_t b, int64_t h, int64_t s_q, int6
     cudnnDataType_t maskOutputTensor_dataType = CUDNN_DATA_FLOAT;
     auto maskOutputTensor_reorderType =
         cudnn_frontend::TensorReordering_t::NONE;
-        //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_NONE;
 
     if (is_bprop) {
         maskOutputTensor_id = dS_ID;
@@ -226,7 +225,6 @@ static cudnn_frontend::Tensor createMask(int64_t b, int64_t h, int64_t s_q, int6
         maskOutputTensor_dataType = tensorType;
         maskOutputTensor_reorderType =
             cudnn_frontend::TensorReordering_t::F16x16;
-            //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16;
     }
 
     auto maskOutputTensor =
@@ -358,7 +356,6 @@ static cudnn_frontend::Tensor createSoftmaxForward(
 
     auto reorder_type =
         cudnn_frontend::TensorReordering_t::F16x16;
-        //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16;
 
     auto afterDivisionTensor =
         cudnn_frontend::TensorBuilder()
@@ -450,7 +447,6 @@ static cudnn_frontend::Tensor createDropout(int64_t b, int64_t h, int64_t s_q, i
 
     auto reorder_type =
         cudnn_frontend::TensorReordering_t::F16x16;
-        //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16;
 
     // after dropout tensor
     auto afterDropoutTensor =
@@ -920,7 +916,6 @@ void fused_attn_max_512_bwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv
 
             auto reorder_type =
                 cudnn_frontend::TensorReordering_t::F16x16;
-                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16;
 
             // activation from fprop
             auto pTensor =

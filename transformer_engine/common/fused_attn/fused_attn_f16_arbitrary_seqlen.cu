@@ -8,8 +8,6 @@
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
-//#include <cudnn_frontend.h>
-//#include <cudnn_frontend_utils.h>
 #include <map>
 #include <vector>
 
@@ -258,7 +256,6 @@ createSoftmaxForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, bool isTra
             .setByValue(false)
             .setReorderType(
                 cudnn_frontend::TensorReordering_t::F16x16)
-                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
             .build();
 
     // Define the reduction descriptor
@@ -374,7 +371,6 @@ createDropoutForward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
             .setByValue(false)
             .setReorderType(
                 cudnn_frontend::TensorReordering_t::F16x16)
-                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
             .build();
     // scale after dropout
     auto scaleDropoutTensor = tensor_create(
@@ -456,7 +452,6 @@ createDropoutBackward(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d
             .setByValue(false)
             .setReorderType(
                 cudnn_frontend::TensorReordering_t::F16x16)
-                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
             .build();
     // scale after dropout
     auto scaleDropoutTensor = tensor_create(
@@ -666,8 +661,6 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
         using CacheType = std::map<FADescriptor_v1, graph_and_tensors>;
         static thread_local CacheType sdpa_flash_f16_fprop_cache;
 
-        std::shared_ptr<fe::graph::Tensor_attributes> Q, K, V, attn_scale, O, Stats;
-        std::shared_ptr<fe::graph::Tensor_attributes> bias, seq_q, seq_kv, dropout_seed, dropout_offset;
         // Get plan from cache if cache is available, otherwise create one
         auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) -> graph_and_tensors {
             // if hit, return
@@ -684,6 +677,8 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                     .set_intermediate_data_type(fe::DataType_t::FLOAT)
                     .set_compute_data_type(fe::DataType_t::FLOAT);
 
+            std::shared_ptr<fe::graph::Tensor_attributes> Q, K, V, attn_scale;//, O, Stats;
+            std::shared_ptr<fe::graph::Tensor_attributes> bias, seq_q, seq_kv, dropout_seed, dropout_offset;
             int64_t q_stride[4];
             int64_t k_stride[4];
             int64_t v_stride[4];
@@ -765,18 +760,18 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             }
 
             //std::cout << "Call sdpa " << std::endl;
-	    std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 2> O_Stats;
-            O_Stats = mha_graph->scaled_dot_product_flash_attention(
+	    //std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 2> O_Stats;
+            auto [O, Stats] = mha_graph->scaled_dot_product_flash_attention(
                             Q, K, V, scaled_dot_product_flash_attention_options);
 
-	    O = std::get<0>(O_Stats);
+	    //O = std::get<0>(O_Stats);
             int64_t o_stride[4];
             generateMatrixStrides(b, h, s_q, s_kv, d, o_stride, layout, NVTE_QKV_Matrix::NVTE_O_Matrix);
             std::vector<int64_t> o_strides(o_stride, o_stride + 4);
             O->set_output(true).set_dim({b, h, s_q, d}).set_stride(o_strides);
 
             if (is_training) {
-	        Stats = std::get<1>(O_Stats);
+	        //Stats = std::get<1>(O_Stats);
                 Stats->set_output(true).set_data_type(fe::DataType_t::FLOAT)
                         .set_dim({b, h, s_q, 1})
                         .set_stride({h * s_q, s_q, 1, 1});
@@ -839,9 +834,9 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
             return return_tuple;
         };
 
-        std::shared_ptr<fe::graph::Graph> mha_graph;
-        std::tie(mha_graph, Q, K, V, attn_scale, O, Stats,
-	    bias, seq_q, seq_kv, dropout_seed, dropout_offset) = get_graph(
+        //std::shared_ptr<fe::graph::Graph> mha_graph;
+        auto [mha_graph, Q, K, V, attn_scale, O, Stats,
+	    bias, seq_q, seq_kv, dropout_seed, dropout_offset] = get_graph(
 		    sdpa_flash_f16_fprop_cache, descriptor);
 	//std::cout << "Getting graph ..."<< mha_graph << std::endl;
 
@@ -1103,10 +1098,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         using CacheType = std::map<FADescriptor_v1, graph_and_tensors>;
         static thread_local CacheType sdpa_flash_f16_bprop_cache;
 
-        std::shared_ptr<fe::graph::Tensor_attributes> q, k, v, o, dO, stats, attn_scale;
-        std::shared_ptr<fe::graph::Tensor_attributes> bias, seq_q, seq_kv; 
-        std::shared_ptr<fe::graph::Tensor_attributes> dropout_seed, dropout_offset;
-        std::shared_ptr<fe::graph::Tensor_attributes> dQ, dK, dV;
         // Get plan from cache if cache is available, otherwise create one
         auto get_graph = [&](CacheType &cache, const FADescriptor_v1 &descriptor) -> graph_and_tensors {
             // if hit, return
@@ -1122,6 +1113,10 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                     .set_intermediate_data_type(fe::DataType_t::FLOAT)
                     .set_compute_data_type(fe::DataType_t::FLOAT);
 
+            std::shared_ptr<fe::graph::Tensor_attributes> q, k, v, o, dO, stats, attn_scale;
+            std::shared_ptr<fe::graph::Tensor_attributes> bias, seq_q, seq_kv; 
+            std::shared_ptr<fe::graph::Tensor_attributes> dropout_seed, dropout_offset;
+            //std::shared_ptr<fe::graph::Tensor_attributes> dQ, dK, dV;
             //std::cout << "Get qkv strides" << std::endl;
             int64_t q_stride[4];
             int64_t k_stride[4];
@@ -1219,11 +1214,11 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
 
             //std::cout << "Call sdpa" << std::endl;
 	    std::array<std::shared_ptr<fe::graph::Tensor_attributes>, 3> dQKV;
-            dQKV = mha_graph->scaled_dot_product_flash_attention_backward(
+            auto [dQ, dK, dV] = mha_graph->scaled_dot_product_flash_attention_backward(
 	            q, k, v, o, dO, stats, scaled_dot_product_flash_attention_backward_options);
-	    dQ = std::get<0>(dQKV);
-	    dK = std::get<1>(dQKV);
-	    dV = std::get<2>(dQKV);
+	    //dQ = std::get<0>(dQKV);
+	    //dK = std::get<1>(dQKV);
+	    //dV = std::get<2>(dQKV);
 
             dQ->set_output(true)
                     .set_dim({b, h, s_q, d})
@@ -1295,9 +1290,9 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
             return return_tuple;
         };
 
-        std::shared_ptr<fe::graph::Graph> mha_graph;
-        std::tie(mha_graph, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV,
-	    bias, seq_q, seq_kv, dropout_seed, dropout_offset) = get_graph(
+        //std::shared_ptr<fe::graph::Graph> mha_graph;
+        auto [mha_graph, q, k, v, o, dO, stats, attn_scale, dQ, dK, dV,
+	    bias, seq_q, seq_kv, dropout_seed, dropout_offset] = get_graph(
 		    sdpa_flash_f16_bprop_cache, descriptor);
 
         auto plan_workspace_size = mha_graph->get_workspace_size();
@@ -1739,7 +1734,6 @@ void fused_attn_arbitrary_seqlen_bwd_impl_old(
                 .setByValue(false)
                 .setReorderType(
                 cudnn_frontend::TensorReordering_t::F16x16)
-                //cudnn_frontend::cudnnBackendTensorReordering_t::CUDNN_TENSOR_REORDERING_F16x16)
                 .build();
 
             auto matmul_3_Desc = cudnn_frontend::MatMulDescBuilder()

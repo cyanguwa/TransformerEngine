@@ -1198,12 +1198,13 @@ def _get_qkv_layout(
 
     qkv_layout = run_iteratively(q, k, v)
     if (qkv_layout == 'not_supported'):
+        # force q,k,v to be contiguous and run get_layout again
         q, k, v = [x.contiguous() for x in [q, k, v]]
         qkv_layout = run_iteratively(q, k, v)
     if (qkv_layout == 'not_supported'):
         raise Exception("The provided qkv memory layout is not supported!")
 
-    return qkv_layout
+    return qkv_layout, q, k, v
 
 
 class FlashAttention(torch.nn.Module):
@@ -1421,7 +1422,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dqkv[:,0], dqkv[:,1], dqkv[:,2],
                 cu_seqlens, cu_seqlens, ctx.max_seqlen, ctx.max_seqlen,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None, rng_state,
+                ctx.attn_mask_type == "causal", None, rng_state
             )
             dqkv = dqkv[..., :d_out.shape[-1]]
         else:
@@ -1488,7 +1489,7 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dq, dkv[:,0], dkv[:,1],
                 cu_seqlens_q, cu_seqlens_kv, ctx.max_seqlen_q, ctx.max_seqlen_kv,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None, rng_state,
+                ctx.attn_mask_type == "causal", None, rng_state
             )
             dq = dq[..., :d_out.shape[-1]]
             dkv = dkv[..., :d_out.shape[-1]]
@@ -1558,7 +1559,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 d_out, q, k, v, out, softmax_lse, dq, dk, dv,
                 cu_seqlens_q, cu_seqlens_kv, ctx.max_seqlen_q, ctx.max_seqlen_kv,
                 ctx.dropout_p, ctx.attn_scale, False,
-                ctx.attn_mask_type == "causal", None, rng_state,
+                ctx.attn_mask_type == "causal", None, rng_state
             )
             dq = dq[..., :d_out.shape[-1]]
             dk = dk[..., :d_out.shape[-1]]
@@ -2152,7 +2153,7 @@ class DotProductAttention(torch.nn.Module):
                     ), """Attention mask should be in a shape broadcastable to
                     [batch_size, num_heads, max_seqlen_q, max_seqlen_kv]!"""
 
-        qkv_layout = _get_qkv_layout(query_layer, key_layer, value_layer,
+        qkv_layout, query_layer, key_layer, value_layer = _get_qkv_layout(query_layer, key_layer, value_layer,
             qkv_format = qkv_format)
 
         # The priority for attention backends (subject to availability and clearing the filters)

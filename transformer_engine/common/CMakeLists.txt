@@ -38,8 +38,6 @@ list(APPEND transformer_engine_SOURCES
 add_library(transformer_engine SHARED ${transformer_engine_SOURCES})
 target_include_directories(transformer_engine PUBLIC
                            "${CMAKE_CURRENT_SOURCE_DIR}/include")
-#target_include_directories(transformer_engine PUBLIC
-#                           "/code/fmha/github3/pr-graph-api/cudnn_frontend/include")
 
 # Check for cuDNN frontend API
 set(CUDNN_FRONTEND_INCLUDE_DIR

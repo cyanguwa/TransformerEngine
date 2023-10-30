@@ -440,7 +440,7 @@ def fused_attn_bwd_qkvpacked(
         assert (len(aux_ctx_tensors) >= 1
                 ), "aux_ctx_tensors must contain rng_state as its last element."
         rng_state = aux_ctx_tensors[-1]
-        #check_rng_state(rng_state)
+        check_rng_state(rng_state)
 
     if fused_attention_backend == FusedAttnBackend["FP8"]:
         assert (d_scale_qkv is not None), "d_scale_qkv is required for FP8 fused attention."
@@ -795,7 +795,7 @@ def fused_attn_bwd_kvpacked(
         assert (len(aux_ctx_tensors) >= 1
                 ), "aux_ctx_tensors must contain rng_state as its last element."
         rng_state = aux_ctx_tensors[-1]
-        #check_rng_state(rng_state)
+        check_rng_state(rng_state)
 
     if fused_attention_backend == FusedAttnBackend["FP8"]:
         assert (d_scale_qkv is not None), "d_scale_qkv is required for FP8 fused attention."
@@ -1162,7 +1162,7 @@ def fused_attn_bwd(
         assert (len(aux_ctx_tensors) >= 1
                 ), "aux_ctx_tensors must contain rng_state as its last element."
         rng_state = aux_ctx_tensors[-1]
-        #check_rng_state(rng_state)
+        check_rng_state(rng_state)
 
     if fused_attention_backend == FusedAttnBackend["FP8"]:
         assert (d_scale_qkv is not None), "d_scale_qkv is required for FP8 fused attention."
