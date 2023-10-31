@@ -1725,13 +1725,6 @@ class FusedAttention(torch.nn.Module):
                     assert False, """FusedAttention: Please provide attention_mask or
                         cu_seqlens_q and cu_seqlens_kv for padding mask."""
                 cu_seqlens_q, cu_seqlens_kv = _cu_seqlens_q, _cu_seqlens_kv
-            elif attn_mask_type == 'arbitrary':
-                if core_attention_bias_type == 'post_scale_bias':
-                    core_attention_bias.masked_fill_(attention_mask, -10000.0)
-                else:
-                    core_attention_bias_type = 'post_scale_bias'
-                    core_attention_bias = attention_mask.to(query_layer.dtype)
-                    core_attention_bias.masked_fill_(attention_mask, -10000.0)
             else:
                 if self.layer_number == 1:
                     if cu_seqlens_q is None:
@@ -2096,7 +2089,7 @@ class DotProductAttention(torch.nn.Module):
         core_attention_bias_type: str, default = `no_bias`
                     Bias type, {`no_bias`, `pre_scale_bias`, `post_scale_bias`, `alibi`}
         core_attention_bias: Optional[torch.Tensor], default = `None`
-                    Bias tensor for Q * K.T, broadcastable to the shape of softmax input.
+                    Bias tensor for Q * K.T, shape [1, num_head, max_seqlen_q, max_seqlen_kv].
                     It should be 'None' for 'no_bias' and 'alibi' bias types.
         fast_zero_fill: bool, default = `True`
                     Whether to use the fast path to set output tensors to 0 or not.
@@ -2212,12 +2205,13 @@ class DotProductAttention(torch.nn.Module):
         # ------------------------------------------------
         #   causal               |     All
         #   padding              |     UnfusedDotProductAttention, FlashAttention, FusedAttention
-        #   arbitrary            |     UnfusedDotProductAttention, FusedAttention
+        #   arbitrary            |     UnfusedDotProductAttention 
         #   no_mask              |     All
         #   causal + padding     |     FlashAttention, FusedAttention
         #
         if attn_mask_type == "arbitrary":
             use_flash_attention = False
+            use_fused_attention = False
 
         if use_fused_attention:
             fused_attention_backend = tex.get_fused_attn_backend(
@@ -2733,7 +2727,7 @@ class MultiheadAttention(torch.nn.Module):
         core_attention_bias_type: str, default = `no_bias`
                     Bias type, {`no_bias`, `pre_scale_bias`, 'post_scale_bias`, `alibi`}
         core_attention_bias: Optional[torch.Tensor], default = `None`
-                    Bias tensor for Q * K.T, broadcastable to the shape of softmax input.
+                    Bias tensor for Q * K.T, shape [1, num_head, max_seqlen_q, max_seqlen_kv].
                     It should be 'None' for 'no_bias' and 'alibi' bias types.
         fast_zero_fill: bool, default = `True`
                     Whether to set output tensors to 0 or not before use.
