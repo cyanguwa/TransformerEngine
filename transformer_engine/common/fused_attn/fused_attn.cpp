@@ -113,7 +113,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                 || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS))
             && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
-                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK)
+                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK) // TODO
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
             && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_KV_INTERLEAVED)
