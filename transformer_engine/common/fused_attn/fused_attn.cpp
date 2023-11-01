@@ -186,18 +186,19 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
     if ((max_seqlen_q <= 512) && (max_seqlen_kv <= 512)) {
       if (flag_arb == true) {
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen;
-      } else if (flag_m512 == true) {
+      } else if ((flag_arb == false) && (flag_m512 == true)) {
         backend = NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen;
       }
       int env_backend = static_cast<int>(backend);
       env_backend = transformer_engine::getenv<int>("NVTE_FUSED_ATTN_BACKEND", env_backend);
-      if (env_backend != static_cast<int>(backend)) {
-          std::cout << "[FusedAttn]: selected backend " << env_backend << " by user." << std::endl; 
-      } else {
-          std::cout << "[FusedAttn]: selected backend " << env_backend << "." << std::endl; 
+      if (((env_backend == static_cast<int>(NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen))
+	  && flag_m512)
+          || ((env_backend == static_cast<int>(NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))
+	  && flag_arb)) {
+          backend = static_cast<NVTE_Fused_Attn_Backend>(env_backend);
       }
-      backend = static_cast<NVTE_Fused_Attn_Backend>(env_backend);
     }
+    std::cout << "[FusedAttn]: selected backend " << static_cast<int>(backend) << "." << std::endl; 
 #if (CUDNN_VERSION < 8901)
     if (backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
       backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
