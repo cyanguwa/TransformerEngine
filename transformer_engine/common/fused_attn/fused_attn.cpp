@@ -116,7 +116,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                 || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS))
             && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
-                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK) // TODO
+                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK)  // TODO
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
             && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_KV_INTERLEAVED)
@@ -137,7 +137,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
             && (max_seqlen_kv % 64 == 0)
             //&& (num_attn_heads == num_gqa_groups)
             && ((num_attn_heads == num_gqa_groups)
-                || ((num_attn_heads != num_gqa_groups) && (num_gqa_groups == 1))) // TODO
+                || ((num_attn_heads != num_gqa_groups) && (num_gqa_groups == 1)))  // TODO
             && ((head_dim <= 128) && (head_dim % 8 == 0))
             && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
                 || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS)
@@ -151,7 +151,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                 || (qkv_format == NVTE_QKV_Format::NVTE_BSHD))) {
       flag_arb = true;
     }
-//std::cout << " testing arbi... " << flag_arb << std::endl;
+//    std::cout << " testing arbi... " << flag_arb << std::endl;
 //    int64_t batch = 2;
 //    int64_t num_head = 16;
 //    head_dim = 15;
@@ -171,7 +171,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
 //                 get_cudnn_fe_dtype(static_cast<DType>(q_dtype)),
 //                 nullptr, nullptr, nullptr, handle, &check_support);
 //    flag_arb = check_support;
-//std::cout << " after testing arbi fwd... " << flag_arb << std::endl;
+//    std::cout << " after testing arbi fwd... " << flag_arb << std::endl;
 //    check_support = true;
 //    fused_attn::fused_attn_arbitrary_seqlen_bwd_impl(
 //                 batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim,
@@ -183,7 +183,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
 //                 get_cudnn_fe_dtype(static_cast<DType>(q_dtype)),
 //                 nullptr, nullptr, nullptr, handle, &check_support);
 //    flag_arb = check_support;
-//std::cout << " after testing arbi bwd... " << flag_arb << std::endl;
+//    std::cout << " after testing arbi bwd... " << flag_arb << std::endl;
 
     if (((max_seqlen_q > 512) || (max_seqlen_kv > 512))
             && (flag_arb == true)) {
@@ -198,13 +198,13 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
       int env_backend = static_cast<int>(backend);
       env_backend = transformer_engine::getenv<int>("NVTE_FUSED_ATTN_BACKEND", env_backend);
       if (((env_backend == static_cast<int>(NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen))
-	  && flag_m512)
+      && flag_m512)
           || ((env_backend == static_cast<int>(NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen))
-	  && flag_arb)) {
+      && flag_arb)) {
           backend = static_cast<NVTE_Fused_Attn_Backend>(env_backend);
       }
     }
-    std::cout << "[FusedAttn]: selected backend " << static_cast<int>(backend) << "." << std::endl; 
+    std::cout << "[FusedAttn]: selected backend " << static_cast<int>(backend) << "." << std::endl;
 #if (CUDNN_VERSION < 8901)
     if (backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
       backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;

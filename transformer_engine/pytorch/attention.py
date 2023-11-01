@@ -1176,7 +1176,8 @@ def _get_qkv_layout(
             and not check_last_dim_offsets_qkv):
             # sb3hd, bs3hd, t3hd
             qkv_layout = qkv_format[:-2] + '3' + qkv_format[-2:]
-        elif check_ptrs_qkv and check_strides_qkv and check_shapes_qkv and check_last_dim_offsets_qkv:
+        elif (check_ptrs_qkv and check_strides_qkv and check_shapes_qkv
+            and check_last_dim_offsets_qkv):
             # sbh3d, bsh3d, th3d
             qkv_layout = qkv_format[:-1] + '3' + qkv_format[-1:]
         elif (check_ptrs_kv and check_strides_kv and check_shapes_kv
@@ -1197,11 +1198,11 @@ def _get_qkv_layout(
         return qkv_layout
 
     qkv_layout = run_iteratively(q, k, v)
-    if (qkv_layout == 'not_supported'):
+    if qkv_layout == 'not_supported':
         # force q,k,v to be contiguous and run get_layout again
         q, k, v = [x.contiguous() for x in [q, k, v]]
         qkv_layout = run_iteratively(q, k, v)
-    if (qkv_layout == 'not_supported'):
+    if qkv_layout == 'not_supported':
         raise Exception("The provided qkv memory layout is not supported!")
 
     return qkv_layout, q, k, v
@@ -1704,7 +1705,7 @@ class FusedAttention(torch.nn.Module):
         qkv_format = ''.join([i for i in qkv_layout.split('_')[0] if i.isalpha()])
         assert (
             qkv_format != 'thd'
-            ), f"FusedAttention does not support qkv_format = thd!"
+            ), 'FusedAttention does not support qkv_format = thd!'
         if qkv_format in ['sbhd', 'bshd']:
             if qkv_format == 'sbhd':
                 batch_size, max_seqlen_q, max_seqlen_kv = (
@@ -1715,7 +1716,7 @@ class FusedAttention(torch.nn.Module):
             if 'padding' in attn_mask_type:
                 global _cu_seqlens_q, _cu_seqlens_kv
                 if (cu_seqlens_q is not None and cu_seqlens_kv is not None):
-                    if (attention_mask is not None):
+                    if attention_mask is not None:
                         warnings.warn(
                             """FusedAttention: Ignoring attention mask since cu_seqlens_q
                             and cu_seqlens_kv are provided."""
@@ -2081,8 +2082,8 @@ class DotProductAttention(torch.nn.Module):
                    Key tensor.
         value_layer : torch.Tensor
                      Value tensor.
-        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
-             Boolean tensor(s) used to mask out attention softmax input.
+        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]],
+             default = `None`. Boolean tensor(s) used to mask out attention softmax input.
              It should be 'None' for 'causal' and 'no_mask' types. For 'padding' masks, it should be
              a single tensor of [batch_size, 1, 1, seqlen_q] for self-attention, and a tuple of
              two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
@@ -2123,7 +2124,7 @@ class DotProductAttention(torch.nn.Module):
             attn_mask_type = self.attn_mask_type
         if qkv_format is None:
             qkv_format = self.qkv_format
-        attn_mask_type, causal_mask = _unpack_attn_mask_type(attn_mask_type)
+        attn_mask_type, _ = _unpack_attn_mask_type(attn_mask_type)
 
         assert (key_layer.shape[-2] == self.num_gqa_groups_per_partition
             and value_layer.shape[-2] == self.num_gqa_groups_per_partition
@@ -2177,8 +2178,8 @@ class DotProductAttention(torch.nn.Module):
                     ), """Attention mask should be in a shape broadcastable to
                     [batch_size, num_heads, max_seqlen_q, max_seqlen_kv]!"""
 
-        qkv_layout, query_layer, key_layer, value_layer = _get_qkv_layout(query_layer, key_layer, value_layer,
-            qkv_format = qkv_format)
+        qkv_layout, query_layer, key_layer, value_layer = _get_qkv_layout(
+            query_layer, key_layer, value_layer, qkv_format = qkv_format)
 
         # The priority for attention backends (subject to availability and clearing the filters)
         # is: FlashAttention > FusedAttention (cuDNN) > UnfusedDotProductAttention.
@@ -2710,8 +2711,8 @@ class MultiheadAttention(torch.nn.Module):
         ----------
         hidden_states : torch.Tensor
              Input tensor.
-        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]], default = `None`
-             Boolean tensor(s) used to mask out attention softmax input.
+        attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]],
+             default = `None`. Boolean tensor(s) used to mask out attention softmax input.
              It should be 'None' for 'causal' and 'no_mask' types. For 'padding' masks, it should be
              a single tensor of [batch_size, 1, 1, seqlen_q] for self-attention, and a tuple of
              two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
@@ -2757,7 +2758,7 @@ class MultiheadAttention(torch.nn.Module):
             attn_mask_type = self.attn_mask_type
 
         if "padding" in attn_mask_type and attention_mask is not None:
-            for i in range(len(attention_mask)):
+            for i,_ in enumerate(attention_mask):
                 assert (
                     attention_mask[i].dtype == torch.bool
                 ), "Attention mask must be in boolean type!"

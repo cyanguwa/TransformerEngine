@@ -46,7 +46,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
                 void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
                 cudnn_frontend::DataType_t tensorType, void *workspace, size_t *workspace_size,
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support);
-}
+}  // namespace fused_attn
 
 void fused_attn_arbitrary_seqlen_fwd_qkvpacked(size_t batch, size_t max_seqlen, size_t num_head,
                                       size_t head_size, bool is_training, float attn_scale,
