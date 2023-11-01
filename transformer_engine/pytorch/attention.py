@@ -1637,19 +1637,30 @@ class FusedAttention(torch.nn.Module):
         if deterministic:
             # workspace optimization path is non-deterministic
             os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
+            warnings.warn(
+                """FusedAttention: Workspace-related performance optimization is
+                disabled by user."""
+            )
 
         # CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
         # - unset: enables workspace optimization when required space is <= 256MB
         # - 99999999999: enables workspace optimization always
         # - 0: disables workspace optimization
         # - n: enables workspace optimization when required space is <=n byte
-        #os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] = "0"
         if "NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT" in os.environ:
             if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "0":
                 os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
+                warnings.warn(
+                    """FusedAttention: Workspace-related performance optimization is
+                    disabled by user."""
+                )
             if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "1":
                 os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = str(
                         torch.cuda.get_device_properties(0).total_memory)
+                warnings.warn(
+                    """FusedAttention: Workspace-related performance optimization is
+                    enabled by user."""
+                )
 
     def forward(
         self,
