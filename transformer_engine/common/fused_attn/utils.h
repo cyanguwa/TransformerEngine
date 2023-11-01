@@ -99,6 +99,7 @@ struct FADescriptor {
 struct FADescriptor_v1 {
   std::int64_t b;
   std::int64_t h;
+  std::int64_t hg;
   std::int64_t s_q;
   std::int64_t s_kv;
   std::int64_t d;
@@ -112,11 +113,11 @@ struct FADescriptor_v1 {
   bool use_workspace_opt;
 
   bool operator<(const FADescriptor_v1 &rhs) const {
-    return std::tie(b, h, s_q, s_kv, d,
+    return std::tie(b, h, hg, s_q, s_kv, d,
                     attnScale, isTraining, dropoutProbability,
                     layout, mask_type, bias_type, tensor_type, use_workspace_opt)
                     < std::tie(
-                      rhs.b, rhs.h, rhs.s_q, rhs.s_kv, rhs.d,
+                      rhs.b, rhs.h, rhs.hg, rhs.s_q, rhs.s_kv, rhs.d,
                       rhs.attnScale, rhs.isTraining,
                       rhs.dropoutProbability, rhs.layout,
                       rhs.mask_type, rhs.bias_type,

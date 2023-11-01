@@ -856,7 +856,7 @@ def test_transformer_layer(dtype, bs, model, fused_qkv_params, RoPE):
 ################ test TE layer with MQA/GQA ################ 
 # To run a test in model_configs_lean:
 #   pytest -s -v tests/pytorch/test_fused_attn.py::test_transformer_layer_gqa[lean_1_0-2-dtype0] 
-# all passed or skipped
+# all passed or skipped; fused attn MQA is still waiting dK/dV to reduce to b_hg_s_d
 
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
@@ -912,6 +912,23 @@ def test_transformer_layer_gqa(dtype, bs, model):
         atol, rtol = 5e-1, 5e-2
         torch.testing.assert_close(flash_attn_fwd, unfused_attn_fwd, atol=atol, rtol=rtol)
         torch.testing.assert_close(flash_attn_bwd, unfused_attn_bwd, atol=atol, rtol=rtol)
+        print("test_transformer_layer_gqa: flash_attn matches unfused_attn")
+
+        if config.num_gqa_groups == 1:
+            fused_attn_fwd, fused_attn_bwd = _run_transformer_layer(
+                dtype,
+                bs,
+                config,
+                "FusedAttention",
+                ckpt_attn,
+                qkv_format,
+                workspace_opt,
+                fused_qkv_params,
+                RoPE,
+            )
+            torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, atol=atol, rtol=rtol)
+            torch.testing.assert_close(fused_attn_bwd, unfused_attn_bwd, atol=atol, rtol=rtol)
+            print("test_transformer_layer_gqa: fused_attn matches unfused_attn")
 
 ################ core TE layer function ################ 
 def _run_transformer_layer(dtype, bs, config, backend, ckpt_attn, qkv_layout, workspace_opt, fused_qkv_params, RoPE):

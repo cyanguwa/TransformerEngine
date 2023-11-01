@@ -23,7 +23,7 @@ namespace transformer_engine {
 #if (CUDNN_VERSION >= 8900)
 namespace fused_attn {
 void fused_attn_arbitrary_seqlen_fwd_impl(
-                int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
+                int64_t b, int64_t h, int64_t hg, int64_t s_q, int64_t s_kv, int64_t d,
                 bool is_training, float scaling_factor, float dropout_probability,
                 NVTE_QKV_Layout layout,
                 NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
@@ -36,7 +36,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
                 cudaStream_t stream, cudnnHandle_t handle, bool* check_support);
 
 void fused_attn_arbitrary_seqlen_bwd_impl(
-                int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
+                int64_t b, int64_t h, int64_t hg, int64_t s_q, int64_t s_kv, int64_t d,
                 float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
                 NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                 void* devPtrQ, void* devPtrKTranspose, void* devPtrVTranspose,
@@ -68,8 +68,9 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen, 
                                       Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
 void fused_attn_arbitrary_seqlen_fwd(size_t batch, size_t max_seqlen_q, size_t max_seqlen_kv,
-                                      size_t num_head, size_t head_size, bool is_training,
-                                      float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
+                                      size_t num_attn_heads, size_t num_gqa_groups, size_t head_dim,
+                                      bool is_training, float attn_scale, float p_dropout,
+                                      NVTE_QKV_Layout qkv_layout,
                                       NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                       const Tensor *input_Q, const Tensor *input_K,
                                       const Tensor *input_V, const Tensor *input_Bias,
@@ -79,8 +80,8 @@ void fused_attn_arbitrary_seqlen_fwd(size_t batch, size_t max_seqlen_q, size_t m
                                       Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
 void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t max_seqlen_kv,
-                                      size_t num_head, size_t head_dim, float attn_scale,
-                                      float p_dropout, NVTE_QKV_Layout qkv_layout,
+                                      size_t num_attn_heads, size_t num_gqa_groups, size_t head_dim,
+                                      float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
                                       NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                       const Tensor *input_Q, const Tensor *input_K,
                                       const Tensor *input_V, const Tensor *input_O,
