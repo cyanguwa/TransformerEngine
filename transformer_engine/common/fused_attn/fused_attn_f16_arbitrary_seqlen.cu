@@ -626,7 +626,7 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
         || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-    std::cout << "sdpa fwd: is bias " << is_bias << " is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << " is dropout" << dropout_probability << std::endl; 
+    //std::cout << "sdpa fwd: is bias " << is_bias << " is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << " is dropout" << dropout_probability << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
@@ -1059,7 +1059,7 @@ void fused_attn_arbitrary_seqlen_bwd_impl(
         || (mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK));
     bool is_dropout = (dropout_probability != 0.0f);
     //CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-    std::cout << "sdpa bwd: is bias " << is_bias << " is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << " is dropout" << dropout_probability << std::endl; 
+    //std::cout << "sdpa bwd: is bias " << is_bias << " is alibi " << is_alibi << " is causal " << is_causal << " is_padding " << is_padding << " is dropout" << dropout_probability << std::endl; 
 
     bool tmp_check = *check_support;
     cudnn_version_checks(is_bias, is_alibi, is_padding, &tmp_check);
