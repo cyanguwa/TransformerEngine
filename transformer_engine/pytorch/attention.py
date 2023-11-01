@@ -1412,6 +1412,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
     @staticmethod
     def backward(ctx, d_out):
         qkv, out, cu_seqlens = ctx.saved_tensors
+        if not ctx.aux_ctx_tensors[0].is_contiguous():
+            ctx.aux_ctx_tensors[0] = ctx.aux_ctx_tensors[0].contiguous()
         if ctx.use_FAv2_bwd:
             softmax_lse, rng_state = ctx.aux_ctx_tensors
             dqkv = torch.empty_like(qkv)
@@ -1478,6 +1480,8 @@ class FusedAttnFunc_kvpacked(torch.autograd.Function):
     @staticmethod
     def backward(ctx, d_out):
         q, kv, out, cu_seqlens_q, cu_seqlens_kv = ctx.saved_tensors
+        if not ctx.aux_ctx_tensors[0].is_contiguous():
+            ctx.aux_ctx_tensors[0] = ctx.aux_ctx_tensors[0].contiguous()
         if ctx.use_FAv2_bwd:
             softmax_lse, rng_state = ctx.aux_ctx_tensors
             dq = torch.empty_like(q)
@@ -1547,6 +1551,8 @@ class FusedAttnFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, d_out):
         q, k, v, out, cu_seqlens_q, cu_seqlens_kv = ctx.saved_tensors
+        if not ctx.aux_ctx_tensors[0].is_contiguous():
+            ctx.aux_ctx_tensors[0] = ctx.aux_ctx_tensors[0].contiguous()
         if ctx.use_FAv2_bwd:
             softmax_lse, rng_state = ctx.aux_ctx_tensors
             dq = torch.empty_like(q)
@@ -2216,7 +2222,7 @@ class DotProductAttention(torch.nn.Module):
         # ------------------------------------------------
         #   causal               |     All
         #   padding              |     UnfusedDotProductAttention, FlashAttention, FusedAttention
-        #   arbitrary            |     UnfusedDotProductAttention 
+        #   arbitrary            |     UnfusedDotProductAttention
         #   no_mask              |     All
         #   causal + padding     |     FlashAttention, FusedAttention
         #
