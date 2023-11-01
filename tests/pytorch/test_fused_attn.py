@@ -111,6 +111,8 @@ def _is_fused_attention_supported(
         config.max_seqlen_q,
         config.max_seqlen_kv,
         config.head_dim,
+        config.num_attention_heads,
+        config.num_gqa_groups,
     )
     return backend != FusedAttnBackend["No_Backend"]
 
