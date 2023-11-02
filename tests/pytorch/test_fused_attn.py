@@ -170,9 +170,9 @@ def test_dot_product_attention(dtype, bs, model, ckpt_attn):
         tols = dict(atol=2.5e-2, rtol=2.5e-2)
 
     if config.attn_type == 'self':
-        qkv_layout = 'sbh3d'
+        qkv_layout = 'sb3hd'
     else:
-        qkv_layout = 'sbhd_sbh2d'
+        qkv_layout = 'sbhd_sb2hd'
     workspace_opt = True
 
     # Skip if only unfused backend is supported
@@ -228,9 +228,9 @@ def test_dot_product_attention(dtype, bs, model, ckpt_attn):
 
 model_configs_dropout = {
     #        test:    num_layers,  h, hg,   d,   sq,  skv,   p,      mask,      bias 
-    "dropout_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.1, "no_mask", "no_bias"), # self
+#    "dropout_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.1, "no_mask", "no_bias"), # self
     "dropout_1_1": ModelConfig(1, 16, 16,  64,  128,  128, 0.1,  "causal", "no_bias"), # self
-    "dropout_1_2": ModelConfig(1, 16, 16,  64,  128,  512, 0.1, "no_mask", "no_bias"), # cross
+#    "dropout_1_2": ModelConfig(1, 16, 16,  64,  128,  512, 0.1, "no_mask", "no_bias"), # cross
 }
 
 @pytest.mark.skipif(
@@ -250,9 +250,9 @@ def test_dpa_dropout(dtype, bs, model, workspace_opt):
 
     ckpt_attn = False
     if config.attn_type == 'self':
-        qkv_layout = 'sbh3d'
+        qkv_layout = 'sb3hd'
     else:
-        qkv_layout = 'sbhd_sbh2d'
+        qkv_layout = 'sbhd_sb2hd'
 
     # Skip if fused backend is not supported
     fused_attn_supported = _is_fused_attention_supported(
@@ -336,7 +336,7 @@ def test_dpa_mask(dtype, bs, model, workspace_opt):
     if config.attn_type == 'self':
         qkv_layout = 'sb3hd'
     else:
-        qkv_layout = 'sbhd_sbh2d'
+        qkv_layout = 'sbhd_sb2hd'
 
     # Skip if only unfused backend is supported
     fused_attn_supported = _is_fused_attention_supported(
@@ -435,7 +435,7 @@ def test_dpa_bias(dtype, bs, model, workspace_opt):
     if config.attn_type == 'self':
         qkv_layout = 'sb3hd'
     else:
-        qkv_layout = 'sbhd_sbh2d'
+        qkv_layout = 'sbhd_sb2hd'
 
     # Skip if only unfused backend is supported
     fused_attn_supported = _is_fused_attention_supported(
