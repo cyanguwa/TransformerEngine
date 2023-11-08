@@ -2,6 +2,7 @@
 #
 # See LICENSE for license information.
 
+import functools
 from importlib.metadata import version
 import os
 import math
@@ -27,6 +28,10 @@ from transformer_engine.pytorch.cpp_extensions.fused_attn import (
     fused_attn_bwd,
     fused_attn_fwd,
 )
+from transformer_engine.pytorch.distributed import (
+    _set_cuda_rng_state,
+    CudaRNGStatesTracker,
+)
 import transformer_engine.pytorch.fp8 as fp8
 from transformer_engine.pytorch.module.base import (
     TransformerEngineBaseModule,
@@ -37,34 +42,30 @@ from transformer_engine.pytorch.utils import (
     init_method_normal,
     scaled_init_method_normal,
 )
-from transformer_engine.pytorch.distributed import _set_cuda_rng_state, CudaRNGStatesTracker
 import transformer_engine_extensions as tex
 
-# Only run FP8 tests on H100.
+# Only run FP8 tests on H100
 fp8_available, reason_for_no_fp8 = fp8.FP8GlobalStateManager.is_fp8_available()
-_flash_attn_version = packaging.version.Version(version("flash-attn"))
-_flash_attn_2_available = _flash_attn_version >= packaging.version.Version("2")
 
+# Initialize RNG state
 seed = 1234
 torch.manual_seed(seed)
 torch.cuda.manual_seed(seed)
-# Record initial RNG state from script run.
 _cpu_rng_state = torch.get_rng_state()
 _cuda_rng_state = torch.cuda.get_rng_state()
 
-def _get_cudnn_version():
-    cudnn_version_encoded = ext.get_cudnn_version()
-    cudnn_major = cudnn_version_encoded // 1000
-    cudnn_minor = (cudnn_version_encoded - cudnn_major * 1000) // 100
-    cudnn_patch = cudnn_version_encoded - 1000 * cudnn_major - 100 * cudnn_minor
-    return [cudnn_major, cudnn_minor, cudnn_patch]
-
 def reset_rng_states() -> None:
-    """revert back to initial RNG state."""
+    """Revert back to initial RNG state."""
     torch.set_rng_state(_cpu_rng_state)
     _set_cuda_rng_state(_cuda_rng_state)
 
-_cudnn_version = _get_cudnn_version()
+@functools.cache
+def _cudnn_version() -> Tuple[int, int, int]:
+    """Current cuDNN version (major, minor, patch)"""
+    encoded_version = ext.get_cudnn_version()
+    major, encoded_version = divmod(encoded_version, 1000)
+    minor, patch = divmod(encoded_version, 100)
+    return (major, minor, patch)
 
 class ModelConfig:
     def __init__(
@@ -97,6 +98,7 @@ def _is_fused_attention_supported(
     dtype: torch.dtype,
     qkv_layout: str = "sbh3d",
 ) -> bool:
+    """Check if FusedAttention supports a model configuration"""
     if config.attn_mask_type == 'padding,causal':
         attn_mask_type = 'padding_causal'
     else:
@@ -116,7 +118,14 @@ def _is_fused_attention_supported(
     )
     return backend != FusedAttnBackend["No_Backend"]
 
+@functools.cache
+def _is_flash_attention_2_available() -> bool:
+    """Check if flash-attn 2.0+ is available"""
+    Version = packaging.version.Version
+    return Version(version("flash-attn")) > Version("2")
+
 def _is_flash_attention_supported(config: ModelConfig) -> bool:
+    """Check if FlashAttention supports a model configuration"""
     if get_device_compute_capability() < (8, 0):
         return False
     if config.attn_bias_type != "no_bias":
@@ -124,23 +133,24 @@ def _is_flash_attention_supported(config: ModelConfig) -> bool:
     return True
 
 def _is_unfused_attention_supported(config: ModelConfig) -> bool:
+    """Check if UnfusedDotProductAttention supports a model configuration"""
     if ("padding" in config.attn_mask_type or config.attn_bias_type == "alibi"):
         return False
     if ("causal" in config.attn_mask_type and config.attn_type == 'cross'):
         return False
     return True
 
-################ common model configs and other params ################ 
+# Base model configs
 model_configs = {
     #     test:    num_layers,  h, hg,   d,   sq,  skv,   p,      mask,      bias 
-    "base_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "no_mask", "no_bias"), # self
-    "base_1_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "no_mask", "no_bias"), # cross
-    "base_2_0": ModelConfig(1, 16, 16,  64, 2048, 2048, 0.0, "no_mask", "no_bias"), # self
-    "base_2_1": ModelConfig(1, 16, 16,  64, 2048, 4096, 0.0, "no_mask", "no_bias"), # cross
-    "base_3_0": ModelConfig(1, 16, 16, 128,  128,  128, 0.0, "no_mask", "no_bias"), # self
-    "base_3_1": ModelConfig(1, 16, 16, 128,  128,  256, 0.0, "no_mask", "no_bias"), # cross
-    "base_4_0": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "no_bias"), # self
-    "base_4_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "no_bias"), # cross
+    "base_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "no_mask", "no_bias"), # self , d64 , backend0
+    "base_1_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "no_mask", "no_bias"), # cross, d64 , backend0
+    "base_2_0": ModelConfig(1, 16, 16,  64, 2048, 2048, 0.0, "no_mask", "no_bias"), # self , d64 , backend1
+    "base_2_1": ModelConfig(1, 16, 16,  64, 2048, 4096, 0.0, "no_mask", "no_bias"), # cross, d64 , backend1
+    "base_3_0": ModelConfig(1, 16, 16, 128,  128,  128, 0.0, "no_mask", "no_bias"), # self , d128, backend0
+    "base_3_1": ModelConfig(1, 16, 16, 128,  128,  256, 0.0, "no_mask", "no_bias"), # cross, d128, backend0
+    "base_4_0": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "no_bias"), # self , d128, backend1
+    "base_4_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "no_bias"), # cross, d128, backend1
 }
 
 param_types = [torch.float16]
@@ -151,17 +161,15 @@ batch_sizes = [1, 32]
 param_types_lean = [torch.float16]
 batch_sizes_lean = [2]
 
-################ test basic DPA cases ################ 
-# To run a test in model_configs:
+# Test basic DotProductAttention cases
 #   pytest -s -v tests/pytorch/test_fused_attn.py::test_dot_product_attention[True-base_3_0-2-dtype0]
-# all passed 
-
+#   all passed 
 @pytest.mark.parametrize("dtype", param_types)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs.keys())
 @pytest.mark.parametrize("ckpt_attn", [True, False])
 def test_dot_product_attention(dtype, bs, model, ckpt_attn):
-    """Test DotProductAttention module with different backends"""
+    """Test DotProductAttention module"""
 
     # Get configs
     config = model_configs[model]
@@ -219,22 +227,18 @@ def test_dot_product_attention(dtype, bs, model, ckpt_attn):
         torch.testing.assert_close(flash_attn_bwd, fused_attn_bwd, **tols)
         print("test_dot_product_attention: flash_attn matches fused_attn")
 
-################ test DPA with dropout ################ 
-# To run a test in model_configs_dropout:
+# Test DPA with dropout
 #   rm *.pt
 #   NVTE_FUSED_ATTN_OLD=1 pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_dropout[True-dropout_1_2-2-dtype0]
 #   NVTE_FUSED_ATTN_OLD=0 pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_dropout[True-dropout_1_2-2-dtype0]
-# failing: all except dropout_1_1 fwd
-
+#   failing: all except dropout_1_1 fwd
 model_configs_dropout = {
     #        test:    num_layers,  h, hg,   d,   sq,  skv,   p,      mask,      bias 
-#    "dropout_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.1, "no_mask", "no_bias"), # self
+    #"dropout_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.1, "no_mask", "no_bias"), # self
     "dropout_1_1": ModelConfig(1, 16, 16,  64,  128,  128, 0.1,  "causal", "no_bias"), # self
-#    "dropout_1_2": ModelConfig(1, 16, 16,  64,  128,  512, 0.1, "no_mask", "no_bias"), # cross
+    #"dropout_1_2": ModelConfig(1, 16, 16,  64,  128,  512, 0.1, "no_mask", "no_bias"), # cross
 }
-
-@pytest.mark.skipif(
-    _cudnn_version < [8,9,5], reason="cuDNN 8.9.5+ is required.")
+@pytest.mark.skipif(_cudnn_version() < (8,9,5), reason="cuDNN 8.9.5+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs_dropout.keys())
@@ -263,7 +267,7 @@ def test_dpa_dropout(dtype, bs, model, workspace_opt):
             "FusedAttention does not support this model config"
         )
     else:
-        # run old implementation with v0.9.2
+        # Run old implementation with v0.9.2
         if os.environ["NVTE_FUSED_ATTN_OLD"] == "1":
             fused_attn_fwd_old, fused_attn_bwd_old = _run_dot_product_attention(
                 dtype, bs, config, "FusedAttention", ckpt_attn, qkv_layout, workspace_opt,
@@ -272,7 +276,7 @@ def test_dpa_dropout(dtype, bs, model, workspace_opt):
             for i in range(len(fused_attn_bwd_old)):
                 torch.save(fused_attn_bwd_old[i], 'fused_attn_bwd_old_'+str(i)+'.pt')
 
-        # run new implementation with v1/prerelease 4
+        # Run new implementation with v1/prerelease 4
         if os.environ["NVTE_FUSED_ATTN_OLD"] == "0":
             fused_attn_fwd, fused_attn_bwd = _run_dot_product_attention(
                 dtype, bs, config, "FusedAttention", ckpt_attn, qkv_layout, workspace_opt,
@@ -296,15 +300,13 @@ def test_dpa_dropout(dtype, bs, model, workspace_opt):
                 print(fused_attn_bwd_old_i.min().item(), fused_attn_bwd_old_i.max().item())
                 torch.testing.assert_close(fused_attn_bwd[i], fused_attn_bwd_old_i, **tols)
 
-################ test DPA with different masks ################ 
-# To run a test in model_configs_mask:
+# Test DPA with different mask types
 #   pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_mask[True-mask_1_0-2-dtype0]
-# failing: cross-attn + causal, padding + causal
-# [True-mask_1_1-2-dtype0] - AssertionError: Tensor-likes are not close!
-# [True-mask_2_1-2-dtype0] - AssertionError: Tensor-likes are not close!
-# [True-mask_4_0-2-dtype0] - AssertionError: Tensor-likes are not close!
-# [True-mask_4_1-2-dtype0] - AssertionError: Tensor-likes are not close!
-
+#   failing: cross-attn + causal, padding + causal
+#   [True-mask_1_1-2-dtype0] - AssertionError: Tensor-likes are not close!
+#   [True-mask_2_1-2-dtype0] - AssertionError: Tensor-likes are not close!
+#   [True-mask_4_0-2-dtype0] - AssertionError: Tensor-likes are not close!
+#   [True-mask_4_1-2-dtype0] - AssertionError: Tensor-likes are not close!
 model_configs_mask = {
     # testname:    num_layers,  h, hg,   d,   sq,  skv,   p,             mask,      bias 
     "mask_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0,         "causal", "no_bias"), # self
@@ -316,15 +318,13 @@ model_configs_mask = {
     "mask_4_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "padding,causal", "no_bias"), # self
     "mask_4_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "padding,causal", "no_bias"), # cross
 }
-
-@pytest.mark.skipif(
-    _cudnn_version < [8,9,5], reason="cuDNN 8.9.5+ is required.")
+@pytest.mark.skipif(_cudnn_version() < (8,9,5), reason="cuDNN 8.9.5+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs_mask.keys())
 @pytest.mark.parametrize("workspace_opt", [True])#, False])
 def test_dpa_mask(dtype, bs, model, workspace_opt):
-    """Test DotProductAttention module with different QKV layouts"""
+    """Test DotProductAttention module with different mask types"""
 
     # Get configs
     config = model_configs_mask[model]
@@ -400,12 +400,10 @@ def test_dpa_mask(dtype, bs, model, workspace_opt):
             torch.testing.assert_close(flash_attn_bwd, fused_attn_bwd, **tols)
             print("test_dpa_mask: flash_attn matches fused_attn")
 
-################ test DPA with different bias types ################ 
-# To run a test in model_configs_bias:
-# pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_bias[True-bias_1_0-2-dtype0]
-# failing: all 5
-# need to fix alibi for m512 with cross attn, bias_3_1
-
+# Test DPA with different bias types
+#   pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_bias[True-bias_1_0-2-dtype0]
+#   failing: all 5
+#   need to fix alibi for m512 with cross attn, bias_3_1
 model_configs_bias = {
     #     test:    num_layers,  h, hg,   d,   sq,  skv,   p,      mask,             bias 
     "bias_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "no_mask", "post_scale_bias"), # self
@@ -413,17 +411,15 @@ model_configs_bias = {
     "bias_2_0": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "post_scale_bias"), # self
     "bias_2_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "post_scale_bias"), # cross
     "bias_3_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "no_mask",           "alibi"), # self
-#    "bias_3_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "no_mask",           "alibi"), # cross
+    #"bias_3_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "no_mask",           "alibi"), # cross
 }
-
-@pytest.mark.skipif(
-    _cudnn_version < [8,9,5], reason="cuDNN 8.9.5+ is required.")
+@pytest.mark.skipif(_cudnn_version() < (8,9,5), reason="cuDNN 8.9.5+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs_bias.keys())
 @pytest.mark.parametrize("workspace_opt", [True])#, False])
 def test_dpa_bias(dtype, bs, model, workspace_opt):
-    """Test DotProductAttention module with different QKV layouts"""
+    """Test DotProductAttention module with different bias types"""
 
     # Get configs
     config = model_configs_bias[model]
@@ -504,18 +500,15 @@ def test_dpa_bias(dtype, bs, model, workspace_opt):
     #        torch.testing.assert_close(flash_attn_bwd, fused_attn_bwd, **tols)
     #        print("test_dpa_bias: flash_attn matches fused_attn")
 
-################ test basic DPA with different qkv layouts ################ 
-# To run a test in model_configs_layout:
-# pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_layout[sbh3d-True-layout_2_1-2-dtype0]
-# failing: all layout_1_ and layout_2_ due to bias
-
+# Test DPA with different qkv layouts
+#   pytest -s -v tests/pytorch/test_fused_attn.py::test_dpa_layout[sbh3d-True-layout_2_1-2-dtype0]
+#   failing: all layout_1_ and layout_2_ due to bias
 qkv_layouts = [
     'sb3hd', 'sbh3d', 'sbhd_sb2hd', 'sbhd_sbh2d', 'sbhd_sbhd_sbhd',
     'bs3hd', 'bsh3d', 'bshd_bs2hd', 'bshd_bsh2d', 'bshd_bshd_bshd',
     # will add tests for thd layouts later when the support is available in fused attention
     #'t3hd', 'th3d', 'thd_t2hd', 'thd_th2d', 'thd_thd_thd',
     ]
-
 model_configs_layout = {
     # testname:    num_layers,  h, hg,   d,   sq,  skv,   p,      mask,             bias 
     "layout_0_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0,  "causal",         "no_bias"), # self
@@ -531,9 +524,7 @@ model_configs_layout = {
 #    "layout_2_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "post_scale_bias"), # cross
 #    "layout_2_2": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "padding", "post_scale_bias"), # cross
 }
-
-@pytest.mark.skipif(
-    _cudnn_version < [8,9,5], reason="cuDNN 8.9.5+ is required.")
+@pytest.mark.skipif(_cudnn_version() < (8,9,5), reason="cuDNN 8.9.5+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs_layout.keys())
@@ -593,10 +584,12 @@ def test_dpa_qkv_layout(dtype, bs, model, workspace_opt, qkv_layout):
             #torch.save(unfused_attn_bwd[i], 'unfused_attn_bwd_'+str(i)+'.pt')
             torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
 
-################ core DPA function ################ 
-def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout, workspace_opt):
+# Core DPA function
+def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout, workspace_opt,
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Run DotProductAttention module with one forward pass and one backward pass"""
 
-    # set rng and env vars
+    # Set RNG and environment varables
     reset_rng_states()
     os.environ["NVTE_FLASH_ATTN"] = "0"
     os.environ["NVTE_FUSED_ATTN"] = "0"
@@ -606,26 +599,24 @@ def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout
         os.environ["NVTE_FUSED_ATTN"] = "1"
         os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] = "1" if workspace_opt else "0"
 
-    # generate seqlens
+    # Create seqlens
     qkv_format = ''.join([i for i in qkv_layout.split('_')[0] if i.isalpha()])
     if "padding" in config.attn_mask_type or qkv_format == 'thd':
         if config.attn_type == 'self':
-            seqlens_q = torch.randint(1, config.max_seqlen_q, [bs], dtype = torch.int32).cuda()
+            seqlens_q = torch.randint(1, config.max_seqlen_q, [bs], dtype=torch.int32, device="cuda")
             seqlens_kv = seqlens_q
         if config.attn_type == 'cross':
-            seqlens_q = torch.randint(1, config.max_seqlen_q, [bs], dtype = torch.int32).cuda()
-            seqlens_kv = torch.randint(1, config.max_seqlen_kv, [bs], dtype = torch.int32).cuda()
+            seqlens_q = torch.randint(1, config.max_seqlen_q, [bs], dtype=torch.int32, device="cuda")
+            seqlens_kv = torch.randint(1, config.max_seqlen_kv, [bs], dtype=torch.int32, device="cuda")
     else:
-        seqlens_q = torch.empty(bs, dtype = torch.int32).cuda()
-        seqlens_q.fill_(config.max_seqlen_q)
-        seqlens_kv = torch.empty(bs, dtype = torch.int32).cuda()
-        seqlens_kv.fill_(config.max_seqlen_kv)
+        seqlens_q = torch.full([bs], config.max_seqlen_q, dtype=torch.int32, device="cuda")
+        seqlens_kv = torch.full([bs], config.max_seqlen_kv, dtype=torch.int32, device="cuda")
     #print('seqlens q:',seqlens_q)
     #print('seqlens kv:',seqlens_kv)
-    cu_seqlens_q = torch.zeros(bs + 1, dtype = torch.int32).cuda()
-    cu_seqlens_kv = torch.zeros(bs + 1, dtype = torch.int32).cuda()
-    cu_seqlens_q[1:] = torch.cumsum(seqlens_q, dim = 0)
-    cu_seqlens_kv[1:] = torch.cumsum(seqlens_kv, dim = 0)
+    cu_seqlens_q = torch.zeros(bs + 1, dtype=torch.int32, device="cuda")
+    cu_seqlens_kv = torch.zeros(bs + 1, dtype=torch.int32, device="cuda")
+    cu_seqlens_q[1:] = torch.cumsum(seqlens_q, dim=0)
+    cu_seqlens_kv[1:] = torch.cumsum(seqlens_kv, dim=0)
     attention_mask = None
     if "padding" in config.attn_mask_type:
         if config.attn_type == 'self':
@@ -634,7 +625,7 @@ def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout
                 attention_mask_q = torch.cat([attention_mask_q,
                     torch.Tensor([True]*seqlens_q[i] + [False]*(config.max_seqlen_q-seqlens_q[i]))
                     .to(torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
-            attention_mask = attention_mask_q.cuda()
+            attention_mask = attention_mask_q.to(device="cuda")
         if config.attn_type == 'cross':
             attention_mask_q = torch.Tensor([])
             attention_mask_kv = torch.Tensor([])
@@ -645,19 +636,21 @@ def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout
                 attention_mask_kv = torch.cat([attention_mask_kv,
                     torch.Tensor([True]*seqlens_kv[i] + [False]*(config.max_seqlen_kv-seqlens_kv[i]))
                     .to(torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
-            attention_mask = (attention_mask_q.cuda(), attention_mask_kv.cuda())
+            attention_mask = (attention_mask_q.to(device="cuda"), attention_mask_kv.to(device="cuda"))
 
-    # generate input tensor
-    dim_to_num = {'b': bs,
-        'sq': config.max_seqlen_q,
+    # Create input tensor
+    dim_to_num = {
+        'b'  : bs,
+        'sq' : config.max_seqlen_q,
         'skv': config.max_seqlen_kv,
-        'h': config.num_attention_heads,
-        'hg': config.num_gqa_groups,
-        'd': config.head_dim,
-        't': cu_seqlens_q[-1],
-        'tg': cu_seqlens_kv[-1],
-        '3': 3,
-        '2': 2}
+        'h'  : config.num_attention_heads,
+        'hg' : config.num_gqa_groups,
+        'd'  : config.head_dim,
+        't'  : cu_seqlens_q[-1],
+        'tg' : cu_seqlens_kv[-1],
+        '3'  : 3,
+        '2'  : 2,
+        }
     inp = []
     for i,layout in enumerate(qkv_layout.split('_')):
         layout = '_'.join(layout)
@@ -668,35 +661,35 @@ def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout
             layout = layout.replace('h', 'hg')
             layout = layout.replace('t', 'tg')
         tensor_shape = [dim_to_num[j] for j in layout.split('_')]
-        tensor = 0.1 * torch.randn(tensor_shape, dtype = dtype).cuda()
+        tensor = 0.1 * torch.randn(tensor_shape, dtype=dtype, device="cuda")
         tensor_count = 1
         split_dim = 0
-        for dim,l in enumerate(layout.split('_')):
+        for dim, l in enumerate(layout.split('_')):
             if l.isdigit():
                 tensor_count = int(l)
                 split_dim = dim
                 break
-        tensors = torch.split(tensor, 1, dim = split_dim) if split_dim != 0 else [tensor]
+        tensors = torch.split(tensor, 1, dim=split_dim) if split_dim != 0 else [tensor]
         for j in range(tensor_count):
             if split_dim != 0:
                 inp.append(tensors[j].squeeze(split_dim))
             else:
                 inp.append(tensors[j])
     for i in range(3):
-        inp[i].requires_grad=True
+        inp[i].requires_grad = True
 
-    # generate output gradient
+    # Create output gradient
     qkv_format_kv = '_'.join(qkv_format)
     qkv_format_kv = qkv_format_kv.replace('s', 'sq')
-    op_grad_shape = [dim_to_num[i] for i in qkv_format_kv.split('_')]
-    op_grad_shape_new = [*op_grad_shape[:-2], op_grad_shape[-2] * op_grad_shape[-1]]
-    op_grad = 0.001 * torch.randint(0, 200, op_grad_shape_new, dtype = dtype).cuda()
+    out_grad_shape = [dim_to_num[i] for i in qkv_format_kv.split('_')]
+    out_grad_shape_new = [*out_grad_shape[:-2], out_grad_shape[-2] * out_grad_shape[-1]]
+    out_grad = 0.001 * torch.randint(0, 200, out_grad_shape_new, dtype=dtype, device="cuda")
 
-    # generate bias
+    # Create bias
     if config.attn_bias_type == 'no_bias':
         bias = None
     if config.attn_bias_type == 'post_scale_bias':
-        bias = torch.randn(1, config.num_attention_heads, config.max_seqlen_q, config.max_seqlen_kv, dtype = dtype).cuda()
+        bias = torch.randn(1, config.num_attention_heads, config.max_seqlen_q, config.max_seqlen_kv, dtype=dtype, device="cuda")
     elif config.attn_bias_type == 'alibi':
         if os.environ['NVTE_FUSED_ATTN_BACKEND'] == '0':
             config.attn_bias_type = 'post_scale_bias'
@@ -711,74 +704,70 @@ def _run_dot_product_attention(dtype, bs, config, backend, ckpt_attn, qkv_layout
             bias = d.expand(1, config.num_attention_heads, config.max_seqlen_q, config.max_seqlen_kv)
             for i in range(config.num_attention_heads):
                 bias[0,i,:,:] = m[i] *  bias[0,i,:,:]
-            bias = bias.to(dtype = dtype).cuda()
+            bias = bias.to(dtype=dtype, device="cuda")
         else:
             bias = None
 
-    # generate rng
+    # Create RNG
     _DUMMY_CUDA_RNG_STATE_TRACKER = CudaRNGStatesTracker()
     _DUMMY_CUDA_RNG_STATE_TRACKER.add("model-parallel-rng", seed)
 
-    def get_dummy_cuda_rng_tracker():
+    def get_dummy_cuda_rng_tracker() -> CudaRNGStatesTracker:
         """Get cuda rng tracker."""
         return _DUMMY_CUDA_RNG_STATE_TRACKER
 
-    # set up model 
+    # Set up model 
     block = (
          DotProductAttention(
                 config.num_attention_heads,
                 config.head_dim,
-                num_gqa_groups = config.num_gqa_groups,
-                attention_dropout = config.dropout_p,
-                qkv_format = qkv_format,
-                attn_mask_type = config.attn_mask_type,
-                sequence_parallel = False,
-                tp_size = 1,
-                get_rng_state_tracker = get_dummy_cuda_rng_tracker,
-                tp_group = None,
-                layer_number = 1,
-                attention_type = config.attn_type,
-        ).to(dtype = dtype).cuda()
+                num_gqa_groups=config.num_gqa_groups,
+                attention_dropout=config.dropout_p,
+                qkv_format=qkv_format,
+                attn_mask_type=config.attn_mask_type,
+                sequence_parallel=False,
+                tp_size=1,
+                get_rng_state_tracker=get_dummy_cuda_rng_tracker,
+                tp_group=None,
+                layer_number=1,
+                attention_type=config.attn_type,
+        ).to(dtype=dtype, device="cuda")
     )
 
-    op = block(inp[0], inp[1], inp[2],
-            attention_mask = attention_mask,
-            qkv_format = qkv_format,
-            cu_seqlens_q = cu_seqlens_q,
-            cu_seqlens_kv = cu_seqlens_kv,
-            attn_mask_type = config.attn_mask_type,
-            checkpoint_core_attention = ckpt_attn,
-            core_attention_bias_type = config.attn_bias_type,
-            core_attention_bias = bias,
-            fast_zero_fill = True)
+    # Run a forward and backward pass
+    out = block(inp[0], inp[1], inp[2],
+            attention_mask=attention_mask,
+            qkv_format=qkv_format,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_kv=cu_seqlens_kv,
+            attn_mask_type=config.attn_mask_type,
+            checkpoint_core_attention=ckpt_attn,
+            core_attention_bias_type=config.attn_bias_type,
+            core_attention_bias=bias,
+            fast_zero_fill=True)
+    out.backward(out_grad)
 
-    op.backward(op_grad)
+    return out, (inp[0].grad, inp[1].grad, inp[2].grad)
 
-    return op, (inp[0].grad, inp[1].grad, inp[2].grad)
-
-################ test basic TE layer cases ################ 
-# To run a test in model_configs_lean:
+# Test basic TransformerLayer cases
 #   pytest -s -v tests/pytorch/test_fused_attn.py::test_transformer_layer[False-True-lean_1_0-2-dtype0] 
-# failing: lean_1_1, lean_2_1 due to bias
-
+#   failing: lean_1_1, lean_2_1 due to bias
 model_configs_lean = {
     #     test:    num_layers,  h, hg,   d,   sq,  skv,   p,      mask,             bias 
     "lean_1_0": ModelConfig(1, 16, 16,  64,  128,  128, 0.0,  "causal",         "no_bias"),
     "lean_1_1": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "no_mask", "post_scale_bias"),
-#    "lean_1_2": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "padding", "post_scale_bias"),
+    #"lean_1_2": ModelConfig(1, 16, 16,  64,  128,  128, 0.0, "padding", "post_scale_bias"),
     "lean_2_0": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0,  "causal",         "no_bias"),
     "lean_2_1": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "post_scale_bias"),
-#    "lean_2_2": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0, "padding", "post_scale_bias"),
+    #"lean_2_2": ModelConfig(1, 24, 24, 128, 2048, 2048, 0.0, "padding", "post_scale_bias"),
 }
-
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs_lean.keys())
 @pytest.mark.parametrize("fused_qkv_params", [True, False])
 @pytest.mark.parametrize("RoPE", [True, False])
 def test_transformer_layer(dtype, bs, model, fused_qkv_params, RoPE):
-    """Test TransformerLayer module when its DotProductAttention is enabled with
-    FlashAttention, FusedAttention, or UnfusedDotProductAttention backend"""
+    """Test TransformerLayer module"""
 
     # Get configs
     config = model_configs_lean[model]
@@ -855,23 +844,23 @@ def test_transformer_layer(dtype, bs, model, fused_qkv_params, RoPE):
         torch.testing.assert_close(flash_attn_bwd, unfused_attn_bwd, **tols)
         print("test_transformer_layer: flash_attn matches unfused_attn")
 
-################ test TE layer with MQA/GQA ################ 
-# To run a test in model_configs_lean:
+# Test TE layer with MQA/GQA
 #   pytest -s -v tests/pytorch/test_fused_attn.py::test_transformer_layer_gqa[lean_1_0-2-dtype0] 
-# all passed or skipped; fused attn MQA is still waiting dK/dV to reduce to b_hg_s_d
-
+#   all passed or skipped; fused attn MQA is still waiting dK/dV to reduce to b_hg_s_d
 @pytest.mark.parametrize("dtype", param_types_lean)
 @pytest.mark.parametrize("bs", batch_sizes_lean)
 @pytest.mark.parametrize("model", model_configs_lean.keys())
-def test_transformer_layer_gqa(dtype, bs, model):
+def test_transformer_layer_mqa_gqa(dtype, bs, model):
     """Test TransformerLayer module with MQA/GQA"""
 
+    # Set basic variables
     ckpt_attn = False
     qkv_format = 'sbhd'
     workspace_opt = True
     fused_qkv_params = True
     RoPE = False 
 
+    # Get configs
     config = model_configs_lean[model]
     def find_factors(x):
        f = []
@@ -932,9 +921,11 @@ def test_transformer_layer_gqa(dtype, bs, model):
             torch.testing.assert_close(fused_attn_bwd, unfused_attn_bwd, atol=atol, rtol=rtol)
             print("test_transformer_layer_gqa: fused_attn matches unfused_attn")
 
-################ core TE layer function ################ 
+# Core TE layer function
 def _run_transformer_layer(dtype, bs, config, backend, ckpt_attn, qkv_layout, workspace_opt, fused_qkv_params, RoPE):
+    """Run TransformerLayer module with one forward pass and one backward pass"""
 
+    # Set RNG and environment variables
     reset_rng_states()
     os.environ["NVTE_FLASH_ATTN"] = "0"
     os.environ["NVTE_FUSED_ATTN"] = "0"
@@ -943,19 +934,20 @@ def _run_transformer_layer(dtype, bs, config, backend, ckpt_attn, qkv_layout, wo
     if backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
 
+    # Create input tensor
     inp = torch.randn(
             config.max_seqlen_q, bs, config.hidden_size,
-            dtype=dtype).cuda()
-    inp.requires_grad=True
+            dtype=dtype, device="cuda", requires_grad = True)
 
+    # Create seqlens
     if "padding" in config.attn_mask_type:
-        seqlens = torch.randint(1, config.max_seqlen_q, [bs], dtype = torch.int32).cuda()
+        seqlens = torch.randint(1, config.max_seqlen_q, [bs], dtype=torch.int32, device="cuda")
     else:
-        seqlens = torch.empty(bs, dtype=torch.int32).cuda()
-        seqlens.fill_(config.max_seqlen_q)
-    cu_seqlens = torch.zeros(bs + 1, device=inp.device, dtype=torch.int32)
+        seqlens = torch.full([bs], config.max_seqlen_q, dtype=torch.int32, device="cuda")
+    cu_seqlens = torch.zeros(bs + 1, device="cuda", dtype=torch.int32)
     cu_seqlens[1:] = torch.cumsum(seqlens, dim=0)
 
+    # Create mask 
     attention_mask = None
     if "padding" in config.attn_mask_type:
         attention_mask_q = torch.Tensor([])
@@ -974,10 +966,11 @@ def _run_transformer_layer(dtype, bs, config, backend, ckpt_attn, qkv_layout, wo
     drop_path_rates = [
             rate.item() for rate in torch.linspace(0, drop_path_rate, config.num_layers)]
 
+    # Create bias
     if config.attn_bias_type == 'no_bias':
         bias = None
     if config.attn_bias_type == 'post_scale_bias':
-        bias = torch.randn(1, config.num_attention_heads, config.max_seqlen_q, config.max_seqlen_kv, dtype = dtype).cuda()
+        bias = torch.randn(1, config.num_attention_heads, config.max_seqlen_q, config.max_seqlen_kv, dtype=dtype, device="cuda")
     elif config.attn_bias_type == 'alibi':
         if os.environ['NVTE_FUSED_ATTN_BACKEND'] == '0':
             config.attn_bias_type = 'post_scale_bias'
@@ -992,15 +985,17 @@ def _run_transformer_layer(dtype, bs, config, backend, ckpt_attn, qkv_layout, wo
             bias = d.expand(1, config.num_attention_heads, config.max_seqlen_q, config.max_seqlen_kv)
             for i in range(config.num_attention_heads):
                 bias[0,i,:,:] = m[i] *  bias[0,i,:,:]
-            bias = bias.to(dtype = dtype).cuda()
+            bias = bias.to(dtype=dtype, device="cuda")
         else:
             bias = None
 
+    # Create RoPE
     rotary_pos_emb = None
     if RoPE:
         PE = RotaryPositionEmbedding(dim=config.head_dim)
-        rotary_pos_emb = PE(config.max_seqlen_q).cuda().to(dtype=dtype)
+        rotary_pos_emb = PE(config.max_seqlen_q).to(dtype=dtype, device="cuda")
 
+    # Set up model
     block = (
         TransformerLayer(
             config.hidden_size,
@@ -1034,23 +1029,24 @@ def _run_transformer_layer(dtype, bs, config, backend, ckpt_attn, qkv_layout, wo
             ub_tp_comm_overlap=False,
             bias=True,
         )
-        .to(dtype=dtype)
-        .cuda()
+        .to(dtype=dtype, device="cuda")
     )
 
-    op = block(inp,
+    # Run a forward and backward pass
+    out = block(inp,
         attention_mask=attention_mask,
         self_attn_mask_type=config.attn_mask_type,
         checkpoint_core_attention=False,
         rotary_pos_emb=rotary_pos_emb,
         core_attention_bias_type=config.attn_bias_type,
         core_attention_bias=bias)
-    loss = op.sum()
+    loss = out.sum()
     loss.backward()
 
-    return op, inp.grad
+    return out, inp.grad
 
 
+# Test DPA with FP8
 model_configs_fp8 = {
     "test1": ModelConfig(1, 16, 16, 64, 512, 512, 0.0, "no_mask", "no_bias"),
 }
@@ -1062,11 +1058,11 @@ param_types_fp8 = [torch.float16]
 @pytest.mark.parametrize("bs", batch_sizes_fp8)
 @pytest.mark.parametrize("model", model_configs_fp8.keys())
 def test_dpa_fp8(dtype, bs, model):
-    """Test FP8 dot-product attention with different backends
+    """Test FP8 dot product attention
 
-    FusedAttention uses fused_attn_fwd/bwd_qkvpacked from
-    cpp_extensions. UnfusedDotProductAttention uses plain PyTorch
-    operations.
+    FusedAttention uses fused_attn_fwd/bwd_qkvpacked from cpp_extensions,
+    and UnfusedDotProductAttention uses plain PyTorch operations in FP16
+    and converts inputs/outputs from/to FP8.
 
     """
 
@@ -1090,12 +1086,13 @@ def test_dpa_fp8(dtype, bs, model):
         "UnfusedDotProductAttention",
     )
 
-    # Check that results match
     tols = dict(atol=2.5e-2, rtol=2.5e-2)
     torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
     torch.testing.assert_close(fused_attn_bwd, unfused_attn_bwd, **tols)
 
 def _run_dpa_fp8(dtype, bs, config, backend):
+    """Run FusedAttention FP8 backend, i.e.
+    fused_attn_fwd/bwd_qkvpacked from cpp_extensions"""
 
     reset_rng_states()
     os.environ["NVTE_FLASH_ATTN"] = "0"
@@ -1107,16 +1104,15 @@ def _run_dpa_fp8(dtype, bs, config, backend):
 
     inp = 0.01 * torch.randn(
             bs * config.max_seqlen_q, config.num_attention_heads * config.head_dim,
-            dtype=dtype).cuda()
-    inp.requires_grad=True
-    seqlens = torch.empty(bs, dtype=torch.int32).cuda()
-    seqlens.fill_(config.max_seqlen_q)
-    cu_seqlens = torch.zeros(bs + 1, device=inp.device, dtype=torch.int32)
+            dtype=dtype, device="cuda")
+    inp.requires_grad = True
+    seqlens = torch.full([bs], config.max_seqlen_q, dtype=torch.int32, device="cuda")
+    cu_seqlens = torch.zeros(bs + 1, device="cuda", dtype=torch.int32)
     cu_seqlens[1:] = torch.cumsum(seqlens, dim=0)
-    op_grad = 0.01 * torch.randn(
+    out_grad = 0.01 * torch.randn(
         bs * config.max_seqlen_q, config.num_attention_heads * config.head_dim,
-        dtype=dtype).cuda()
-    torch.save(op_grad, 'op_grad.pt')
+        dtype=dtype, device="cuda")
+    torch.save(out_grad, 'out_grad.pt')
 
     fp8_recipe = recipe.DelayedScaling(
         margin=0,
@@ -1126,10 +1122,10 @@ def _run_dpa_fp8(dtype, bs, config, backend):
         amax_compute_algo="most_recent",
     )
 
-    dpa = DPA_FP8(config).to(dtype=torch.float16).cuda()
+    dpa = DPA_FP8(config).to(dtype=torch.float16, device="cuda")
     with fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
-        op = dpa(inp, cu_seqlens, config.max_seqlen_q)
-        op.backward(op_grad)
+        out = dpa(inp, cu_seqlens, config.max_seqlen_q)
+        out.backward(out_grad)
 
     context = torch.load("ctx.pt")
     dqkv = torch.load('dqkv.pt')
@@ -1137,6 +1133,9 @@ def _run_dpa_fp8(dtype, bs, config, backend):
         dqkv.view(bs, config.max_seqlen_q, 3, config.num_attention_heads, config.head_dim).transpose(0,1).contiguous())
 
 def _run_dpa_fp8_ref(dtype, bs, config, backend):
+    """Run UnfusedDotProductAttention as a reference, i.e.
+    plain PyTorch implementation in FP16 and inputs/outputs
+    are converted from/to FP8"""
 
     os.environ["NVTE_FLASH_ATTN"] = "0"
     os.environ["NVTE_FUSED_ATTN"] = "0"
@@ -1145,18 +1144,17 @@ def _run_dpa_fp8_ref(dtype, bs, config, backend):
     if backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
 
-    inp = torch.load('qkv.pt').cuda()
-    inp.requires_grad=True
-    seqlens = torch.empty(bs, dtype=torch.int32).cuda()
-    seqlens.fill_(config.max_seqlen_q)
-    cu_seqlens = torch.zeros(bs + 1, device=inp.device, dtype=torch.int32)
+    inp = torch.load('qkv.pt').to(device="cuda")
+    inp.requires_grad = True
+    seqlens = torch.full([bs], config.max_seqlen_q, dtype=torch.int32, device="cuda")
+    cu_seqlens = torch.zeros(bs + 1, device="cuda", dtype=torch.int32)
     cu_seqlens[1:] = torch.cumsum(seqlens, dim=0)
-    op_grad = torch.load('op_grad.pt').cuda().view(bs, config.max_seqlen_q, -1).transpose(0,1)
+    out_grad = torch.load('out_grad.pt').to(device="cuda").view(bs, config.max_seqlen_q, -1).transpose(0,1)
 
     _DUMMY_CUDA_RNG_STATE_TRACKER = CudaRNGStatesTracker()
     _DUMMY_CUDA_RNG_STATE_TRACKER.add("model-parallel-rng", seed)
 
-    def get_dummy_cuda_rng_tracker():
+    def get_dummy_cuda_rng_tracker() -> CudaRNGStatesTracker:
         """Get cuda rng tracker."""
         return _DUMMY_CUDA_RNG_STATE_TRACKER
 
@@ -1171,16 +1169,16 @@ def _run_dpa_fp8_ref(dtype, bs, config, backend):
                 tp_group=None,
                 layer_number=1,
                 attention_type="self"
-        ).to(dtype=dtype).cuda()
+        ).to(dtype=dtype, device="cuda")
     )
 
     q = inp[:, :,0,:,:]
     k = inp[:, :,1,:,:]
     v = inp[:, :,2,:,:]
-    op = block(q, k, v, attn_mask_type=config.attn_mask_type)
-    op.backward(op_grad)
+    out = block(q, k, v, attn_mask_type=config.attn_mask_type)
+    out.backward(out_grad)
 
-    return op, inp.grad
+    return out, inp.grad
 
 _CUBLASLT_WORKSPACE_SIZE_BYTES = 33_554_432  # 32MiB
 _2X_ACC_FPROP = False
