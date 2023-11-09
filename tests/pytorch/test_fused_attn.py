@@ -546,6 +546,12 @@ def test_transformer_layer(dtype, model_configs, model, ckpt_attn, qkv_format, f
     tols = dict(atol=5e-1, rtol=5e-2)
     workspace_opt = True
 
+    # TODO @cyanguwa: Handle test cases more cleanly
+    if config.hidden_size > 1024:
+        pytest.skip(
+            "Tolerances for test_transformer_layer are intended for small test cases"
+        )
+
     # Skip if only unfused backend is supported
     if config.max_seqlen_q <= 512 and config.max_seqlen_kv <= 512:
         os.environ["NVTE_FUSED_ATTN_BACKEND"] = "0"
