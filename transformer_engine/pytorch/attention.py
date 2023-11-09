@@ -876,7 +876,58 @@ class _SplitAlongDim(torch.autograd.Function):
 
         return torch.cat(grad_outputs, dim = split_dim), None, None
 
+class _CombineAlongDim(torch.autograd.Function):
+    """"""
 
+    @staticmethod
+    def forward(ctx,
+                query_layer: torch.Tensor,
+                key_layer: torch.Tensor,
+                value_layer: torch.Tensor,
+                split_size: int,
+                split_dim: int,
+    ) -> Tuple[torch.Tensor, ...]:
+        if split_size == 3:
+            mixed_layer = torch.Tensor().to(device=query_layer.device,
+                                    dtype=query_layer.dtype)
+            new_shape = list(query_layer.shape)
+            new_shape.insert(split_dim, split_size)
+            new_stride = list(query_layer.stride())
+            stride = np.prod(query_layer.shape[split_dim:])
+            new_stride.insert(split_dim, stride)
+            mixed_layer.set_(query_layer.untyped_storage(),
+                     query_layer.storage_offset(),
+                     new_shape,
+                     new_stride
+            )
+            ctx.split_dim = split_dim
+            ctx.split_size = split_size
+            return mixed_layer
+        mixed_kv = torch.Tensor().to(device=key_layer.device,
+                                dtype=key_layer.dtype)
+        new_shape = list(key_layer.shape)
+        new_shape.insert(split_dim, split_size)
+        new_stride = list(key_layer.stride())
+        stride = np.prod(key_layer.shape[split_dim:])
+        new_stride.insert(split_dim, stride)
+        mixed_kv.set_(key_layer.untyped_storage(),
+                 key_layer.storage_offset(),
+                 new_shape,
+                 new_stride
+        )
+        ctx.split_dim = split_dim
+        ctx.split_size = split_size
+        return mixed_kv
+
+    @staticmethod
+    def backward(ctx,
+                 *grad_outputs):
+        if ctx.split_size == 3:
+            ret = torch.split(grad_outputs[0], 1, dim = ctx.split_dim)
+            return ret[0].squeeze(ctx.split_dim), ret[1].squeeze(ctx.split_dim), ret[2].squeeze(ctx.split_dim), None, None
+        if ctx.split_size == 2:
+            ret = torch.split(grad_outputs[0], 1, dim = ctx.split_dim)
+            return None, ret[0].squeeze(ctx.split_dim), ret[1].squeeze(ctx.split_dim), None, None
 
 class UnfusedDotProductAttention(torch.nn.Module):
     """Parallel attention w/o QKV and Proj Gemms
@@ -1608,8 +1659,6 @@ class FusedAttention(torch.nn.Module):
     | qkv dtype     | fp16/bf16               | fp16/bf16                      |
     | attn_type     | self/cross              | self/cross                     |
     | qkv_layout    |                         |                                |
-    |  - qkv        | qkv_interleaved         | qkv_interleaved                |
-    |  - (q,kv)     | kv_interleaved          |                                |
     |  - (q,k,v)    | sb3hd, bs3hd            | sb3hd, bs3hd, sbh3d, bsh3d     |
     |               | sbhd_sb2hd, bshd_bs2hd  | sbhd_sb2hd, bshd_bs2hd         |
     |               | bshd_bshd_bshd          | sbhd_sbh2d, bshd_bsh2d         |
@@ -1770,23 +1819,92 @@ class FusedAttention(torch.nn.Module):
                 and (fused_attention_backend
                     == tex.NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen))
         with self.attention_dropout_ctx():
-            output = FusedAttnFunc.apply(
-                self.training,
-                max_seqlen_q, max_seqlen_kv,
-                cu_seqlens_q, cu_seqlens_kv,
-                query_layer, key_layer, value_layer,
-                qkv_dtype,
-                core_attention_bias,
-                1.0/self.norm_factor,
-                self.attention_dropout if self.training else 0.0,
-                fast_zero_fill,
-                qkv_layout,
-                core_attention_bias_type,
-                attn_mask_type,
-                None, # rng_gen
-                fused_attention_backend,
-                use_FAv2_bwd,
-            )
+            if qkv_layout in ['sbh3d', 'sb3hd']:
+                #mixed_layer = torch.Tensor().to(device=query_layer[0].device,
+                #                        dtype=query_layer[0].dtype)
+                #new_shape = list(query_layer.shape)
+                #new_shape.insert(3, 3)
+                #new_stride = list(query_layer.stride())
+                #new_stride.insert(3, 3*query_layer.shape[-1])
+                #mixed_layer.set_(query_layer[0].untyped_storage(),
+                #         query_layer[0].storage_offset(),
+                #         new_shape,
+                #         new_stride
+                #)
+                dim = 3 if qkv_layout == 'sbh3d' else 2
+                mixed_layer = _CombineAlongDim.apply(query_layer, key_layer, value_layer, 3, dim)
+                #torch.save(mixed_layer, 'mixed_layer.pt')
+                #torch.save(query_layer, 'query_layer.pt')
+                #torch.save(key_layer, 'key_layer.pt')
+                #torch.save(value_layer, 'value_layer.pt')
+                #print('layout ', qkv_layout, mixed_layer.shape)
+                output = FusedAttnFunc_qkvpacked.apply(
+                    self.training,
+                    max_seqlen_q,
+                    cu_seqlens_q,
+                    mixed_layer,
+                    qkv_dtype,
+                    core_attention_bias,
+                    1.0/self.norm_factor,
+                    self.attention_dropout if self.training else 0.0,
+                    fast_zero_fill,
+                    qkv_layout,
+                    core_attention_bias_type,
+                    attn_mask_type,
+                    None, # rng_gen
+                    fused_attention_backend,
+                    use_FAv2_bwd,
+                )
+            elif qkv_layout in ['sbhd_sbh2d', 'sbhd_sb2hd']:
+                #mixed_kv = torch.Tensor().to(device=key_layer[0].device,
+                #                        dtype=key_layer[0].dtype)
+                #new_shape = list(key_layer.shape)
+                #new_shape.insert(3, 2)
+                #new_stride = list(key_layer.stride())
+                #new_stride.insert(3, 2*key_layer.shape[-1])
+                #mixed_kv.set_(key_layer[0].untyped_storage(),
+                #         key_layer[0].storage_offset(),
+                #         new_shape,
+                #         new_stride
+                #)
+                dim = 3 if qkv_layout == 'sbhd_sbh2d' else 2
+                mixed_kv = _CombineAlongDim.apply(query_layer, key_layer, value_layer, 2, dim)
+                #print('layout ', qkv_layout, mixed_kv.shape)
+                output = FusedAttnFunc_kvpacked.apply(
+                    self.training,
+                    max_seqlen_q, max_seqlen_kv,
+                    cu_seqlens_q, cu_seqlens_kv,
+                    query_layer, mixed_kv,
+                    qkv_dtype,
+                    core_attention_bias,
+                    1.0/self.norm_factor,
+                    self.attention_dropout if self.training else 0.0,
+                    fast_zero_fill,
+                    qkv_layout,
+                    core_attention_bias_type,
+                    attn_mask_type,
+                    None, # rng_gen
+                    fused_attention_backend,
+                    use_FAv2_bwd,
+                )
+            else:
+                output = FusedAttnFunc.apply(
+                    self.training,
+                    max_seqlen_q, max_seqlen_kv,
+                    cu_seqlens_q, cu_seqlens_kv,
+                    query_layer, key_layer, value_layer,
+                    qkv_dtype,
+                    core_attention_bias,
+                    1.0/self.norm_factor,
+                    self.attention_dropout if self.training else 0.0,
+                    fast_zero_fill,
+                    qkv_layout,
+                    core_attention_bias_type,
+                    attn_mask_type,
+                    None, # rng_gen
+                    fused_attention_backend,
+                    use_FAv2_bwd,
+                )
 
         # ...hd -> ...(hd)
         return output.view(*output.shape[:-2], -1)

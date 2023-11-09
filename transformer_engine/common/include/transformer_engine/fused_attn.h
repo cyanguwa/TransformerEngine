@@ -169,8 +169,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
    | 2       | FP8       |    BS3HD   |      NO_BIAS       |    PADDING_MASK        |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
- *  \param[in]     QKV                      The QKV tensor in packed format,
- *                                          [total_seqs, 3, num_heads, head_dim].
+ *  \param[in]     QKV                      The QKV tensor in packed format, H3D or 3HD.
  *  \param[in]     Bias                     The Bias tensor.
  *  \param[in,out] S                        The S tensor.
  *  \param[out]    O                        The output O tensor.
@@ -214,8 +213,7 @@ void nvte_fused_attn_fwd_qkvpacked(
    | 2       | FP8       |    BS3HD   |      NO_BIAS       |    PADDING_MASK        |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
- *  \param[in]     QKV                      The QKV tensor in packed format,
- *                                          [total_seqs, 3, num_heads, head_dim].
+ *  \param[in]     QKV                      The QKV tensor in packed format, H3D or 3HD.
  *  \param[in]     O                        The O tensor from forward.
  *  \param[in]     dO                       The gradient of the O tensor.
  *  \param[in]     S                        The S tensor.
@@ -266,8 +264,8 @@ void nvte_fused_attn_bwd_qkvpacked(
    | 0       | FP16/BF16 | BSHD_BS2HD | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
- *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
- *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
+ *  \param[in]     Q                        The Q tensor, in HD layouts.
+ *  \param[in]     KV                       The KV tensor, in 2HD or H2D layouts.
  *  \param[in]     Bias                     The Bias tensor.
  *  \param[in,out] S                        The S tensor.
  *  \param[out]    O                        The output O tensor.
@@ -314,8 +312,8 @@ void nvte_fused_attn_fwd_kvpacked(
    | 0       | FP16/BF16 | BSHD_BS2HD | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
- *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
- *  \param[in]     KV                       The KV tensor, [total_seqs_kv, 2, num_heads, head_dim].
+ *  \param[in]     Q                        The Q tensor, in HD layouts.
+ *  \param[in]     KV                       The KV tensor, in H2D or 2HD layouts.
  *  \param[in]     O                        The O tensor from forward.
  *  \param[in]     dO                       The gradient of the O tensor.
  *  \param[in]     S                        The S tensor.
