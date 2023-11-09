@@ -24,76 +24,23 @@ extern "C" {
     `SBHD` and `BSHD`-based layouts are used when sequences in a batch are of equal length
     or padded to the same length, and `THD`-based layouts are used when sequences have
     different lengths in a batch.
- *  \note {`NVTE_QKV_INTERLEAVED`, `NVTE_KV_INTERLEAVED` and `NVTE_NOT_INTERLEAVED`
-    will be deprecated in the next release. Please use their equivalent enums instead, i.e. `NVTE_T3HD`,
-    `NVTE_THD_T2HD` and `NVTE_THD_THD_THD` when sequences are of variable lengths, and `NVTE_BS3HD`,
-    `NVTE_BSHD_BS2HD` and `NVTE_BSHD_BSHD_BSHD` when sequences are of equal length or padded
-    to equal length.}
  */
 enum NVTE_QKV_Layout {
-/*! Separate Q, K, V tensors.
-    \verbatim
-      Q: [total_seqs_q, num_heads, head_dim]
-                          | Q   Q   Q        ...       Q
-                          | \___________  _____________/
-          total_seqs_q   <|             \/
-                          |   num_heads * head_dim
-      K: [total_seqs_kv, num_heads, head_dim]
-                          | K   K   K        ...       K
-                          | \___________  _____________/
-          total_seqs_kv  <|             \/
-                          |   num_heads * head_dim
-      V: [total_seqs_kv, num_heads, head_dim]
-                          | V   V   V        ...       V
-                          | \___________  _____________/
-          total_seqs_kv  <|             \/
-                          |   num_heads * head_dim
-    \endverbatim
- */
-    NVTE_NOT_INTERLEAVED = 0,
-
-/*! Packed QKV.
-    \verbatim
-      QKV: [total_seqs, 3, num_heads, head_dim]
-                          | Q   Q   Q        ...       Q K K K ... K V V V ... V
-                          | \___________  _____________/
-            total_seqs   <|             \/
-                          |   num_heads * head_dim
-    \endverbatim
- */
-    NVTE_QKV_INTERLEAVED = 1,
-
- /*! Q and packed KV.
-     \verbatim
-       Q: [total_seqs_q, num_heads, head_dim]
-                          | Q   Q   Q        ...       Q
-                          | \___________  _____________/
-           total_seqs_q  <|             \/
-                          |   num_heads * head_dim
-       KV: [total_seqs_kv, 2, num_heads, head_dim]
-                          | K   K   K        ...       K V V V ... V
-                          | \___________  _____________/
-           total_seqs_kv <|             \/
-                          |   num_heads * head_dim
-    \endverbatim
- */
-    NVTE_KV_INTERLEAVED = 2,
-
-    NVTE_SB3HD = 3,
-    NVTE_SBH3D = 4,
-    NVTE_SBHD_SB2HD = 5,
-    NVTE_SBHD_SBH2D = 6,
-    NVTE_SBHD_SBHD_SBHD = 7,
-    NVTE_BS3HD = 8,
-    NVTE_BSH3D = 9,
-    NVTE_BSHD_BS2HD = 10,
-    NVTE_BSHD_BSH2D = 11,
-    NVTE_BSHD_BSHD_BSHD = 12,
-    NVTE_T3HD = 13,
-    NVTE_TH3D = 14,
-    NVTE_THD_T2HD = 15,
-    NVTE_THD_TH2D = 16,
-    NVTE_THD_THD_THD = 17,
+    NVTE_SB3HD = 0,
+    NVTE_SBH3D = 1,
+    NVTE_SBHD_SB2HD = 2,
+    NVTE_SBHD_SBH2D = 3,
+    NVTE_SBHD_SBHD_SBHD = 4,
+    NVTE_BS3HD = 5,
+    NVTE_BSH3D = 6,
+    NVTE_BSHD_BS2HD = 7,
+    NVTE_BSHD_BSH2D = 8,
+    NVTE_BSHD_BSHD_BSHD = 9,
+    NVTE_T3HD = 10,
+    NVTE_TH3D = 11,
+    NVTE_THD_T2HD = 12,
+    NVTE_THD_TH2D = 13,
+    NVTE_THD_THD_THD = 14,
 };
 
 /*! \enum NVTE_QKV_Layout_Group
@@ -216,10 +163,10 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
  *
  * Support Matrix:
    \verbatim
-   | backend | precision |    qkv layout   |       bias         |      mask              | dropout | sequence length | head_dim |
-   | 0       | FP16/BF16 | QKV_INTERLEAVED | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
-   | 1       | FP16/BF16 | QKV_INTERLEAVED |       NO_BIAS      |    CAUSAL_MASK         |   Yes   |      > 512      |  64, 128 |
-   | 2       | FP8       | QKV_INTERLEAVED |      NO_BIAS       |    PADDING_MASK        |   Yes   |     <= 512      |    64    |
+   | backend | precision | qkv layout |       bias         |      mask              | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 |    BS3HD   | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
+   | 1       | FP16/BF16 |    BS3HD   |       NO_BIAS      |    CAUSAL_MASK         |   Yes   |      > 512      |  64, 128 |
+   | 2       | FP8       |    BS3HD   |      NO_BIAS       |    PADDING_MASK        |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -261,10 +208,10 @@ void nvte_fused_attn_fwd_qkvpacked(
  *
  * Support Matrix:
    \verbatim
-   | backend | precision |    qkv layout   |       bias         |      mask              | dropout | sequence length | head_dim |
-   | 0       | FP16/BF16 | QKV_INTERLEAVED | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
-   | 1       | FP16/BF16 | QKV_INTERLEAVED |       NO_BIAS      |    CAUSAL_MASK         |   Yes   |      > 512      |  64, 128 |
-   | 2       | FP8       | QKV_INTERLEAVED |      NO_BIAS       |    PADDING_MASK        |   Yes   |     <= 512      |    64    |
+   | backend | precision | qkv layout |       bias         |      mask              | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 |    BS3HD   | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
+   | 1       | FP16/BF16 |    BS3HD   |       NO_BIAS      |    CAUSAL_MASK         |   Yes   |      > 512      |  64, 128 |
+   | 2       | FP8       |    BS3HD   |      NO_BIAS       |    PADDING_MASK        |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
  *  \param[in]     QKV                      The QKV tensor in packed format,
@@ -315,8 +262,8 @@ void nvte_fused_attn_bwd_qkvpacked(
  *
  * Support Matrix:
    \verbatim
-   | backend | precision |   qkv layout   |       bias         |          mask          | dropout | sequence length | head_dim |
-   | 0       | FP16/BF16 | KV_INTERLEAVED | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
+   | backend | precision | qkv layout |       bias         |          mask          | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 | BSHD_BS2HD | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].
@@ -363,8 +310,8 @@ void nvte_fused_attn_fwd_kvpacked(
  *
  * Support Matrix:
    \verbatim
-   | backend | precision |   qkv layout   |       bias         |          mask          | dropout | sequence length | head_dim |
-   | 0       | FP16/BF16 | KV_INTERLEAVED | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
+   | backend | precision | qkv layout |       bias         |          mask          | dropout | sequence length | head_dim |
+   | 0       | FP16/BF16 | BSHD_BS2HD | NO/POST_SCALE_BIAS | PADDING/CAUSAL/NO_MASK |   Yes   |     <= 512      |    64    |
    \endverbatim
  *
  *  \param[in]     Q                        The Q tensor, [total_seqs_q, num_heads, head_dim].

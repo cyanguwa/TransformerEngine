@@ -19,7 +19,6 @@ NVTE_QKV_Layout_Group nvte_get_qkv_layout_group(NVTE_QKV_Layout qkv_layout) {
         case NVTE_QKV_Layout::NVTE_SB3HD:
         case NVTE_QKV_Layout::NVTE_BS3HD:
         case NVTE_QKV_Layout::NVTE_T3HD:
-        case NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED:
             return NVTE_QKV_Layout_Group::NVTE_3HD;
         case NVTE_QKV_Layout::NVTE_SBH3D:
         case NVTE_QKV_Layout::NVTE_BSH3D:
@@ -28,7 +27,6 @@ NVTE_QKV_Layout_Group nvte_get_qkv_layout_group(NVTE_QKV_Layout qkv_layout) {
         case NVTE_QKV_Layout::NVTE_SBHD_SB2HD:
         case NVTE_QKV_Layout::NVTE_BSHD_BS2HD:
         case NVTE_QKV_Layout::NVTE_THD_T2HD:
-        case NVTE_QKV_Layout::NVTE_KV_INTERLEAVED:
             return NVTE_QKV_Layout_Group::NVTE_HD_2HD;
         case NVTE_QKV_Layout::NVTE_SBHD_SBH2D:
         case NVTE_QKV_Layout::NVTE_BSHD_BSH2D:
@@ -37,7 +35,6 @@ NVTE_QKV_Layout_Group nvte_get_qkv_layout_group(NVTE_QKV_Layout qkv_layout) {
         case NVTE_QKV_Layout::NVTE_SBHD_SBHD_SBHD:
         case NVTE_QKV_Layout::NVTE_BSHD_BSHD_BSHD:
         case NVTE_QKV_Layout::NVTE_THD_THD_THD:
-        case NVTE_QKV_Layout::NVTE_NOT_INTERLEAVED:
             return NVTE_QKV_Layout_Group::NVTE_HD_HD_HD;
         default:
             NVTE_ERROR("qkv_layout not supported!");
@@ -64,9 +61,6 @@ NVTE_QKV_Format nvte_get_qkv_format(NVTE_QKV_Layout qkv_layout) {
         case NVTE_QKV_Layout::NVTE_THD_T2HD:
         case NVTE_QKV_Layout::NVTE_THD_TH2D:
         case NVTE_QKV_Layout::NVTE_THD_THD_THD:
-        case NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED:
-        case NVTE_QKV_Layout::NVTE_KV_INTERLEAVED:
-        case NVTE_QKV_Layout::NVTE_NOT_INTERLEAVED:
             return NVTE_QKV_Format::NVTE_THD;
         default:
             NVTE_ERROR("qkv_layout not supported!");
@@ -97,8 +91,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
           && (head_dim == 64)
           && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
           && (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
-          && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
-              || (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD))) {
+          && (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD)) {
 #if (CUDNN_VERSION >= 8900)
     backend = NVTE_Fused_Attn_Backend::NVTE_FP8;
 #else
@@ -118,9 +111,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK)  // TODO
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
-            && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
-                || (qkv_layout == NVTE_QKV_Layout::NVTE_KV_INTERLEAVED)
-                || (qkv_layout == NVTE_QKV_Layout::NVTE_SB3HD)
+            && ((qkv_layout == NVTE_QKV_Layout::NVTE_SB3HD)
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_SBHD_SB2HD)
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_BS3HD)
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_BSHD_BS2HD)
@@ -147,9 +138,8 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
             //    || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
-            && ((qkv_layout == NVTE_QKV_Layout::NVTE_QKV_INTERLEAVED)
-                || (qkv_layout == NVTE_QKV_Layout::NVTE_BS3HD)
-                || (qkv_layout == NVTE_QKV_Layout::NVTE_SB3HD))) {
+            && ((qkv_format == NVTE_QKV_Format::NVTE_SBHD)
+                || (qkv_format == NVTE_QKV_Format::NVTE_BSHD))) {
       flag_arb = true;
     }
 //    std::cout << " testing arbi... " << flag_arb << std::endl;

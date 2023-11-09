@@ -33,9 +33,6 @@ TORCH_DType = {
 }
 
 QKVLayout = {
-    "not_interleaved": NVTE_QKV_Layout.NVTE_NOT_INTERLEAVED,
-    "qkv_interleaved": NVTE_QKV_Layout.NVTE_QKV_INTERLEAVED,
-    "kv_interleaved": NVTE_QKV_Layout.NVTE_KV_INTERLEAVED,
     "sb3hd": NVTE_QKV_Layout.NVTE_SB3HD,
     "sbh3d": NVTE_QKV_Layout.NVTE_SBH3D,
     "sbhd_sb2hd": NVTE_QKV_Layout.NVTE_SBHD_SB2HD,
