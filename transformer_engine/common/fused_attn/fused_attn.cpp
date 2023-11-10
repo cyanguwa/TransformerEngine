@@ -154,7 +154,6 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
           backend = static_cast<NVTE_Fused_Attn_Backend>(env_backend);
       }
     }
-    std::cout << "[FusedAttn]: selected backend " << static_cast<int>(backend) << "." << std::endl;
 #if (CUDNN_VERSION < 8901)
     if (backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
       backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
