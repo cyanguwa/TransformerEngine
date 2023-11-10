@@ -124,6 +124,7 @@ def get_cu_seqlens(mask: torch.Tensor) -> torch.Tensor:
     tensor of shape [batch_size + 1,] containing the cumulative sequence lengths
     of every sample in the batch.
     """
+    print('---------- get_cu_seqlens')
     mask = mask.squeeze(1).squeeze(1)
     bs, seqlen = mask.shape
 
@@ -140,6 +141,7 @@ def get_cu_seqlens_and_indices(mask: torch.Tensor) -> Tuple[torch.Tensor, torch.
     tensor of shape [batch_size + 1,] containing the cumulative sequence lengths
     of every sample in the batch and the indices containing valid samples.
     """
+    print('---------- get_cu_seqlens_and_indices')
     mask = mask.squeeze(1).squeeze(1)
     bs, seqlen = mask.shape
 
@@ -149,15 +151,11 @@ def get_cu_seqlens_and_indices(mask: torch.Tensor) -> Tuple[torch.Tensor, torch.
     cu_seqlens = torch.cat((zero, cu_seqlens))
 
     mask = mask.reshape(-1)
-    print('mask reshpe',mask.shape)
     indices = mask.nonzero()
     indices = indices.unsqueeze(-1)
-    print(indices.shape, indices)
 
     num_nonzeros = indices.shape[0]
-    print(num_nonzeros)
     pad_amount = bs * seqlen - num_nonzeros
-    print(pad_amount)
     indices = F.pad(input=indices, pad=(0, 0, 0, 0, 0, pad_amount),
                     mode="constant", value=float(bs * seqlen))
 
@@ -169,20 +167,16 @@ def get_indices(max_seqlen: int, cu_seqlens: torch.Tensor) -> torch.Tensor:
     tensor of shape [batch_size * max_seqlen, 1, 1] containing the indices for
     valid tokens in all the samples in the batch.
     """
-
+    print('---------- get_indices')
     bs = len(cu_seqlens) - 1 
     seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
     indices = [i*max_seqlen + ii for i,j in enumerate(seqlens) for ii in range(j)]
     indices = torch.Tensor(indices).unsqueeze(1).unsqueeze(1).to(dtype=torch.int64, device=cu_seqlens.device)
-    print("---------- get indices", indices.shape, indices)
 
     num_nonzeros = indices.shape[0]
-    print(num_nonzeros)
     pad_amount = bs * max_seqlen - num_nonzeros
-    print(pad_amount)
     indices = F.pad(input=indices, pad=(0, 0, 0, 0, 0, pad_amount),
                     mode="constant", value=float(bs * max_seqlen))
-    print(indices)
 
     return indices
 
@@ -197,14 +191,10 @@ def pack_tensor(
     """
     padding_indice = torch.zeros(
         1, tensor.shape[1], tensor.shape[2], dtype=tensor.dtype, device=tensor.device)
-    print('padding indice',padding_indice.shape)
     tensor = torch.cat((tensor, padding_indice), dim=0)
-    print('tensor',tensor.shape)
 
     indices = indices.repeat(1, tensor.shape[1], tensor.shape[2])
-    print(indices.shape, indices[:10,0,0])
     packed = torch.gather(tensor, 0, indices)
-    print(packed.shape)
     return packed
 
 
