@@ -89,7 +89,8 @@ at::PhiloxCudaState init_philox_state(
 
 // fused attention FWD with packed QKV
 std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
-                size_t max_seqlen, bool is_training, float attn_scale, float p_dropout, bool set_zero,
+                size_t max_seqlen, bool is_training, float attn_scale,
+                float p_dropout, bool set_zero,
                 NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
                 const at::Tensor cu_seqlens,
                 const at::Tensor QKV,

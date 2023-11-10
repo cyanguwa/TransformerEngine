@@ -126,8 +126,6 @@ def get_cu_seqlens(mask: torch.Tensor) -> torch.Tensor:
     the samples in a batch.
     """
     mask = mask.squeeze(1).squeeze(1)
-    bs, seqlen = mask.shape
-
     reduced_mask = mask.sum(dim=1)
     cu_seqlens = reduced_mask.cumsum(dim=0).to(torch.int32)
     zero = torch.zeros(1, dtype=torch.int32, device="cuda")
@@ -169,7 +167,7 @@ def get_indices(max_seqlen: int, cu_seqlens: torch.Tensor) -> torch.Tensor:
     tensor of shape [batch_size * max_seqlen, 1, 1] containing the indices for
     the valid tokens in a batch.
     """
-    bs = len(cu_seqlens) - 1 
+    bs = len(cu_seqlens) - 1
     seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
     indices = [i*max_seqlen + ii for i,j in enumerate(seqlens) for ii in range(j)]
     indices = torch.Tensor(indices).unsqueeze(1).unsqueeze(1).to(
@@ -1324,8 +1322,10 @@ class FlashAttention(torch.nn.Module):
                         if cu_seqlens_q is None or cu_seqlens_kv is None:
                             assert (attention_mask is not None
                                 ), "Please provide attention_mask for padding!"
-                            _cu_seqlens_q, _indices_q = get_cu_seqlens_and_indices(attention_mask[0])
-                            _cu_seqlens_kv, _indices_kv = get_cu_seqlens_and_indices(attention_mask[1])
+                            _cu_seqlens_q, _indices_q = get_cu_seqlens_and_indices(
+                                attention_mask[0])
+                            _cu_seqlens_kv, _indices_kv = get_cu_seqlens_and_indices(
+                                attention_mask[1])
                         else:
                             _cu_seqlens_q = cu_seqlens_q
                             _cu_seqlens_kv = cu_seqlens_kv
@@ -2708,7 +2708,8 @@ class MultiheadAttention(torch.nn.Module):
              two tensors in shapes [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]
              for cross-attention. For the 'arbitrary' mask type, it should be in a shape that is
              broadcastable to [batch_size, num_heads, max_seqlen_q, max_seqlen_kv].
-        attn_mask_type: {'no_mask', 'padding', 'causal', 'padding_causal', 'arbitrary'}, default = `None`
+        attn_mask_type: {'no_mask', 'padding', 'causal', 'padding_causal', 'arbitrary'},
+                       default = `None`
                        type of attention mask passed into softmax operation.
         encoder_output : Optional[torch.Tensor], default = `None`
              Output of the encoder block to be fed into the decoder block if using
