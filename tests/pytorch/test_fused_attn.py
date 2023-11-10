@@ -101,16 +101,12 @@ def _is_fused_attention_supported(
     qkv_layout: str = "sbh3d",
 ) -> bool:
     """Check if FusedAttention supports a model configuration"""
-    if config.attn_mask_type == 'padding,causal':
-        attn_mask_type = 'padding_causal'
-    else:
-        attn_mask_type = config.attn_mask_type
     backend = tex.get_fused_attn_backend(
         TE_DType[dtype],
         TE_DType[dtype],
         QKVLayout[qkv_layout],
         AttnBiasType[config.attn_bias_type],
-        AttnMaskType[attn_mask_type],
+        AttnMaskType[config.attn_mask_type],
         config.dropout_p,
         config.max_seqlen_q,
         config.max_seqlen_kv,
@@ -229,44 +225,17 @@ def test_dot_product_attention(dtype, model_configs, model, ckpt_attn, workspace
         )
 
     if unfused_attn_supported and fused_attn_supported:
-        #print('fused fwd:')
-        #print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
-        #print('unfused fwd:')
-        #print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
-        #torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
-        #torch.save(unfused_attn_fwd, 'unfused_attn_fwd.pt')
         torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
-        for i in range(len(unfused_attn_bwd)):
-            #print('fused bwd:',i)
-            #print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
-            #print('unfused bwd:',i)
-            #print(unfused_attn_bwd[i].min().item(), unfused_attn_bwd[i].max().item())
-            #torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
-            #torch.save(unfused_attn_bwd[i], 'unfused_attn_bwd_'+str(i)+'.pt')
+        for i,_ in enumerate(unfused_attn_bwd):
             torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
-        print("test_dot_product_attention: fused_attn matches unfused_attn") # TODO remove
     if unfused_attn_supported and flash_attn_supported:
         torch.testing.assert_close(flash_attn_fwd, unfused_attn_fwd, **tols)
-        for i in range(len(flash_attn_bwd)):
+        for i,_ in enumerate(flash_attn_bwd):
             torch.testing.assert_close(unfused_attn_bwd[i], flash_attn_bwd[i], **tols)
-        print("test_dot_product_attention: flash_attn matches unfused_attn")
     if fused_attn_supported and flash_attn_supported:
-        #print('fused fwd:')
-        #print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
-        #print('flash fwd:')
-        #print(flash_attn_fwd.min().item(), flash_attn_fwd.max().item())
-        #torch.save(fused_attn_fwd, 'fused_attn_fwd.pt')
-        #torch.save(flash_attn_fwd, 'flash_attn_fwd.pt')
         torch.testing.assert_close(fused_attn_fwd, flash_attn_fwd, **tols)
-        for i in range(len(flash_attn_bwd)):
-            #print('fused bwd:',i)
-            #print(fused_attn_bwd[i].min().item(), fused_attn_bwd[i].max().item())
-            #print('flash bwd:',i)
-            #print(flash_attn_bwd[i].min().item(), flash_attn_bwd[i].max().item())
-            #torch.save(fused_attn_bwd[i], 'fused_attn_bwd_'+str(i)+'.pt')
-            #torch.save(flash_attn_bwd[i], 'flash_attn_bwd_'+str(i)+'.pt')
+        for i,_ in enumerate(flash_attn_bwd):
             torch.testing.assert_close(fused_attn_bwd[i], flash_attn_bwd[i], **tols)
-        print("test_dot_product_attention: flash_attn matches fused_attn")
 
 @pytest.mark.skipif(_cudnn_version() < (8,9,1), reason="cuDNN 8.9.1+ is required.")
 @pytest.mark.parametrize("dtype", param_types)
@@ -286,10 +255,6 @@ model_configs_mask = {
     "mask_3_1": ModelConfig(4, 16, 16,  64,  128,  256, 0.0,        "padding", "no_bias"),
     "mask_4_0": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0,        "padding", "no_bias"),
     "mask_4_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0,        "padding", "no_bias"),
-#    "mask_5_0": ModelConfig(2, 16, 16,  64,  128,  128, 0.0, "padding,causal", "no_bias"), # TODO make it work
-#    "mask_5_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "padding,causal", "no_bias"),
-#    "mask_6_0": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0, "padding,causal", "no_bias"),
-#    "mask_6_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "padding,causal", "no_bias"),
 }
 
 @pytest.mark.skipif(_cudnn_version() < (8,9,1), reason="cuDNN 8.9.1+ is required.")
@@ -304,10 +269,6 @@ model_configs_bias = {
     #     test:             b,  h, hg,   d,   sq,  skv,   p,      mask,             bias 
     "bias_1_0": ModelConfig(4, 16, 16,  64,  128,  128, 0.0, "no_mask", "post_scale_bias"),
     "bias_1_1": ModelConfig(2, 16, 16,  64,  128,  256, 0.0, "no_mask", "post_scale_bias"),
-#    "bias_2_0": ModelConfig(4, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "post_scale_bias"), # TODO make this work
-#    "bias_2_1": ModelConfig(2, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "post_scale_bias"),
-#    "bias_3_0": ModelConfig(4, 24, 24, 128, 2048, 2048, 0.0, "no_mask",           "alibi"),
-#    "bias_3_1": ModelConfig(2, 24, 24, 128, 2048, 4096, 0.0, "no_mask",           "alibi"),
 }
 
 @pytest.mark.skipif(_cudnn_version() < (8,9,1), reason="cuDNN 8.9.1+ is required.")
@@ -327,7 +288,7 @@ qkv_layouts = [
 
 model_configs_layout = {
     #       test:             b,  h, hg,   d,   sq,  skv,   p,      mask,             bias 
-    "layout_0_0": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "no_mask",         "no_bias"), # TODO other biases
+    "layout_0_0": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "no_mask",         "no_bias"),
     "layout_0_1": ModelConfig(2, 16, 16,  64,  128,  128, 0.0,  "causal",         "no_bias"),
     "layout_0_2": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "padding",         "no_bias"),
     "layout_1_0": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask",         "no_bias"),
@@ -546,12 +507,6 @@ def test_transformer_layer(dtype, model_configs, model, ckpt_attn, qkv_format, f
     tols = dict(atol=5e-1, rtol=5e-2)
     workspace_opt = True
 
-    # TODO @cyanguwa: Handle test cases more cleanly
-    if config.hidden_size > 1024:
-        pytest.skip(
-            "Tolerances for test_transformer_layer are intended for small test cases"
-        )
-
     # Skip if only unfused backend is supported
     if config.max_seqlen_q <= 512 and config.max_seqlen_kv <= 512:
         os.environ["NVTE_FUSED_ATTN_BACKEND"] = "0"
@@ -612,21 +567,14 @@ def test_transformer_layer(dtype, model_configs, model, ckpt_attn, qkv_format, f
         )
 
     if unfused_attn_supported and fused_attn_supported:
-        #print(fused_attn_fwd.min().item(), fused_attn_fwd.max().item())
-        #print(unfused_attn_fwd.min().item(), unfused_attn_fwd.max().item())
-        #print(fused_attn_bwd.min().item(), fused_attn_bwd.max().item())
-        #print(unfused_attn_bwd.min().item(), unfused_attn_bwd.max().item())
         torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
         torch.testing.assert_close(fused_attn_bwd, unfused_attn_bwd, **tols)
-        print("test_transformer_layer: fused_attn matches unfused_attn")
     if unfused_attn_supported and flash_attn_supported:
         torch.testing.assert_close(flash_attn_fwd, unfused_attn_fwd, **tols)
         torch.testing.assert_close(flash_attn_bwd, unfused_attn_bwd, **tols)
-        print("test_transformer_layer: flash_attn matches unfused_attn")
     if fused_attn_supported and flash_attn_supported:
         torch.testing.assert_close(fused_attn_fwd, flash_attn_fwd, **tols)
         torch.testing.assert_close(fused_attn_bwd, flash_attn_bwd, **tols)
-        print("test_transformer_layer: fused_attn matches flash_attn")
 
 @pytest.mark.skipif(_cudnn_version() < (8,9,1), reason="cuDNN 8.9.1+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
