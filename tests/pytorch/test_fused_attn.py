@@ -218,14 +218,12 @@ def test_dot_product_attention(dtype, model_configs, model, ckpt_attn, workspace
 
     # FusedAttention backend
     if fused_attn_supported:
-        print('--------------- fused')
         fused_attn_fwd, fused_attn_bwd = _run_dot_product_attention(
             dtype, config, "FusedAttention", ckpt_attn, qkv_layout, workspace_opt,
         )
 
     # FlashAttention backend
     if flash_attn_supported:
-        print('--------------- flash')
         flash_attn_fwd, flash_attn_bwd = _run_dot_product_attention(
             dtype, config, "FlashAttention", ckpt_attn, qkv_layout, workspace_opt,
         )
@@ -511,8 +509,8 @@ def _run_dot_product_attention(
     out = block(inp[0], inp[1], inp[2],
             attention_mask=attention_mask,
             qkv_format=qkv_format,
-            cu_seqlens_q=None, #cu_seqlens_q,
-            cu_seqlens_kv=None, #cu_seqlens_kv,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_kv=cu_seqlens_kv,
             attn_mask_type=config.attn_mask_type,
             checkpoint_core_attention=ckpt_attn,
             core_attention_bias_type=config.attn_bias_type,

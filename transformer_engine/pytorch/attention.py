@@ -124,7 +124,6 @@ def get_cu_seqlens(mask: torch.Tensor) -> torch.Tensor:
     tensor of shape [batch_size + 1,] containing the cumulative sequence lengths
     of every sample in the batch.
     """
-    print('---------- get_cu_seqlens')
     mask = mask.squeeze(1).squeeze(1)
     bs, seqlen = mask.shape
 
@@ -141,7 +140,6 @@ def get_cu_seqlens_and_indices(mask: torch.Tensor) -> Tuple[torch.Tensor, torch.
     tensor of shape [batch_size + 1,] containing the cumulative sequence lengths
     of every sample in the batch and the indices containing valid samples.
     """
-    print('---------- get_cu_seqlens_and_indices')
     mask = mask.squeeze(1).squeeze(1)
     bs, seqlen = mask.shape
 
@@ -167,7 +165,6 @@ def get_indices(max_seqlen: int, cu_seqlens: torch.Tensor) -> torch.Tensor:
     tensor of shape [batch_size * max_seqlen, 1, 1] containing the indices for
     valid tokens in all the samples in the batch.
     """
-    print('---------- get_indices')
     bs = len(cu_seqlens) - 1 
     seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
     indices = [i*max_seqlen + ii for i,j in enumerate(seqlens) for ii in range(j)]
@@ -1366,7 +1363,6 @@ class FlashAttention(torch.nn.Module):
                             _cu_seqlens_q = cu_seqlens_q
                             _indices_q = get_indices(max_seqlen_q, cu_seqlens_q)
                     _cu_seqlens_kv = _cu_seqlens_q
-                    print(_cu_seqlens_q, _indices_q.shape, query_layer.shape)#_indices_q)
                     query_layer_packed, key_layer_packed, value_layer_packed = PackTensors.apply(
                         _indices_q, query_layer, key_layer, value_layer
                     )
