@@ -388,26 +388,26 @@ def _run_dot_product_attention(
 
     # Create attention mask if padding
     attention_mask = None
-    if "padding" in config.attn_mask_type:
-        if config.attn_type == 'self':
-            attention_mask_q = torch.Tensor([]).to(dtype=torch.bool)
-            for i in range(config.batch_size):
-                attention_mask_q = torch.cat([attention_mask_q,
-                    torch.Tensor([True]*seqlens_q[i] + [False]*(config.max_seqlen_q-seqlens_q[i]))
-                    .to(dtype=torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
-            attention_mask = attention_mask_q.to(device="cuda")
-        if config.attn_type == 'cross':
-            attention_mask_q = torch.Tensor([]).to(dtype=torch.bool)
-            attention_mask_kv = torch.Tensor([]).to(dtype=torch.bool)
-            for i in range(config.batch_size):
-                attention_mask_q = torch.cat([attention_mask_q,
-                    torch.Tensor([True]*seqlens_q[i] + [False]*(config.max_seqlen_q-seqlens_q[i]))
-                    .to(dtype=torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
-                attention_mask_kv = torch.cat([attention_mask_kv, torch.Tensor(
-                    [True]*seqlens_kv[i] + [False]*(config.max_seqlen_kv-seqlens_kv[i]))
-                    .to(dtype=torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
-            attention_mask = (
-                    attention_mask_q.to(device="cuda"), attention_mask_kv.to(device="cuda"))
+#    if "padding" in config.attn_mask_type:
+#        if config.attn_type == 'self':
+#            attention_mask_q = torch.Tensor([]).to(dtype=torch.bool)
+#            for i in range(config.batch_size):
+#                attention_mask_q = torch.cat([attention_mask_q,
+#                    torch.Tensor([True]*seqlens_q[i] + [False]*(config.max_seqlen_q-seqlens_q[i]))
+#                    .to(dtype=torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
+#            attention_mask = attention_mask_q.to(device="cuda")
+#        if config.attn_type == 'cross':
+#            attention_mask_q = torch.Tensor([]).to(dtype=torch.bool)
+#            attention_mask_kv = torch.Tensor([]).to(dtype=torch.bool)
+#            for i in range(config.batch_size):
+#                attention_mask_q = torch.cat([attention_mask_q,
+#                    torch.Tensor([True]*seqlens_q[i] + [False]*(config.max_seqlen_q-seqlens_q[i]))
+#                    .to(dtype=torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
+#                attention_mask_kv = torch.cat([attention_mask_kv, torch.Tensor(
+#                    [True]*seqlens_kv[i] + [False]*(config.max_seqlen_kv-seqlens_kv[i]))
+#                    .to(dtype=torch.bool).unsqueeze(0).unsqueeze(0).unsqueeze(0)], dim=0) 
+#            attention_mask = (
+#                    attention_mask_q.to(device="cuda"), attention_mask_kv.to(device="cuda"))
 
     # Create input tensors
     dim_to_num = {
