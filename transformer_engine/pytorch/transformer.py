@@ -558,8 +558,8 @@ class TransformerLayer(torch.nn.Module):
                 hidden_states.shape[0] == self.seq_length // self.tp_size
             ), "Sequence dimension must be split across TP group when using sequence parallel."
 
-        if ("padding" in self_attn_mask_type
-            or self_attn_mask_type == "arbitrary"
+        if (("padding" in self_attn_mask_type
+            or self_attn_mask_type == "arbitrary")
             and attention_mask is not None):
             assert (
                 attention_mask.dtype == torch.bool

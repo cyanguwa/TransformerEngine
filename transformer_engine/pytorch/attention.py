@@ -118,11 +118,12 @@ class InferenceParams: # pylint: disable=too-few-public-methods
                 new_inference_value_memory,
             )
 
+
 def get_cu_seqlens(mask: torch.Tensor) -> torch.Tensor:
     """
     Given a padding mask of shape [batch_size, 1, 1, max_seqlen], returns an int32
-    tensor of shape [batch_size + 1,] containing the cumulative sequence lengths
-    of every sample in the batch.
+    tensor of shape [batch_size + 1] containing the cumulative sequence lengths of
+    the samples in a batch.
     """
     mask = mask.squeeze(1).squeeze(1)
     bs, seqlen = mask.shape
@@ -134,11 +135,13 @@ def get_cu_seqlens(mask: torch.Tensor) -> torch.Tensor:
 
     return cu_seqlens
 
+
 def get_cu_seqlens_and_indices(mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Given a padding mask of shape [batch_size, 1, 1, max_seqlen], returns an int32
-    tensor of shape [batch_size + 1,] containing the cumulative sequence lengths
-    of every sample in the batch and the indices containing valid samples.
+    tensor of shape [batch_size + 1] containing the cumulative sequence lengths of
+    the samples in a batch, and another int32 tensor of shape [batch_size * max_seqlen, 1, 1]
+    containing the indices for the valid tokens.
     """
     mask = mask.squeeze(1).squeeze(1)
     bs, seqlen = mask.shape
@@ -159,16 +162,18 @@ def get_cu_seqlens_and_indices(mask: torch.Tensor) -> Tuple[torch.Tensor, torch.
 
     return cu_seqlens, indices
 
+
 def get_indices(max_seqlen: int, cu_seqlens: torch.Tensor) -> torch.Tensor:
     """
     Given max_seqlen and cu_seqlens of shape [batch_size + 1], returns an int32
     tensor of shape [batch_size * max_seqlen, 1, 1] containing the indices for
-    valid tokens in all the samples in the batch.
+    the valid tokens in a batch.
     """
     bs = len(cu_seqlens) - 1 
     seqlens = cu_seqlens[1:] - cu_seqlens[:-1]
     indices = [i*max_seqlen + ii for i,j in enumerate(seqlens) for ii in range(j)]
-    indices = torch.Tensor(indices).unsqueeze(1).unsqueeze(1).to(dtype=torch.int64, device=cu_seqlens.device)
+    indices = torch.Tensor(indices).unsqueeze(1).unsqueeze(1).to(
+                    dtype=torch.int64, device="cuda")
 
     num_nonzeros = indices.shape[0]
     pad_amount = bs * max_seqlen - num_nonzeros
@@ -880,58 +885,6 @@ class _SplitAlongDim(torch.autograd.Function):
 
         return torch.cat(grad_outputs, dim = split_dim), None, None
 
-class _CombineAlongDim(torch.autograd.Function):
-    """"""
-
-    @staticmethod
-    def forward(ctx,
-                query_layer: torch.Tensor,
-                key_layer: torch.Tensor,
-                value_layer: torch.Tensor,
-                split_size: int,
-                split_dim: int,
-    ) -> Tuple[torch.Tensor, ...]:
-        if split_size == 3:
-            mixed_layer = torch.Tensor().to(device=query_layer.device,
-                                    dtype=query_layer.dtype)
-            new_shape = list(query_layer.shape)
-            new_shape.insert(split_dim, split_size)
-            new_stride = list(query_layer.stride())
-            stride = np.prod(query_layer.shape[split_dim:])
-            new_stride.insert(split_dim, stride)
-            mixed_layer.set_(query_layer.untyped_storage(),
-                     query_layer.storage_offset(),
-                     new_shape,
-                     new_stride
-            )
-            ctx.split_dim = split_dim
-            ctx.split_size = split_size
-            return mixed_layer
-        mixed_kv = torch.Tensor().to(device=key_layer.device,
-                                dtype=key_layer.dtype)
-        new_shape = list(key_layer.shape)
-        new_shape.insert(split_dim, split_size)
-        new_stride = list(key_layer.stride())
-        stride = np.prod(key_layer.shape[split_dim:])
-        new_stride.insert(split_dim, stride)
-        mixed_kv.set_(key_layer.untyped_storage(),
-                 key_layer.storage_offset(),
-                 new_shape,
-                 new_stride
-        )
-        ctx.split_dim = split_dim
-        ctx.split_size = split_size
-        return mixed_kv
-
-    @staticmethod
-    def backward(ctx,
-                 *grad_outputs):
-        if ctx.split_size == 3:
-            ret = torch.split(grad_outputs[0], 1, dim = ctx.split_dim)
-            return ret[0].squeeze(ctx.split_dim), ret[1].squeeze(ctx.split_dim), ret[2].squeeze(ctx.split_dim), None, None
-        if ctx.split_size == 2:
-            ret = torch.split(grad_outputs[0], 1, dim = ctx.split_dim)
-            return None, ret[0].squeeze(ctx.split_dim), ret[1].squeeze(ctx.split_dim), None, None
 
 class UnfusedDotProductAttention(torch.nn.Module):
     """Parallel attention w/o QKV and Proj Gemms
@@ -1678,10 +1631,9 @@ class FusedAttention(torch.nn.Module):
     |               | sbhd_sb2hd, bshd_bs2hd  | sbhd_sb2hd, bshd_bs2hd         |
     |               | bshd_bshd_bshd          | sbhd_sbh2d, bshd_bsh2d         |
     |               |                         | sbhd_sbhd_sbhd, bshd_bshd_bshd |
-    | mask_type     | causal/padding/no_mask  | causal/padding/custom/no_mask  |
-    |               |                         | padding_causal                 |
-    | bias_type     | post_scale_bias/no_bias | alibi/post_scale_bias/no_bias  |
-    | dropout       | framework rng           | framework rng/user custom mask |
+    | mask_type     | causal/padding/no_mask  | causal/padding/no_mask         |
+    | bias_type     | post_scale_bias/no_bias | no_bias                        |
+    | dropout       | yes                     | yes                            |
     | max_seqlen    | <=512, multiple of 64   | any, multiple of 64            |
     | head_dim      | 64                      | <=128, multiple of 8           |
     | output dtype  | fp16/bf16               | fp16/bf16                      |
@@ -1709,30 +1661,18 @@ class FusedAttention(torch.nn.Module):
         if deterministic:
             # workspace optimization path is non-deterministic
             os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
-            warnings.warn(
-                """FusedAttention: Workspace-related performance optimization is
-                disabled by user."""
-            )
 
         # CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-        # - unset: enables workspace optimization when required space is <= 256MB
+        # - unset:       enables workspace optimization when required space is <= 256MB
+        # - n:           enables workspace optimization when required space is <=n byte
         # - 99999999999: enables workspace optimization always
-        # - 0: disables workspace optimization
-        # - n: enables workspace optimization when required space is <=n byte
+        # - 0:           disables workspace optimization always
         if "NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT" in os.environ:
             if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "0":
                 os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
-                warnings.warn(
-                    """FusedAttention: Workspace-related performance optimization is
-                    disabled by user."""
-                )
             if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "1":
                 os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = str(
                         torch.cuda.get_device_properties(0).total_memory)
-                warnings.warn(
-                    """FusedAttention: Workspace-related performance optimization is
-                    enabled by user."""
-                )
 
     def forward(
         self,
@@ -1771,6 +1711,7 @@ class FusedAttention(torch.nn.Module):
         assert (
             qkv_format != 'thd'
             ), 'FusedAttention does not support qkv_format = thd!'
+
         if qkv_format in ['sbhd', 'bshd']:
             if qkv_format == 'sbhd':
                 batch_size, max_seqlen_q, max_seqlen_kv = (
@@ -1781,32 +1722,20 @@ class FusedAttention(torch.nn.Module):
             if 'padding' in attn_mask_type:
                 global _cu_seqlens_q, _cu_seqlens_kv
                 if (cu_seqlens_q is not None and cu_seqlens_kv is not None):
-                    if attention_mask is not None:
-                        warnings.warn(
-                            """FusedAttention: Ignoring attention mask since cu_seqlens_q
-                            and cu_seqlens_kv are provided."""
-                        )
+                    # use cu_seqlens when both cu_seqlens and attention_mask are present
                     if self.layer_number == 1:
                         _cu_seqlens_q, _cu_seqlens_kv = cu_seqlens_q, cu_seqlens_kv
                 elif attention_mask is not None:
                     if self.attention_type == "self":
-                        assert (isinstance(attention_mask, torch.Tensor)
-                            ), """FusedAttention: Attention mask should be a single tensor of
-                            shape [batch_size, 1, 1, seqlen_q]!"""
                         if self.layer_number == 1:
                             _cu_seqlens_q = get_cu_seqlens(attention_mask)
-                        _cu_seqlens_kv = _cu_seqlens_q
+                            _cu_seqlens_kv = _cu_seqlens_q
                     else:
-                        assert (isinstance(attention_mask, tuple)
-                            and len(attention_mask) == 2
-                            ), """FusedAttention: Attention mask should be a tuple of two tensors
-                            in [batch_size, 1, 1, seqlen_q] and [batch_size, 1, 1, seqlen_kv]!"""
                         if self.layer_number == 1:
                             _cu_seqlens_q = get_cu_seqlens(attention_mask[0])
                             _cu_seqlens_kv = get_cu_seqlens(attention_mask[1])
                 else:
-                    assert False, """FusedAttention: Please provide attention_mask or
-                        cu_seqlens_q and cu_seqlens_kv for padding mask."""
+                    raise Exception("Please provide attention_mask or cu_seqlens for padding!")
                 cu_seqlens_q, cu_seqlens_kv = _cu_seqlens_q, _cu_seqlens_kv
             else:
                 if self.layer_number == 1:
@@ -1834,92 +1763,23 @@ class FusedAttention(torch.nn.Module):
                 and (fused_attention_backend
                     == tex.NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen))
         with self.attention_dropout_ctx():
-            if qkv_layout in ['sbh3d', 'sb3hd']:
-                #mixed_layer = torch.Tensor().to(device=query_layer[0].device,
-                #                        dtype=query_layer[0].dtype)
-                #new_shape = list(query_layer.shape)
-                #new_shape.insert(3, 3)
-                #new_stride = list(query_layer.stride())
-                #new_stride.insert(3, 3*query_layer.shape[-1])
-                #mixed_layer.set_(query_layer[0].untyped_storage(),
-                #         query_layer[0].storage_offset(),
-                #         new_shape,
-                #         new_stride
-                #)
-                dim = 3 if qkv_layout == 'sbh3d' else 2
-                mixed_layer = _CombineAlongDim.apply(query_layer, key_layer, value_layer, 3, dim)
-                #torch.save(mixed_layer, 'mixed_layer.pt')
-                #torch.save(query_layer, 'query_layer.pt')
-                #torch.save(key_layer, 'key_layer.pt')
-                #torch.save(value_layer, 'value_layer.pt')
-                #print('layout ', qkv_layout, mixed_layer.shape)
-                output = FusedAttnFunc_qkvpacked.apply(
-                    self.training,
-                    max_seqlen_q,
-                    cu_seqlens_q,
-                    mixed_layer,
-                    qkv_dtype,
-                    core_attention_bias,
-                    1.0/self.norm_factor,
-                    self.attention_dropout if self.training else 0.0,
-                    fast_zero_fill,
-                    qkv_layout,
-                    core_attention_bias_type,
-                    attn_mask_type,
-                    None, # rng_gen
-                    fused_attention_backend,
-                    use_FAv2_bwd,
-                )
-            elif qkv_layout in ['sbhd_sbh2d', 'sbhd_sb2hd']:
-                #mixed_kv = torch.Tensor().to(device=key_layer[0].device,
-                #                        dtype=key_layer[0].dtype)
-                #new_shape = list(key_layer.shape)
-                #new_shape.insert(3, 2)
-                #new_stride = list(key_layer.stride())
-                #new_stride.insert(3, 2*key_layer.shape[-1])
-                #mixed_kv.set_(key_layer[0].untyped_storage(),
-                #         key_layer[0].storage_offset(),
-                #         new_shape,
-                #         new_stride
-                #)
-                dim = 3 if qkv_layout == 'sbhd_sbh2d' else 2
-                mixed_kv = _CombineAlongDim.apply(query_layer, key_layer, value_layer, 2, dim)
-                #print('layout ', qkv_layout, mixed_kv.shape)
-                output = FusedAttnFunc_kvpacked.apply(
-                    self.training,
-                    max_seqlen_q, max_seqlen_kv,
-                    cu_seqlens_q, cu_seqlens_kv,
-                    query_layer, mixed_kv,
-                    qkv_dtype,
-                    core_attention_bias,
-                    1.0/self.norm_factor,
-                    self.attention_dropout if self.training else 0.0,
-                    fast_zero_fill,
-                    qkv_layout,
-                    core_attention_bias_type,
-                    attn_mask_type,
-                    None, # rng_gen
-                    fused_attention_backend,
-                    use_FAv2_bwd,
-                )
-            else:
-                output = FusedAttnFunc.apply(
-                    self.training,
-                    max_seqlen_q, max_seqlen_kv,
-                    cu_seqlens_q, cu_seqlens_kv,
-                    query_layer, key_layer, value_layer,
-                    qkv_dtype,
-                    core_attention_bias,
-                    1.0/self.norm_factor,
-                    self.attention_dropout if self.training else 0.0,
-                    fast_zero_fill,
-                    qkv_layout,
-                    core_attention_bias_type,
-                    attn_mask_type,
-                    None, # rng_gen
-                    fused_attention_backend,
-                    use_FAv2_bwd,
-                )
+            output = FusedAttnFunc.apply(
+                self.training,
+                max_seqlen_q, max_seqlen_kv,
+                cu_seqlens_q, cu_seqlens_kv,
+                query_layer, key_layer, value_layer,
+                qkv_dtype,
+                core_attention_bias,
+                1.0/self.norm_factor,
+                self.attention_dropout if self.training else 0.0,
+                fast_zero_fill,
+                qkv_layout,
+                core_attention_bias_type,
+                attn_mask_type,
+                None, # rng_gen
+                fused_attention_backend,
+                use_FAv2_bwd,
+            )
 
         # ...hd -> ...(hd)
         return output.view(*output.shape[:-2], -1)
@@ -2299,17 +2159,6 @@ class DotProductAttention(torch.nn.Module):
                 assert (all(seqlens_kv <= max_seqlen_kv)
                     ), """Sequence lengths indicated by cu_seqlens_kv must be no greater than
                     the sequence dimention in 'key_layer' and 'value_layer'!"""
-        if attn_mask_type == 'arbitrary':
-            assert (len(attention_mask.shape) == 4), """Attention mask should be 4D!"""
-            b, h, sq, skv = attention_mask.shape
-            batch_size = query_layer.shape[1] if qkv_format == 'sbhd' else query_layer.shape[0]
-            head_dim = query_layer.shape[-1]
-            assert ((b == batch_size) or (b == 1)
-                    and (h == head_dim) or (h == 1)
-                    and (sq == max_seqlen_q) or (sq == 1)
-                    and (skv == max_seqlen_kv) or (skv == 1)
-                    ), """Attention mask should be in a shape broadcastable to
-                    [batch_size, num_heads, max_seqlen_q, max_seqlen_kv]!"""
 
         qkv_layout, query_layer, key_layer, value_layer = _get_qkv_layout(
             query_layer, key_layer, value_layer, qkv_format = qkv_format)
@@ -2361,11 +2210,11 @@ class DotProductAttention(torch.nn.Module):
         # Filter: Attention mask type.
         #    attn_mask_type(s)   |     supported backends
         # ------------------------------------------------
-        #   causal               |     All
-        #   padding              |     UnfusedDotProductAttention, FlashAttention, FusedAttention
-        #   arbitrary            |     UnfusedDotProductAttention
         #   no_mask              |     All
-        #   causal + padding     |     FlashAttention, FusedAttention
+        #   padding              |     UnfusedDotProductAttention, FlashAttention, FusedAttention
+        #   causal               |     All
+        #   padding + causal     |     FlashAttention, FusedAttention
+        #   arbitrary            |     UnfusedDotProductAttention
         #
         if attn_mask_type == "arbitrary":
             use_flash_attention = False
