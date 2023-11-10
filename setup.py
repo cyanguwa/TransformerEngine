@@ -284,7 +284,7 @@ def setup_requirements() -> Tuple[List[str], List[str], List[str]]:
 
     # Framework-specific requirements
     if "pytorch" in frameworks():
-        add_unique(install_reqs, ["torch", "flash-attn>=1.0.6, <=2.3.2"])
+        add_unique(install_reqs, ["torch", "flash-attn>=1.0.6, <=2.0.4"])
         add_unique(test_reqs, ["numpy", "onnxruntime", "torchvision"])
     if "jax" in frameworks():
         if not found_pybind11():
@@ -377,8 +377,6 @@ class CMakeBuildExtension(BuildExtension):
             if isinstance(ext, CMakeExtension):
                 print(f"Building CMake extension {ext.name}")
                 with tempfile.TemporaryDirectory() as build_dir:
-                    build_dir = '/code/pr-graph-api/TransformerEngine/build' 
-                    #build_dir = '/code/TransformerEngine/build' 
                     build_dir = Path(build_dir)
                     package_path = Path(self.get_ext_fullpath(ext.name))
                     install_dir = package_path.resolve().parent
@@ -477,8 +475,8 @@ def setup_pytorch_extension() -> setuptools.Extension:
     cxx_flags = ["-O3"]
     nvcc_flags = [
         "-O3",
-        #"-gencode",
-        #"arch=compute_70,code=sm_70",
+        "-gencode",
+        "arch=compute_70,code=sm_70",
         "-U__CUDA_NO_HALF_OPERATORS__",
         "-U__CUDA_NO_HALF_CONVERSIONS__",
         "-U__CUDA_NO_BFLOAT16_OPERATORS__",
@@ -498,8 +496,8 @@ def setup_pytorch_extension() -> setuptools.Extension:
     else:
         if version >= (11, 2):
             nvcc_flags.extend(["--threads", "4"])
-        #if version >= (11, 0):
-        #    nvcc_flags.extend(["-gencode", "arch=compute_80,code=sm_80"])
+        if version >= (11, 0):
+            nvcc_flags.extend(["-gencode", "arch=compute_80,code=sm_80"])
         if version >= (11, 8):
             nvcc_flags.extend(["-gencode", "arch=compute_90,code=sm_90"])
 
@@ -570,8 +568,8 @@ def setup_paddle_extension() -> setuptools.Extension:
     else:
         if version >= (11, 2):
             nvcc_flags.extend(["--threads", "4"])
-        #if version >= (11, 0):
-        #    nvcc_flags.extend(["-gencode", "arch=compute_80,code=sm_80"])
+        if version >= (11, 0):
+            nvcc_flags.extend(["-gencode", "arch=compute_80,code=sm_80"])
         if version >= (11, 8):
             nvcc_flags.extend(["-gencode", "arch=compute_90,code=sm_90"])
 
