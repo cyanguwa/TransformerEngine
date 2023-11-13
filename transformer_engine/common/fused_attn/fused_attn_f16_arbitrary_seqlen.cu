@@ -661,6 +661,8 @@ void fused_attn_arbitrary_seqlen_fwd_qkvpacked(
         NVTE_ERROR("Unexpected Aux_CTX_Tensors->size.");
     }
 
+    void *devPtrCuSeqlens = cu_seqlens->data.dptr;
+
     void* devPtrDropoutSeed = rng_state->data.dptr;
     void* devPtrDropoutOffset = reinterpret_cast<void *>(
                     reinterpret_cast<uint64_t*>(rng_state->data.dptr) + 1);
@@ -736,6 +738,8 @@ void fused_attn_arbitrary_seqlen_bwd_qkvpacked(size_t batch, size_t max_seqlen,
     void* devPtrDropoutSeed = rng_state->data.dptr;
     void* devPtrDropoutOffset = reinterpret_cast<void *>(
                     reinterpret_cast<uint64_t*>(rng_state->data.dptr) + 1);
+
+    void *devPtrCuSeqlens = cu_seqlens->data.dptr;
 
     const auto qkv_type = input_QKV->data.dtype;
     size_t workspace_size = 0;
@@ -970,6 +974,9 @@ void fused_attn_arbitrary_seqlen_fwd(
     void* devPtrDropoutOffset = reinterpret_cast<void *>(
                     reinterpret_cast<uint64_t*>(rng_state->data.dptr) + 1);
 
+    void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
+    void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
+
     size_t workspace_size = 0;
 
     bool check_support = false;
@@ -1033,6 +1040,9 @@ void fused_attn_arbitrary_seqlen_bwd(size_t batch, size_t max_seqlen_q, size_t m
     void* devPtrDropoutSeed = rng_state->data.dptr;
     void* devPtrDropoutOffset = reinterpret_cast<void *>(
                     reinterpret_cast<uint64_t*>(rng_state->data.dptr) + 1);
+
+    void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
+    void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
     size_t workspace_size = 0;
 

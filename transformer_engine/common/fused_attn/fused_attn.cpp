@@ -83,6 +83,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
   const int sm_arch_ = cuda::sm_arch(device_id);
   NVTE_CHECK(q_dtype == kv_dtype, "Q and KV must have the same data type.");
   NVTE_QKV_Format qkv_format = nvte_get_qkv_format(qkv_layout);
+  auto cudnn_runtime_version = cudnnGetVersion();
   if ((q_dtype == NVTEDType::kNVTEFloat8E4M3) || (q_dtype == NVTEDType::kNVTEFloat8E5M2)
           && (sm_arch_ >= 90)
           && (max_seqlen_q == max_seqlen_kv)
@@ -92,13 +93,13 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
           && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
           && (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
           && (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD)) {
-#if (CUDNN_VERSION >= 8900)
-    backend = NVTE_Fused_Attn_Backend::NVTE_FP8;
-#else
-    backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
-    std::cout << "Warning: FP8 fused attention is supported by cuDNN 8.9.0+."
-           " Please upgrade your cuDNN version if possible." << std::endl;
-#endif
+    if (cudnn_runtime_version >= 8900) {
+      backend = NVTE_Fused_Attn_Backend::NVTE_FP8;
+    } else {
+      backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
+      std::cout << "Warning: FP8 fused attention is supported by cuDNN 8.9.0+."
+          " Please upgrade your cuDNN version if possible." << std::endl;
+    }
   } else if ((q_dtype == NVTEDType::kNVTEFloat16) || (q_dtype == NVTEDType::kNVTEBFloat16)) {
     bool flag_m512 = false;
     bool flag_arb = false;
@@ -108,6 +109,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
             && ((bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
                 || (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS))
             && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
                 || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
             && ((qkv_layout == NVTE_QKV_Layout::NVTE_SB3HD)
@@ -117,20 +119,18 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                 || (qkv_layout == NVTE_QKV_Layout::NVTE_BSHD_BSHD_BSHD))) {
       flag_m512 = true;
     }
-    if (
-#if (CUDNN_VERSION >= 8903)
-        (sm_arch_ >= 80)
-#else
-        (sm_arch_ == 80 || sm_arch_ == 90)
-#endif
+    if ((cudnn_runtime_version >= 8903 && sm_arch_ >= 80)
+            && (cudnn_runtime_version < 8903 && sm_arch_ == 80 || sm_arch_ == 90)
             && (max_seqlen_q % 64 == 0)
             && (max_seqlen_kv % 64 == 0)
             && (num_attn_heads == num_gqa_groups)
             && ((head_dim <= 128) && (head_dim % 8 == 0))
             && (bias_type == NVTE_Bias_Type::NVTE_NO_BIAS)
-            && ((attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
-                || (attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK)
-                || (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK))
+            && ((cudnn_runtime_version < 8906 && attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK)
+                || ((cudnn_runtime_version >= 8906) &&
+                    (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
+                     attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK ||
+                     attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK)))
             && ((qkv_format == NVTE_QKV_Format::NVTE_SBHD)
                 || (qkv_format == NVTE_QKV_Format::NVTE_BSHD))) {
       flag_arb = true;
@@ -154,20 +154,18 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
           backend = static_cast<NVTE_Fused_Attn_Backend>(env_backend);
       }
     }
-#if (CUDNN_VERSION < 8901)
-    if (backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
+    if (cudnn_runtime_version < 8901
+        && backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
       backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
       std::cout << "Warning: FP16/BF16 fused attention is supported by cuDNN 8.9.1+."
            " Please upgrade your cuDNN version if possible." << std::endl;
     }
-#endif
-#if (CUDNN_VERSION < 8900)
-    if (backend == NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen) {
+    if (cudnn_runtime_version < 8900
+        && backend == NVTE_Fused_Attn_Backend::NVTE_F16_arbitrary_seqlen) {
       backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
       std::cout << "Warning: FP16/BF16 fused attention is supported by cuDNN 8.9.0+."
            " Please upgrade your cuDNN version if possible." << std::endl;
     }
-#endif
   } else {
     backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
   }
