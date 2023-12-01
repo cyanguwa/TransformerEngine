@@ -425,7 +425,7 @@ def _run_dot_product_attention(
                 #print('seqs ', seqlens.shape, seqlens.sum(), seqlens.min(), seqlens.max())
                 #print(seqlens)
                 return seqlens
-            num_seqs = 200
+            num_seqs = 20
             if config.attn_type == 'self':
                 seqlens_q = generate_seqs(config.batch_size, config.max_seqlen_q, num_seqs)
                 seqlens_kv = seqlens_q
