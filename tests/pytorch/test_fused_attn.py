@@ -400,15 +400,54 @@ def _run_dot_product_attention(
     # Create seqlens
     qkv_format = ''.join([i for i in qkv_layout.split('_')[0] if i.isalpha()])
     if "padding" in config.attn_mask_type or qkv_format == 'thd':
-        if config.attn_type == 'self':
-            seqlens_q = torch.randint(1, config.max_seqlen_q, [config.batch_size],
+        if qkv_format == 'thd':
+            def generate_seqs(batch, max_seqlen, num_seqs=None):
+                total_seqlen = batch * max_seqlen
+                if num_seqs is None:
+                    num_seqs = int(math.sqrt(total_seqlen))
+                #    max_seqlen = int(math.sqrt(total_seqlen))
+                #else:
+                #    max_seqlen = 2 * total_seqlen // (num_seqs - 1)
+                #seqlens = torch.randint(1, max_seqlen, [num_seqs - 1],
+                #    dtype=torch.int32, device="cuda")
+                seqlens = torch.Tensor([total_seqlen // num_seqs] * num_seqs).to(
                     dtype=torch.int32, device="cuda")
-            seqlens_kv = seqlens_q
-        if config.attn_type == 'cross':
-            seqlens_q = torch.randint(1, config.max_seqlen_q, [config.batch_size],
-                    dtype=torch.int32, device="cuda")
-            seqlens_kv = torch.randint(1, config.max_seqlen_kv, [config.batch_size],
-                    dtype=torch.int32, device="cuda")
+                remaining_seqlen = total_seqlen - seqlens.sum()
+                seqlens[:remaining_seqlen] = seqlens[:remaining_seqlen] + 1
+                #last_seqlen = total_seqlen - seqlens.sum()
+                #print('last_seqlen',last_seqlen)
+                #if last_seqlen > max_seqlen:
+                #    seqlens = seqlens + (last_seqlen - max_seqlen) // len(seqlens)
+                #    last_seqlen = total_seqlen - seqlens.sum()
+                #seqlens = torch.cat([seqlens, torch.Tensor([last_seqlen]).to(
+                #    dtype=torch.int32, device="cuda")], dim=-1)
+                assert seqlens.sum() == total_seqlen
+                #print('seqs ', seqlens.shape, seqlens.sum(), seqlens.min(), seqlens.max())
+                #print(seqlens)
+                return seqlens
+            num_seqs = 200
+            if config.attn_type == 'self':
+                seqlens_q = generate_seqs(config.batch_size, config.max_seqlen_q, num_seqs)
+                seqlens_kv = seqlens_q
+                config.batch_size = len(seqlens_q)
+                config.max_seqlen_q = seqlens_q.max()
+            if config.attn_type == 'cross':
+                seqlens_q = generate_seqs(config.batch_size, config.max_seqlen_q, num_seqs)
+                config.batch_size = len(seqlens_q)
+                config.max_seqlen_q = seqlens_q.max()
+                seqlens_kv = generate_seqs(
+                    config.batch_size, config.max_seqlen_kv, config.batch_size)
+                config.max_seqlen_kv = seqlens_kv.max()
+        else:
+            if config.attn_type == 'self':
+                seqlens_q = torch.randint(1, config.max_seqlen_q, [config.batch_size],
+                        dtype=torch.int32, device="cuda")
+                seqlens_kv = seqlens_q
+            if config.attn_type == 'cross':
+                seqlens_q = torch.randint(1, config.max_seqlen_q, [config.batch_size],
+                        dtype=torch.int32, device="cuda")
+                seqlens_kv = torch.randint(1, config.max_seqlen_kv, [config.batch_size],
+                        dtype=torch.int32, device="cuda")
     else:
         seqlens_q = torch.full([config.batch_size], config.max_seqlen_q,
                 dtype=torch.int32, device="cuda")
@@ -418,6 +457,7 @@ def _run_dot_product_attention(
     cu_seqlens_kv = torch.zeros(config.batch_size + 1, dtype=torch.int32, device="cuda")
     cu_seqlens_q[1:] = torch.cumsum(seqlens_q, dim=0)
     cu_seqlens_kv[1:] = torch.cumsum(seqlens_kv, dim=0)
+    #print(cu_seqlens_q, cu_seqlens_kv)
 
     # Create attention mask if padding
     attention_mask = None
