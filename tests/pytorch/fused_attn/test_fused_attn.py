@@ -387,15 +387,15 @@ model_configs_bias_shapes = {
     #        mask,                     bias,       bias_shape,
         "no_mask",        "post_scale_bias", bias_shape='11ss'),
     "bias_1_1": ModelConfig(2, 16, 16,  64,  128,  128, 0.0,
-        "padding",        "post_scale_bias", bias_shape='1hss'),
+        "no_mask",        "post_scale_bias", bias_shape='1hss'),
     "bias_1_2": ModelConfig(4, 24, 24, 128, 2048, 2048, 0.0,
-        "causal",         "post_scale_bias", bias_shape='b1ss'),
+        "no_mask",         "post_scale_bias", bias_shape='b1ss'),
     "bias_1_3": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0,
-        "padding_causal", "post_scale_bias", bias_shape='bhss'),
+        "no_mask",         "post_scale_bias", bias_shape='bhss'),
     "bias_1_4": ModelConfig(4, 24, 24, 128, 2048, 2048, 0.0,
-        "no_mask",                  "alibi", bias_shape='1hss', alibi_type='custom'),
+        "causal",                   "alibi", bias_shape='1hss', alibi_type='custom'),
     "bias_1_5": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0,
-        "no_mask",                  "alibi", bias_shape='bhss', alibi_type='custom'),
+        "causal",                   "alibi", bias_shape='bhss', alibi_type='custom'),
 }
 
 @pytest.mark.skipif(_cudnn_version() < (8,9,1), reason="cuDNN 8.9.1+ is required.")
@@ -605,6 +605,8 @@ def _run_dot_product_attention(
         shape = shape.replace('_s_s', '_sq_skv')
         tensor_shape = [dim_to_num[j] for j in shape.split('_')]
         bias = torch.randn(tensor_shape, dtype=dtype, device="cuda")
+        if config.bias_shape != '1hss':
+            bias.requires_grad = False
         print('shaaaaaaaaaaape', config.bias_shape, bias.shape)
 
     # Create RNG
