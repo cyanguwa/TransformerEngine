@@ -423,10 +423,10 @@ def test_dpa_sliding_window(dtype, model_configs, model):
 
 model_configs_alibi_slopes = {
     #     test:             b,  h, hg,   d,   sq,  skv,   p,      mask,    bias, alibi_type
-    #"alibi_1_0": ModelConfig(2, 16, 16,  64,  128,  128, 0.0, "causal", "alibi", alibi_type="vanilla"),
-    #"alibi_1_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "causal", "alibi", alibi_type="vanilla"),
+    "alibi_1_0": ModelConfig(2, 16, 16,  64,  128,  128, 0.0, "causal", "alibi", alibi_type="vanilla"),
+    "alibi_1_1": ModelConfig(1, 16, 16,  64,  128,  256, 0.0, "causal", "alibi", alibi_type="vanilla"),
     "alibi_2_0": ModelConfig(2, 24, 24, 128, 1024, 1024, 0.0, "causal", "alibi", alibi_type= "custom"),
-    #"alibi_2_1": ModelConfig(1, 24, 24, 128, 1024, 2048, 0.0, "causal", "alibi", alibi_type= "custom"),
+    "alibi_2_1": ModelConfig(1, 24, 24, 128, 1024, 2048, 0.0, "causal", "alibi", alibi_type= "custom"),
 }
 @pytest.mark.skipif(not _is_flash_attention_2_3(), reason="Flash-attn 2.3+ is required.")
 @pytest.mark.parametrize("dtype", param_types_lean)
@@ -597,17 +597,12 @@ def _run_dot_product_attention(
     if config.attn_bias_type in ['no_bias', 'alibi']:
         bias = None
     if config.attn_bias_type == 'post_scale_bias':
-        #bias = torch.randn(1, config.num_heads, config.max_seqlen_q, config.max_seqlen_kv,
-        #bias = torch.randn(config.batch_size, 1, config.max_seqlen_q, config.max_seqlen_kv,
-        #bias = torch.randn(1, 1, config.max_seqlen_q, config.max_seqlen_kv,
-        #        dtype=dtype, device="cuda")
         shape = '_'.join(config.bias_shape)
         shape = shape.replace('_s_s', '_sq_skv')
         tensor_shape = [dim_to_num[j] for j in shape.split('_')]
         bias = torch.randn(tensor_shape, dtype=dtype, device="cuda")
         if config.bias_shape != '1hss':
             bias.requires_grad = False
-        print('shaaaaaaaaaaape', config.bias_shape, bias.shape)
 
     # Create RNG
     _DUMMY_CUDA_RNG_STATE_TRACKER = CudaRNGStatesTracker()

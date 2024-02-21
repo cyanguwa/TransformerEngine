@@ -2064,7 +2064,6 @@ class FusedAttnFunc(torch.autograd.Function):
                     None, None, None, None, None, None,
                     None, None, None, None, None, None)
         # else, return (dqkv, dbias)
-        print('dbias shape', rest[0].shape, rest[0][0,0,0,:10])
         return (None, None, None, None, None, dq, dk, dv, None, rest[0], None,
                 None, None, None, None, None, None,
                 None, None, None, None, None, None)
