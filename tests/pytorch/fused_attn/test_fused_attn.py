@@ -203,7 +203,7 @@ model_configs_base = {
 param_types = [torch.float16]
 if is_bf16_compatible():  # bf16 requires sm_80 or higher
     param_types.append(torch.bfloat16)
-param_types_lean = [torch.bfloat16]
+param_types_lean = [torch.bfloat16, torch.float16]
 
 def get_swa(seq_q, seq_kv, w=None):
     """Generate a random sliding window size (left, right) if w is None,
@@ -600,7 +600,30 @@ def _run_dot_product_attention(
         shape = '_'.join(config.bias_shape)
         shape = shape.replace('_s_s', '_sq_skv')
         tensor_shape = [dim_to_num[j] for j in shape.split('_')]
+
+        # normal bias
         bias = torch.randn(tensor_shape, dtype=dtype, device="cuda")
+        # block diagonal bias
+        if config.attn_type == 'self':
+            block_size = 5
+            num_blocks = int((config.max_seqlen_q + block_size - 1)/ block_size)
+            list_block_sizes = [block_size] * num_blocks
+            list_block_sizes[-1] = config.max_seqlen_q % block_size
+            print('>>> num_blocks, list_block_sizes[-3:]', num_blocks, list_block_sizes[-3:])
+            blocks = [torch.ones(list_block_sizes[i], list_block_sizes[i],
+                dtype=torch.bfloat16, device='cuda') for i in range(num_blocks)]
+            bias_tmp = torch.block_diag(*blocks)
+            list_block_sizess = [x**2 for x in list_block_sizes]
+            print('>>> bias_tmp ', bias_tmp.shape, bias_tmp.sum(), sum(list_block_sizess))
+            neginf = -2**50 if dtype == torch.bfloat16 else -2**15
+            bias_tmp = torch.where(bias_tmp==1, 0, neginf).to(dtype=torch.bfloat16, device='cuda')
+            print('>>> bias_tmp ',bias_tmp[-5:,-5:])
+            bias = torch.randn(tensor_shape, dtype=dtype, device="cuda")
+            for i in range(bias.shape[0]):
+                for j in range(bias.shape[1]):
+                    bias[i,j,:,:] = bias_tmp
+            print('>>> bias ', dtype, bias.shape, bias.isneginf().sum(), bias.min().item(), bias.max().item())
+
         if config.bias_shape != '1hss':
             bias.requires_grad = False
 
