@@ -2725,6 +2725,17 @@ class FusedAttnFunc(torch.autograd.Function):
         if fp8:
             if _NVTE_DEBUG:
                 print('[DotProductAttention]: using FP8 forward')
+            print()
+            print("===== FWD before and after =====")
+            #print('fp8_meta scaling_fwd scale    ',fp8_meta["scaling_fwd"].scale)
+            #print('fp8_meta scaling_fwd scale_inv',fp8_meta["scaling_fwd"].scale_inv)
+            print('fp8_meta scaling_fwd amax     ',fp8_meta["scaling_fwd"].amax_history)
+            #print('fp8_meta scaling_bwd scale    ',fp8_meta["scaling_bwd"].scale)
+            #print('fp8_meta scaling_bwd scale_inv',fp8_meta["scaling_bwd"].scale_inv)
+            #print('fp8_meta scaling_bwd amax     ',fp8_meta["scaling_bwd"].amax_history)
+            print('FWD q.sum()    : {:8.2f}'.format(torch.sum(q.to(torch.float32),dtype=torch.float32).item()))
+            print('FWD k.sum()    : {:8.2f}'.format(torch.sum(k.to(torch.float32),dtype=torch.float32).item()))
+            print('FWD v.sum()    : {:8.2f}'.format(torch.sum(v.to(torch.float32),dtype=torch.float32).item()))
             fused_attention_backend = FusedAttnBackend["FP8"]
             fp8_dtype_forward = get_fp8_te_dtype(fp8_meta["recipe"], fprop_tensor=True)
             if fp8_meta["recipe"].fp8_mha:
@@ -2793,6 +2804,13 @@ class FusedAttnFunc(torch.autograd.Function):
                     fp8_meta["scaling_fwd"], META_O,
                     fp8_dtype_forward, qkv_dtype).view(out_fp8.shape)
             out_save = out_ret
+            #print('fp8_meta scaling_fwd scale    ',fp8_meta["scaling_fwd"].scale)
+            #print('fp8_meta scaling_fwd scale_inv',fp8_meta["scaling_fwd"].scale_inv)
+            print('fp8_meta scaling_fwd amax     ',fp8_meta["scaling_fwd"].amax_history)
+            #print('fp8_meta scaling_bwd scale    ',fp8_meta["scaling_bwd"].scale)
+            #print('fp8_meta scaling_bwd scale_inv',fp8_meta["scaling_bwd"].scale_inv)
+            #print('fp8_meta scaling_bwd amax     ',fp8_meta["scaling_bwd"].amax_history)
+            print('FWD out.sum()  : {:8.2f}'.format(torch.sum(out_save.to(torch.float32),dtype=torch.float32).item()))
 
             if fp8_meta["recipe"].fp8_mha and not int(os.getenv("NVTE_FP8_DPA_BWD", "1")):
                 # 1: qkv packed, 2: kv packed, 3: qkv separate
@@ -2915,6 +2933,15 @@ class FusedAttnFunc(torch.autograd.Function):
                 if ctx.fp8:
                     if _NVTE_DEBUG:
                         print('[DotProductAttention]: using FP8 backward')
+                    print("===== BWD before and after =====")
+                    #print('ctx.fp8_meta scaling_fwd scale    ',ctx.fp8_meta["scaling_fwd"].scale)
+                    #print('ctx.fp8_meta scaling_fwd scale_inv',ctx.fp8_meta["scaling_fwd"].scale_inv)
+                    #print('ctx.fp8_meta scaling_fwd amax     ',ctx.fp8_meta["scaling_fwd"].amax_history)
+                    #print('ctx.fp8_meta scaling_bwd scale    ',ctx.fp8_meta["scaling_bwd"].scale)
+                    #print('ctx.fp8_meta scaling_bwd scale_inv',ctx.fp8_meta["scaling_bwd"].scale_inv)
+                    print('ctx.fp8_meta scaling_bwd amax     ',ctx.fp8_meta["scaling_bwd"].amax_history)
+                    print('BWD d_out.sum(): {:8.2f}'.format(torch.sum(d_out.to(torch.float32),dtype=torch.float32).item()))
+
                     fp8_dtype_forward = get_fp8_te_dtype(ctx.fp8_meta["recipe"], fprop_tensor=True)
                     fp8_dtype_backward = get_fp8_te_dtype(
                         ctx.fp8_meta["recipe"], fprop_tensor=False)
@@ -3005,6 +3032,15 @@ class FusedAttnFunc(torch.autograd.Function):
                                 dv_fp8.view(-1, dv_fp8.shape[-2] * dv_fp8.shape[-1]),
                                 ctx.fp8_meta["scaling_bwd"], META_DQKV,
                                 fp8_dtype_backward, ctx.qkv_dtype).view(dv_fp8.shape)
+                    #print('ctx.fp8_meta scaling_fwd scale    ',ctx.fp8_meta["scaling_fwd"].scale)
+                    #print('ctx.fp8_meta scaling_fwd scale_inv',ctx.fp8_meta["scaling_fwd"].scale_inv)
+                    #print('ctx.fp8_meta scaling_fwd amax     ',ctx.fp8_meta["scaling_fwd"].amax_history)
+                    #print('ctx.fp8_meta scaling_bwd scale    ',ctx.fp8_meta["scaling_bwd"].scale)
+                    #print('ctx.fp8_meta scaling_bwd scale_inv',ctx.fp8_meta["scaling_bwd"].scale_inv)
+                    print('ctx.fp8_meta scaling_bwd amax     ',ctx.fp8_meta["scaling_bwd"].amax_history)
+                    print('BWD dq.sum()   : {:8.2f}'.format(torch.sum(dq.to(torch.float32),dtype=torch.float32).item()))
+                    print('BWD dk.sum()   : {:8.2f}'.format(torch.sum(dk.to(torch.float32),dtype=torch.float32).item()))
+                    print('BWD dv.sum()   : {:8.2f}'.format(torch.sum(dv.to(torch.float32),dtype=torch.float32).item()))
                 else:
                     if _NVTE_DEBUG:
                         print('[DotProductAttention]: using non-FP8 backward')
