@@ -622,7 +622,7 @@ void fused_attn_max_512_fwd_impl(
     int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d, bool is_training,
     float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
     NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, void *devPtrQ, void *devPtrK, void *devPtrV,
-    void *devPtrS, void *devPtrO, void *devPtrBias, void *devPtrCuSeqlenQ, void *devPtrCuSeqlenKV,
+    void *devPtrS, void *devPtrO, void *devPtrBias, void *devPtrCuSeqlensQ, void *devPtrCuSeqlensKV,
     void *devPtrDropoutSeed, void *devPtrDropoutOffset, void *workspace, size_t *workspace_size,
     cudnnDataType_t tensorType, cudaStream_t stream, cudnnHandle_t handle) {
   try {
@@ -746,8 +746,8 @@ void fused_attn_max_512_fwd_impl(
     void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
     void *devActualSeqlenK = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
     cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
-        b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
-        static_cast<const int32_t *>(devPtrCuSeqlenKV), static_cast<int32_t *>(devActualSeqlenQ),
+        b, static_cast<const int32_t *>(devPtrCuSeqlensQ),
+        static_cast<const int32_t *>(devPtrCuSeqlensKV), static_cast<int32_t *>(devActualSeqlenQ),
         static_cast<int32_t *>(devActualSeqlenK));
     NVTE_CHECK_CUDA(cudaGetLastError());
 
@@ -825,7 +825,7 @@ void fused_attn_max_512_bwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv
                                  NVTE_Bias_Type bias_type, void *devPtrQ, void *devPtrK,
                                  void *devPtrV, void *devPtrS, void *devPtrdQ, void *devPtrdK,
                                  void *devPtrdV, void *devPtrdO, void *devPtrdS, void *devPtrdBias,
-                                 void *devPtrCuSeqlenQ, void *devPtrCuSeqlenKV, void *workspace,
+                                 void *devPtrCuSeqlensQ, void *devPtrCuSeqlensKV, void *workspace,
                                  size_t *workspace_size, cudnnDataType_t tensorType,
                                  cudaStream_t stream, cudnnHandle_t handle) {
   try {
@@ -1169,8 +1169,8 @@ void fused_attn_max_512_bwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv
     void *devActualSeqlenQ = static_cast<int8_t *>(workspace) + plan_workspace_size;
     void *devActualSeqlenK = static_cast<int8_t *>(devActualSeqlenQ) + b * sizeof(int32_t);
     cu_seqlens_to_actual_seqlens<<<grid, nthreads_per_block, 0, stream>>>(
-        b, static_cast<const int32_t *>(devPtrCuSeqlenQ),
-        static_cast<const int32_t *>(devPtrCuSeqlenKV), static_cast<int32_t *>(devActualSeqlenQ),
+        b, static_cast<const int32_t *>(devPtrCuSeqlensQ),
+        static_cast<const int32_t *>(devPtrCuSeqlensKV), static_cast<int32_t *>(devActualSeqlenQ),
         static_cast<int32_t *>(devActualSeqlenK));
     NVTE_CHECK_CUDA(cudaGetLastError());
 
@@ -1218,7 +1218,7 @@ void fused_attn_max_512_fwd_qkvpacked(
     size_t batch, size_t num_head, size_t max_seqlen, size_t head_dim, bool is_training,
     float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
     NVTE_Mask_Type mask_type, const Tensor *input_QKV, const Tensor *input_Bias, Tensor *output_O,
-    NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens, const Tensor *rng_state,
+    NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv, const Tensor *rng_state,
     Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
 
@@ -1249,7 +1249,8 @@ void fused_attn_max_512_fwd_qkvpacked(
     NVTE_ERROR("Unexpected Aux_CTX_Tensors->size.");
   }
 
-  void *devPtrCuSeqlen = cu_seqlens->data.dptr;
+  void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
+  void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
   const DType rng_state_type = rng_state->data.dtype;
   NVTE_CHECK(rng_state_type == DType::kInt64);
@@ -1263,7 +1264,7 @@ void fused_attn_max_512_fwd_qkvpacked(
   fused_attn_max_512_fwd_impl(
       batch, num_head, max_seqlen, max_seqlen, head_dim, is_training, attn_scale, p_dropout,
       qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO, devPtrBias,
-      devPtrCuSeqlen, devPtrCuSeqlen, devPtrDropoutSeed, devPtrDropoutOffset, workspace->data.dptr,
+      devPtrCuSeqlensQ, devPtrCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset, workspace->data.dptr,
       &workspace_size, get_cudnn_dtype(QKV_type), stream, handle);
 
   if (workspace_size > 0) {
@@ -1281,14 +1282,14 @@ void fused_attn_max_512_fwd_qkvpacked(
   }
 }
 
-void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t q_max_seqlen,
-                                     size_t kv_max_seqlen, size_t head_dim, bool is_training,
+void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t max_seqlen_q,
+                                     size_t max_seqlen_kv, size_t head_dim, bool is_training,
                                      float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
                                      NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                      const Tensor *input_Q, const Tensor *input_KV,
                                      const Tensor *input_Bias, Tensor *output_O,
-                                     NVTETensorPack *Aux_CTX_Tensors, const Tensor *q_cu_seqlens,
-                                     const Tensor *kv_cu_seqlens, const Tensor *rng_state,
+                                     NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q,
+                                     const Tensor *cu_seqlens_kv, const Tensor *rng_state,
                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
 
@@ -1318,7 +1319,7 @@ void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t q_max
     Aux_CTX_Tensors->size = 1;
     Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
     output_S->data.dptr = nullptr;
-    output_S->data.shape = {batch, num_head, q_max_seqlen, kv_max_seqlen};
+    output_S->data.shape = {batch, num_head, max_seqlen_q, max_seqlen_kv};
     output_S->data.dtype = q_type;
   } else if (Aux_CTX_Tensors->size == 1) {
     Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
@@ -1327,8 +1328,8 @@ void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t q_max
     NVTE_ERROR("Unexpected Aux_CTX_Tensors->size.");
   }
 
-  void *devQCuSeqlen = q_cu_seqlens->data.dptr;
-  void *devKVCuSeqlen = kv_cu_seqlens->data.dptr;
+  void *devCuSeqlensQ = cu_seqlens_q->data.dptr;
+  void *devCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
   const DType rng_state_type = rng_state->data.dtype;
   NVTE_CHECK(rng_state_type == DType::kInt64);
@@ -1339,9 +1340,9 @@ void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t q_max
   size_t workspace_size = 0;
 
   fused_attn_max_512_fwd_impl(
-      batch, num_head, q_max_seqlen, kv_max_seqlen, head_dim, is_training, attn_scale, p_dropout,
+      batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim, is_training, attn_scale, p_dropout,
       qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO, devPtrBias,
-      devQCuSeqlen, devKVCuSeqlen, devPtrDropoutSeed, devPtrDropoutOffset, workspace->data.dptr,
+      devCuSeqlensQ, devCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset, workspace->data.dptr,
       &workspace_size, get_cudnn_dtype(q_type), stream, handle);
 
   if (workspace_size > 0) {
@@ -1358,14 +1359,14 @@ void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t q_max
     NVTE_ERROR("Unexpected workspace_size.");
   }
 }
-void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t q_max_seqlen,
-                            size_t kv_max_seqlen, size_t head_dim, bool is_training,
+void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t max_seqlen_q,
+                            size_t max_seqlen_kv, size_t head_dim, bool is_training,
                             float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
                             NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                             const Tensor *input_Q, const Tensor *input_K, const Tensor *input_V,
                             const Tensor *input_Bias, Tensor *output_O,
-                            NVTETensorPack *Aux_CTX_Tensors, const Tensor *q_cu_seqlens,
-                            const Tensor *kv_cu_seqlens, const Tensor *rng_state, Tensor *workspace,
+                            NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q,
+                            const Tensor *cu_seqlens_kv, const Tensor *rng_state, Tensor *workspace,
                             cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
 
@@ -1387,7 +1388,7 @@ void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t q_max_seqlen,
     Aux_CTX_Tensors->size = 1;
     Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
     output_S->data.dptr = nullptr;
-    output_S->data.shape = {batch, num_head, q_max_seqlen, kv_max_seqlen};
+    output_S->data.shape = {batch, num_head, max_seqlen_q, max_seqlen_kv};
     output_S->data.dtype = q_type;
   } else if (Aux_CTX_Tensors->size == 1) {
     Tensor *output_S = reinterpret_cast<Tensor *>(Aux_CTX_Tensors->tensors[0]);
@@ -1396,8 +1397,8 @@ void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t q_max_seqlen,
     NVTE_ERROR("Unexpected Aux_CTX_Tensors->size.");
   }
 
-  void *devQCuSeqlen = q_cu_seqlens->data.dptr;
-  void *devKVCuSeqlen = kv_cu_seqlens->data.dptr;
+  void *devCuSeqlensQ = cu_seqlens_q->data.dptr;
+  void *devCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
   const DType rng_state_type = rng_state->data.dtype;
   NVTE_CHECK(rng_state_type == DType::kInt64);
@@ -1408,9 +1409,9 @@ void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t q_max_seqlen,
   size_t workspace_size = 0;
 
   fused_attn_max_512_fwd_impl(
-      batch, num_head, q_max_seqlen, kv_max_seqlen, head_dim, is_training, attn_scale, p_dropout,
+      batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim, is_training, attn_scale, p_dropout,
       qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrS, devPtrO, devPtrBias,
-      devQCuSeqlen, devKVCuSeqlen, devPtrDropoutSeed, devPtrDropoutOffset, workspace->data.dptr,
+      devCuSeqlensQ, devCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset, workspace->data.dptr,
       &workspace_size, get_cudnn_dtype(q_type), stream, handle);
 
   if (workspace_size > 0) {
@@ -1433,7 +1434,7 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t num_head, size_t max_
                                       NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
                                       NVTE_Mask_Type mask_type, const Tensor *input_QKV,
                                       const Tensor *input_dO, Tensor *output_S, Tensor *output_dQKV,
-                                      Tensor *output_dBias, const Tensor *cu_seqlens,
+                                      Tensor *output_dBias, const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv,
                                       Tensor *workspace, cudaStream_t stream,
                                       cudnnHandle_t handle) {
   using namespace transformer_engine;
@@ -1461,7 +1462,8 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t num_head, size_t max_
   // devPtrdS reuses the memory of devPtrS
   void *devPtrdS = devPtrS;
 
-  void *devPtrCuSeqlens = cu_seqlens->data.dptr;
+  void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
+  void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
   const auto qkv_type = input_QKV->data.dtype;
   size_t workspace_size = 0;
@@ -1469,7 +1471,7 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t num_head, size_t max_
   fused_attn_max_512_bwd_impl(batch, num_head, max_seqlen, max_seqlen, head_dim, attn_scale,
                               p_dropout, qkv_layout, mask_type, bias_type, devPtrQ, devPtrK,
                               devPtrV, devPtrS, devPtrdQ, devPtrdK, devPtrdV, devPtrdO, devPtrdS,
-                              devPtrdBias, devPtrCuSeqlens, devPtrCuSeqlens, workspace->data.dptr,
+                              devPtrdBias, devPtrCuSeqlensQ, devPtrCuSeqlensKV, workspace->data.dptr,
                               &workspace_size, get_cudnn_dtype(qkv_type), stream, handle);
 
   if (workspace_size > 0) {
@@ -1487,14 +1489,14 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t num_head, size_t max_
   }
 }
 
-void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t q_max_seqlen,
-                                     size_t kv_max_seqlen, size_t head_dim, float attn_scale,
+void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t max_seqlen_q,
+                                     size_t max_seqlen_kv, size_t head_dim, float attn_scale,
                                      float p_dropout, NVTE_QKV_Layout qkv_layout,
                                      NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                      const Tensor *input_Q, const Tensor *input_KV,
                                      const Tensor *input_dO, Tensor *output_S, Tensor *output_dQ,
                                      Tensor *output_dKV, Tensor *output_dBias,
-                                     const Tensor *q_cu_seqlens, const Tensor *kv_cu_seqlens,
+                                     const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv,
                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
 
@@ -1520,8 +1522,8 @@ void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t q_max
   // devPtrdS reuses the memory of devPtrS
   void *devPtrdS = devPtrS;
 
-  void *devPtrQCuSeqlens = q_cu_seqlens->data.dptr;
-  void *devPtrKVCuSeqlens = kv_cu_seqlens->data.dptr;
+  void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
+  void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
   const auto q_type = input_Q->data.dtype;
   const auto kv_type = input_KV->data.dtype;
@@ -1529,9 +1531,9 @@ void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t q_max
   size_t workspace_size = 0;
 
   fused_attn_max_512_bwd_impl(
-      batch, num_head, q_max_seqlen, kv_max_seqlen, head_dim, attn_scale, p_dropout, qkv_layout,
+      batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim, attn_scale, p_dropout, qkv_layout,
       mask_type, bias_type, devPtrQ, devPtrK, devPtrV, devPtrS, devPtrdQ, devPtrdK, devPtrdV,
-      devPtrdO, devPtrdS, devPtrdBias, devPtrQCuSeqlens, devPtrKVCuSeqlens, workspace->data.dptr,
+      devPtrdO, devPtrdS, devPtrdBias, devPtrCuSeqlensQ, devPtrCuSeqlensKV, workspace->data.dptr,
       &workspace_size, get_cudnn_dtype(q_type), stream, handle);
 
   if (workspace_size > 0) {
@@ -1548,14 +1550,14 @@ void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t q_max
     NVTE_ERROR("Unexpected workspace_size.");
   }
 }
-void fused_attn_max_512_bwd(size_t batch, size_t num_head, size_t q_max_seqlen,
-                            size_t kv_max_seqlen, size_t head_dim, float attn_scale,
+void fused_attn_max_512_bwd(size_t batch, size_t num_head, size_t max_seqlen_q,
+                            size_t max_seqlen_kv, size_t head_dim, float attn_scale,
                             float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
                             NVTE_Mask_Type mask_type, const Tensor *input_Q, const Tensor *input_K,
                             const Tensor *input_V, const Tensor *input_dO, Tensor *output_S,
                             Tensor *output_dQ, Tensor *output_dK, Tensor *output_dV,
-                            Tensor *output_dBias, const Tensor *q_cu_seqlens,
-                            const Tensor *kv_cu_seqlens, Tensor *workspace, cudaStream_t stream,
+                            Tensor *output_dBias, const Tensor *cu_seqlens_q,
+                            const Tensor *cu_seqlens_kv, Tensor *workspace, cudaStream_t stream,
                             cudnnHandle_t handle) {
   using namespace transformer_engine;
 
@@ -1576,8 +1578,8 @@ void fused_attn_max_512_bwd(size_t batch, size_t num_head, size_t q_max_seqlen,
   // devPtrdS reuses the memory of devPtrS
   void *devPtrdS = devPtrS;
 
-  void *devPtrQCuSeqlens = q_cu_seqlens->data.dptr;
-  void *devPtrKVCuSeqlens = kv_cu_seqlens->data.dptr;
+  void *devPtrCuSeqlensQ = cu_seqlens_q->data.dptr;
+  void *devPtrCuSeqlensKV = cu_seqlens_kv->data.dptr;
 
   const auto q_type = input_Q->data.dtype;
   const auto kv_type = input_K->data.dtype;
@@ -1585,9 +1587,9 @@ void fused_attn_max_512_bwd(size_t batch, size_t num_head, size_t q_max_seqlen,
   size_t workspace_size = 0;
 
   fused_attn_max_512_bwd_impl(
-      batch, num_head, q_max_seqlen, kv_max_seqlen, head_dim, attn_scale, p_dropout, qkv_layout,
+      batch, num_head, max_seqlen_q, max_seqlen_kv, head_dim, attn_scale, p_dropout, qkv_layout,
       mask_type, bias_type, devPtrQ, devPtrK, devPtrV, devPtrS, devPtrdQ, devPtrdK, devPtrdV,
-      devPtrdO, devPtrdS, devPtrdBias, devPtrQCuSeqlens, devPtrKVCuSeqlens, workspace->data.dptr,
+      devPtrdO, devPtrdS, devPtrdBias, devPtrCuSeqlensQ, devPtrCuSeqlensKV, workspace->data.dptr,
       &workspace_size, get_cudnn_dtype(q_type), stream, handle);
 
   if (workspace_size > 0) {

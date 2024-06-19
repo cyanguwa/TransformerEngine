@@ -25,25 +25,28 @@ NVTE_Fused_Attn_Backend get_fused_attn_backend(const transformer_engine::DType q
 std::vector<at::Tensor> fused_attn_fwd_qkvpacked(
     size_t max_seqlen, bool is_training, float attn_scale, float p_dropout, bool set_zero,
     NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
-    const at::Tensor cu_seqlens, const at::Tensor QKV, const transformer_engine::DType qkv_type,
-    const c10::optional<at::Tensor> cu_seqlens_padded, const c10::optional<at::Tensor> descale_QKV,
-    const c10::optional<at::Tensor> descale_S, const c10::optional<at::Tensor> scale_S,
-    const c10::optional<at::Tensor> scale_O, c10::optional<at::Tensor> amax_S,
-    c10::optional<at::Tensor> amax_O, const c10::optional<at::Tensor> Bias,
-    const c10::optional<at::Generator> rng_gen, size_t rng_elts_per_thread);
+    const at::Tensor cu_seqlens_q, const at::Tensor cu_seqlens_kv, const at::Tensor QKV,
+    const transformer_engine::DType qkv_type, const c10::optional<at::Tensor> cu_seqlens_q_padded,
+    const c10::optional<at::Tensor> cu_seqlens_kv_padded,
+    const c10::optional<at::Tensor> descale_QKV, const c10::optional<at::Tensor> descale_S,
+    const c10::optional<at::Tensor> scale_S, const c10::optional<at::Tensor> scale_O,
+    c10::optional<at::Tensor> amax_S, c10::optional<at::Tensor> amax_O,
+    const c10::optional<at::Tensor> Bias, const c10::optional<at::Generator> rng_gen,
+    size_t rng_elts_per_thread);
 
 std::vector<at::Tensor> fused_attn_bwd_qkvpacked(
     size_t max_seqlen, float attn_scale, float p_dropout, bool set_zero, NVTE_QKV_Layout qkv_layout,
-    NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type, const at::Tensor cu_seqlens,
-    const at::Tensor QKV, const at::Tensor O, const at::Tensor dO,
+    NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type, const at::Tensor cu_seqlens_q,
+    const at::Tensor cu_seqlens_kv, const at::Tensor QKV, const at::Tensor O, const at::Tensor dO,
     const transformer_engine::DType qkv_type, const transformer_engine::DType dqkv_type,
     const std::vector<at::Tensor> Aux_CTX_Tensors,
-    const c10::optional<at::Tensor> cu_seqlens_padded, const c10::optional<at::Tensor> descale_QKV,
-    const c10::optional<at::Tensor> descale_S, const c10::optional<at::Tensor> descale_O,
-    const c10::optional<at::Tensor> descale_dO, const c10::optional<at::Tensor> descale_dP,
-    const c10::optional<at::Tensor> scale_S, const c10::optional<at::Tensor> scale_dP,
-    const c10::optional<at::Tensor> scale_dQKV, c10::optional<at::Tensor> amax_dP,
-    c10::optional<at::Tensor> amax_dQKV);
+    const c10::optional<at::Tensor> cu_seqlens_q_padded,
+    const c10::optional<at::Tensor> cu_seqlens_kv_padded,
+    const c10::optional<at::Tensor> descale_QKV, const c10::optional<at::Tensor> descale_S,
+    const c10::optional<at::Tensor> descale_O, const c10::optional<at::Tensor> descale_dO,
+    const c10::optional<at::Tensor> descale_dP, const c10::optional<at::Tensor> scale_S,
+    const c10::optional<at::Tensor> scale_dP, const c10::optional<at::Tensor> scale_dQKV,
+    c10::optional<at::Tensor> amax_dP, c10::optional<at::Tensor> amax_dQKV);
 
 std::vector<at::Tensor> fused_attn_fwd_kvpacked(
     size_t max_seqlen_q, size_t max_seqlen_kv, bool is_training, float attn_scale, float p_dropout,

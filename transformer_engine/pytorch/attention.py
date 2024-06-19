@@ -2665,8 +2665,10 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
         ctx,
         is_training,
         max_seqlen,
-        cu_seqlens,
-        cu_seqlens_padded,
+        cu_seqlens_q,
+        cu_seqlens_kv,
+        cu_seqlens_q_padded,
+        cu_seqlens_kv_padded,
         qkv,
         qkv_dtype,
         attn_bias,
@@ -2706,12 +2708,14 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
             out_fp8, aux_ctx_tensors = fused_attn_fwd_qkvpacked(
                 is_training,
                 max_seqlen,
-                cu_seqlens,
+                cu_seqlens_q,
+                cu_seqlens_kv,
                 qkv_fp8,
                 fp8_dtype_forward,
                 fused_attention_backend,
                 attn_bias,
-                cu_seqlens_padded,
+                cu_seqlens_q_padded,
+                cu_seqlens_kv_padded,
                 fp8_meta["scaling_fwd"].scale_inv[META_QKV],
                 fp8_meta["scaling_fwd"].scale_inv[META_S],
                 fp8_meta["scaling_fwd"].scale[META_S],
@@ -2771,12 +2775,14 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
             out_ret, aux_ctx_tensors = fused_attn_fwd_qkvpacked(
                 is_training,
                 max_seqlen,
-                cu_seqlens,
+                cu_seqlens_q,
+                cu_seqlens_kv,
                 qkv,
                 qkv_dtype,
                 fused_attention_backend,
                 attn_bias,
-                cu_seqlens_padded,
+                cu_seqlens_q_padded,
+                cu_seqlens_kv_padded,
                 None,
                 None,
                 None,
@@ -2797,7 +2803,7 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
         ctx.fp8 = fp8 and int(os.getenv("NVTE_FP8_DPA_BWD", "1"))
         qkvo_tensors = (qkv, out_save) if not ctx.fp8 else (None, None)
         ctx.save_for_backward(
-            *qkvo_tensors, cu_seqlens, cu_seqlens_padded, *fp8_tensors, *aux_ctx_tensors
+            *qkvo_tensors, cu_seqlens_q, cu_seqlens_kv, cu_seqlens_q_padded, cu_seqlens_kv_padded, *fp8_tensors, *aux_ctx_tensors
         )
         ctx.fp8_meta = fp8_meta
         ctx.max_seqlen = max_seqlen
@@ -2829,8 +2835,10 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
         (
             qkv,
             out,
-            cu_seqlens,
-            cu_seqlens_padded,
+            cu_seqlens_q,
+            cu_seqlens_kv,
+            cu_seqlens_q_padded,
+            cu_seqlens_kv_padded,
             qkv_fp8,
             out_fp8,
             fwd_scales,
@@ -2856,8 +2864,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                 dqkv[:, 0],
                 dqkv[:, 1],
                 dqkv[:, 2],
-                cu_seqlens,
-                cu_seqlens,
+                cu_seqlens_q,
+                cu_seqlens_kv,
                 ctx.max_seqlen,
                 ctx.max_seqlen,
                 ctx.dropout_p,
@@ -2888,7 +2896,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                         ).view(d_out.shape)
                     dqkv_fp8, *rest = fused_attn_bwd_qkvpacked(
                         ctx.max_seqlen,
-                        cu_seqlens,
+                        cu_seqlens_q,
+                        cu_seqlens_kv,
                         qkv_fp8,
                         out_fp8,
                         d_out_fp8,
@@ -2896,7 +2905,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                         fp8_dtype_backward,
                         aux_ctx_tensors,
                         ctx.fused_attention_backend,
-                        cu_seqlens_padded,
+                        cu_seqlens_q_padded,
+                        cu_seqlens_kv_padded,
                         fwd_scale_invs[META_QKV],  # d_scale_qkv,
                         fwd_scale_invs[META_S],  # d_scale_s,
                         fwd_scale_invs[META_O],  # d_scale_o,
@@ -2940,7 +2950,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                         d_out = d_out_f8tensor.from_float8(qkv.dtype)
                     dqkv, *rest = fused_attn_bwd_qkvpacked(
                         ctx.max_seqlen,
-                        cu_seqlens,
+                        cu_seqlens_q,
+                        cu_seqlens_kv,
                         qkv,
                         out,
                         d_out,
@@ -2948,7 +2959,8 @@ class FusedAttnFunc_qkvpacked(torch.autograd.Function):
                         ctx.qkv_dtype,
                         aux_ctx_tensors,
                         ctx.fused_attention_backend,
-                        cu_seqlens_padded,
+                        cu_seqlens_q_padded,
+                        cu_seqlens_kv_padded,
                         None,
                         None,
                         None,

@@ -898,7 +898,7 @@ void fused_attn_fp8_fwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, in
                              void* devPtrM, void* devPtrZInv, void* devPtrO, void* devPtrDescaleQ,
                              void* devPtrDescaleK, void* devPtrDescaleV, void* devPtrDescaleS,
                              void* devPtrScaleS, void* devPtrScaleO, void* devPtrAmaxO,
-                             void* devPtrAmaxS, void* devPtrcuSeqlensQ, void* devPtrcuSeqlensKV,
+                             void* devPtrAmaxS, void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
                              void* devPtrDropoutSeed, void* devPtrDropoutOffset,
                              cudnnDataType_t tensorType, void* workspace_ptr,
                              size_t* workspace_size, cudaStream_t stream, cudnnHandle_t handle_) {
@@ -1104,11 +1104,11 @@ void fused_attn_fp8_fwd_impl(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, in
                                                           wkspace_size + (b + 1) * sizeof(int32_t));
     int32_t* actual_seqlens_q = reinterpret_cast<int32_t*>(
         reinterpret_cast<int8_t*>(workspace_ptr) + wkspace_size + (b + 1) * 2 * sizeof(int32_t));
-    // FP8 currently only supports self-attention, so doesn't use devPtrcuSeqlensKV
+    // FP8 currently only supports self-attention, so doesn't use devPtrCuSeqlensKV
     dim3 blockDims(128);
     dim3 gridDims((b + blockDims.x) / blockDims.x);
     cu_seqlens_to_offsets<<<gridDims, blockDims, 0, stream>>>(
-        b, h, d, reinterpret_cast<int32_t*>(devPtrcuSeqlensQ), actual_seqlens_q, qkv_ragged_offset,
+        b, h, d, reinterpret_cast<int32_t*>(devPtrCuSeqlensQ), actual_seqlens_q, qkv_ragged_offset,
         o_ragged_offset);
     void* devPtrQKVRaggedOffset = reinterpret_cast<void*>(qkv_ragged_offset);
     void* devPtrORaggedOffset = reinterpret_cast<void*>(o_ragged_offset);
@@ -1180,7 +1180,7 @@ void fused_attn_fp8_bwd_impl(
     void* devPtrDescaleO, void* devPtrDescaledO, void* devPtrDescaleS, void* devPtrDescaledS,
     void* devPtrScaleS, void* devPtrScaledS, void* devPtrScaledQ, void* devPtrScaledK,
     void* devPtrScaledV, void* devPtrAmaxdS, void* devPtrAmaxdQ, void* devPtrAmaxdK,
-    void* devPtrAmaxdV, void* devPtrcuSeqlensQ, void* devPtrcuSeqlensKV, void* devPtrDropoutSeed,
+    void* devPtrAmaxdV, void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV, void* devPtrDropoutSeed,
     void* devPtrDropoutOffset, cudnnDataType_t tensorType, void* workspace_ptr,
     size_t* workspace_size, cudaStream_t stream, cudnnHandle_t handle_) {
   try {
@@ -1570,11 +1570,11 @@ void fused_attn_fp8_bwd_impl(
                                                           wkspace_size + (b + 1) * sizeof(int32_t));
     int32_t* actual_seqlens_q = reinterpret_cast<int32_t*>(
         reinterpret_cast<int8_t*>(workspace_ptr) + wkspace_size + (b + 1) * 2 * sizeof(int32_t));
-    // FP8 currently only supports self-attention, so doesn't use devPtrcuSeqlensKV
+    // FP8 currently only supports self-attention, so doesn't use devPtrCuSeqlensKV
     dim3 blockDims(128);
     dim3 gridDims((b + blockDims.x) / blockDims.x);
     cu_seqlens_to_offsets<<<gridDims, blockDims, 0, stream>>>(
-        b, h, d, reinterpret_cast<int32_t*>(devPtrcuSeqlensQ), actual_seqlens_q, qkv_ragged_offset,
+        b, h, d, reinterpret_cast<int32_t*>(devPtrCuSeqlensQ), actual_seqlens_q, qkv_ragged_offset,
         o_ragged_offset);
     void* devPtrQKVRaggedOffset = reinterpret_cast<void*>(qkv_ragged_offset);
     void* devPtrORaggedOffset = reinterpret_cast<void*>(o_ragged_offset);
@@ -1654,7 +1654,7 @@ void fused_attn_fp8_fwd_impl_v1(
     NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, void* devPtrQ, void* devPtrK, void* devPtrV,
     void* devPtrM, void* devPtrZInv, void* devPtrO, void* devPtrDescaleQ, void* devPtrDescaleK,
     void* devPtrDescaleV, void* devPtrDescaleS, void* devPtrScaleS, void* devPtrScaleO,
-    void* devPtrAmaxO, void* devPtrAmaxS, void* devPtrcuSeqlensQ, void* devPtrcuSeqlensKV,
+    void* devPtrAmaxO, void* devPtrAmaxS, void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV,
     void* devPtrDropoutSeed, void* devPtrDropoutOffset, cudnn_frontend::DataType_t fwd_tensor_type,
     void* workspace, size_t* workspace_size, cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
@@ -1947,7 +1947,7 @@ void fused_attn_fp8_bwd_impl_v1(
     void* devPtrDescaledO, void* devPtrDescaleS, void* devPtrDescaledP, void* devPtrScaleS,
     void* devPtrScaledP, void* devPtrScaledQ, void* devPtrScaledK, void* devPtrScaledV,
     void* devPtrAmaxdP, void* devPtrAmaxdQ, void* devPtrAmaxdK, void* devPtrAmaxdV,
-    void* devPtrcuSeqlensQ, void* devPtrcuSeqlensKV, void* devPtrDropoutSeed,
+    void* devPtrCuSeqlensQ, void* devPtrCuSeqlensKV, void* devPtrDropoutSeed,
     void* devPtrDropoutOffset, cudnn_frontend::DataType_t fwd_tensor_type,
     cudnn_frontend::DataType_t bwd_tensor_type, void* workspace, size_t* workspace_size,
     cudaStream_t stream, cudnnHandle_t handle) {
@@ -2327,7 +2327,7 @@ void fused_attn_fp8_fwd_qkvpacked(size_t batch, size_t num_attn_heads, size_t ma
                                   float p_dropout, NVTE_QKV_Layout qkv_layout,
                                   NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                   const Tensor* input_QKV, Tensor* input_output_S, Tensor* output_O,
-                                  NVTETensorPack* Aux_CTX_Tensors, const Tensor* cu_seqlens,
+                                  NVTETensorPack* Aux_CTX_Tensors, const Tensor* cu_seqlens_q, const Tensor* cu_seqlens_kv,
                                   const Tensor* rng_state, Tensor* workspace, cudaStream_t stream,
                                   cudnnHandle_t handle) {
   using namespace transformer_engine;
@@ -2382,8 +2382,10 @@ void fused_attn_fp8_fwd_qkvpacked(size_t batch, size_t num_attn_heads, size_t ma
   void* devPtrScaleS = input_output_S->scale.dptr;
   void* devPtrDescaleS = input_output_S->scale_inv.dptr;
 
-  void* devPtrcuSeqlens =
-      reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens->data.dptr));
+  void* devPtrCuSeqlensQ =
+      reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_q->data.dptr));
+  void* devPtrCuSeqlensKV =
+      reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_kv->data.dptr));
   void* devPtrDropoutSeed =
       reinterpret_cast<void*>(reinterpret_cast<uint64_t*>(rng_state->data.dptr));
   void* devPtrDropoutOffset =
@@ -2397,7 +2399,7 @@ void fused_attn_fp8_fwd_qkvpacked(size_t batch, size_t num_attn_heads, size_t ma
         batch, num_attn_heads, num_attn_heads, max_seqlen, max_seqlen, head_dim, is_training,
         attn_scale, p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM,
         devPtrZInv, devPtrO, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS,
-        devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlens, devPtrcuSeqlens,
+        devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrCuSeqlensQ, devPtrCuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type), workspace->data.dptr,
         &workspace_size, stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
@@ -2405,7 +2407,7 @@ void fused_attn_fp8_fwd_qkvpacked(size_t batch, size_t num_attn_heads, size_t ma
         batch, num_attn_heads, max_seqlen, max_seqlen, head_dim, is_training, attn_scale, p_dropout,
         qkv_layout, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv, devPtrO, devPtrDescaleQ,
         devPtrDescaleK, devPtrDescaleV, devPtrDescaleS, devPtrScaleS, devPtrScaleO, devPtrAmaxO,
-        devPtrAmaxS, devPtrcuSeqlens, devPtrcuSeqlens, devPtrDropoutSeed, devPtrDropoutOffset,
+        devPtrAmaxS, devPtrCuSeqlensQ, devPtrCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset,
         get_cudnn_dtype(QKV_type), workspace->data.dptr, &workspace_size, stream, handle);
   } else {
     NVTE_ERROR("FP8 fused attention only supports qkv_layout=t3hd or qkv_format=bshd/sbhd. \n");
@@ -2429,7 +2431,7 @@ void fused_attn_fp8_bwd_qkvpacked(
     float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
     const Tensor* input_QKV, const Tensor* input_O, const Tensor* input_dO, const Tensor* input_M,
     const Tensor* input_ZInv, const Tensor* input_S, Tensor* input_output_dP,
-    const Tensor* output_dQKV, const Tensor* cu_seqlens, const Tensor* rng_state, Tensor* workspace,
+    const Tensor* output_dQKV, const Tensor* cu_seqlens_q, const Tensor* cu_seqlens_kv, const Tensor* rng_state, Tensor* workspace,
     cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
   const DType QKV_type = input_QKV->data.dtype;
@@ -2474,8 +2476,10 @@ void fused_attn_fp8_bwd_qkvpacked(
   void* devPtrScaledK = output_dQKV->scale.dptr;
   void* devPtrScaledV = output_dQKV->scale.dptr;
 
-  void* devPtrcuSeqlens =
-      reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens->data.dptr));
+  void* devPtrCuSeqlensQ =
+      reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_q->data.dptr));
+  void* devPtrCuSeqlensKV =
+      reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_kv->data.dptr));
   void* devPtrDropoutSeed =
       reinterpret_cast<void*>(reinterpret_cast<uint64_t*>(rng_state->data.dptr));
   void* devPtrDropoutOffset =
@@ -2491,7 +2495,7 @@ void fused_attn_fp8_bwd_qkvpacked(
         devPtrO, devPtrdO, devPtrdQ, devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleO, devPtrDescaledO, devPtrDescaleS, devPtrDescaledP,
         devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP,
-        devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrcuSeqlens, devPtrcuSeqlens,
+        devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrCuSeqlensQ, devPtrCuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type),
         get_cudnn_fe_dtype(dQKV_type), workspace->data.dptr, &workspace_size, stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
@@ -2500,8 +2504,8 @@ void fused_attn_fp8_bwd_qkvpacked(
         devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv, devPtrO, devPtrdO, devPtrdQ, devPtrdK,
         devPtrdV, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleO, devPtrDescaledO,
         devPtrDescaleS, devPtrDescaledP, devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK,
-        devPtrScaledV, devPtrAmaxdP, devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrcuSeqlens,
-        devPtrcuSeqlens, devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_dtype(QKV_type),
+        devPtrScaledV, devPtrAmaxdP, devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrCuSeqlensQ,
+        devPtrCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_dtype(QKV_type),
         workspace->data.dptr, &workspace_size, stream, handle);
   } else {
     NVTE_ERROR("FP8 fused attention only supports qkv_layout=t3hd or qkv_format=bshd/sbhd. \n");
@@ -2581,9 +2585,9 @@ void fused_attn_fp8_fwd_kvpacked(size_t batch, size_t num_attn_heads, size_t num
   void* devPtrScaleS = input_output_S->scale.dptr;
   void* devPtrDescaleS = input_output_S->scale_inv.dptr;
 
-  void* devPtrcuSeqlensQ =
+  void* devPtrCuSeqlensQ =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_q->data.dptr));
-  void* devPtrcuSeqlensKV =
+  void* devPtrCuSeqlensKV =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_kv->data.dptr));
   void* devPtrDropoutSeed =
       reinterpret_cast<void*>(reinterpret_cast<uint64_t*>(rng_state->data.dptr));
@@ -2598,7 +2602,7 @@ void fused_attn_fp8_fwd_kvpacked(size_t batch, size_t num_attn_heads, size_t num
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim, is_training,
         attn_scale, p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM,
         devPtrZInv, devPtrO, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS,
-        devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlensQ, devPtrcuSeqlensKV,
+        devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrCuSeqlensQ, devPtrCuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type), workspace->data.dptr,
         &workspace_size, stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
@@ -2606,7 +2610,7 @@ void fused_attn_fp8_fwd_kvpacked(size_t batch, size_t num_attn_heads, size_t num
         batch, num_attn_heads, max_seqlen_q, max_seqlen_kv, head_dim, is_training, attn_scale,
         p_dropout, qkv_layout, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv, devPtrO,
         devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS, devPtrScaleS, devPtrScaleO,
-        devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlensQ, devPtrcuSeqlensKV, devPtrDropoutSeed,
+        devPtrAmaxO, devPtrAmaxS, devPtrCuSeqlensQ, devPtrCuSeqlensKV, devPtrDropoutSeed,
         devPtrDropoutOffset, get_cudnn_dtype(QKV_type), workspace->data.dptr, &workspace_size,
         stream, handle);
   } else {
@@ -2678,9 +2682,9 @@ void fused_attn_fp8_bwd_kvpacked(
   void* devPtrScaledK = output_dKV->scale.dptr;
   void* devPtrScaledV = output_dKV->scale.dptr;
 
-  void* devPtrcuSeqlensQ =
+  void* devPtrCuSeqlensQ =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_q->data.dptr));
-  void* devPtrcuSeqlensKV =
+  void* devPtrCuSeqlensKV =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_kv->data.dptr));
   void* devPtrDropoutSeed =
       reinterpret_cast<void*>(reinterpret_cast<uint64_t*>(rng_state->data.dptr));
@@ -2697,7 +2701,7 @@ void fused_attn_fp8_bwd_kvpacked(
         devPtrO, devPtrdO, devPtrdQ, devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleO, devPtrDescaledO, devPtrDescaleS, devPtrDescaledP,
         devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP,
-        devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrcuSeqlensQ, devPtrcuSeqlensKV,
+        devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrCuSeqlensQ, devPtrCuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type),
         get_cudnn_fe_dtype(dQKV_type), workspace->data.dptr, &workspace_size, stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
@@ -2707,7 +2711,7 @@ void fused_attn_fp8_bwd_kvpacked(
         devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleO,
         devPtrDescaledO, devPtrDescaleS, devPtrDescaledP, devPtrScaleS, devPtrScaledP,
         devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP, devPtrAmaxdQ, devPtrAmaxdK,
-        devPtrAmaxdV, devPtrcuSeqlensQ, devPtrcuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset,
+        devPtrAmaxdV, devPtrCuSeqlensQ, devPtrCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset,
         get_cudnn_dtype(QKV_type), workspace->data.dptr, &workspace_size, stream, handle);
   } else {
     NVTE_ERROR("FP8 fused attention only supports qkv_layout=t3hd or qkv_format=bshd/sbhd. \n");
@@ -2778,9 +2782,9 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   void* devPtrScaleS = input_output_S->scale.dptr;
   void* devPtrDescaleS = input_output_S->scale_inv.dptr;
 
-  void* devPtrcuSeqlensQ =
+  void* devPtrCuSeqlensQ =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_q->data.dptr));
-  void* devPtrcuSeqlensKV =
+  void* devPtrCuSeqlensKV =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_kv->data.dptr));
   void* devPtrDropoutSeed =
       reinterpret_cast<void*>(reinterpret_cast<uint64_t*>(rng_state->data.dptr));
@@ -2796,7 +2800,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim, is_training,
         attn_scale, p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM,
         devPtrZInv, devPtrO, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS,
-        devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlensQ, devPtrcuSeqlensKV,
+        devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrCuSeqlensQ, devPtrCuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type), workspace->data.dptr,
         &workspace_size, stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
@@ -2804,7 +2808,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
         batch, num_attn_heads, max_seqlen_q, max_seqlen_kv, head_dim, is_training, attn_scale,
         p_dropout, qkv_layout, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv, devPtrO,
         devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS, devPtrScaleS, devPtrScaleO,
-        devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlensQ, devPtrcuSeqlensKV, devPtrDropoutSeed,
+        devPtrAmaxO, devPtrAmaxS, devPtrCuSeqlensQ, devPtrCuSeqlensKV, devPtrDropoutSeed,
         devPtrDropoutOffset, get_cudnn_dtype(QKV_type), workspace->data.dptr, &workspace_size,
         stream, handle);
   } else {
@@ -2867,9 +2871,9 @@ void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   void* devPtrScaledK = output_dQ->scale.dptr;
   void* devPtrScaledV = output_dQ->scale.dptr;
 
-  void* devPtrcuSeqlensQ =
+  void* devPtrCuSeqlensQ =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_q->data.dptr));
-  void* devPtrcuSeqlensKV =
+  void* devPtrCuSeqlensKV =
       reinterpret_cast<void*>(reinterpret_cast<int32_t*>(cu_seqlens_kv->data.dptr));
   void* devPtrDropoutSeed =
       reinterpret_cast<void*>(reinterpret_cast<uint64_t*>(rng_state->data.dptr));
@@ -2888,7 +2892,7 @@ void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
         devPtrO, devPtrdO, devPtrdQ, devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleO, devPtrDescaledO, devPtrDescaleS, devPtrDescaledP,
         devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP,
-        devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrcuSeqlensQ, devPtrcuSeqlensKV,
+        devPtrAmaxdQ, devPtrAmaxdK, devPtrAmaxdV, devPtrCuSeqlensQ, devPtrCuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type),
         get_cudnn_fe_dtype(dQKV_type), workspace->data.dptr, &workspace_size, stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
@@ -2898,7 +2902,7 @@ void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
         devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleO,
         devPtrDescaledO, devPtrDescaleS, devPtrDescaledP, devPtrScaleS, devPtrScaledP,
         devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP, devPtrAmaxdQ, devPtrAmaxdK,
-        devPtrAmaxdV, devPtrcuSeqlensQ, devPtrcuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset,
+        devPtrAmaxdV, devPtrCuSeqlensQ, devPtrCuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset,
         get_cudnn_dtype(QKV_type), workspace->data.dptr, &workspace_size, stream, handle);
   } else {
     NVTE_ERROR("FP8 fused attention only supports qkv_layout=t3hd or qkv_format=bshd/sbhd. \n");

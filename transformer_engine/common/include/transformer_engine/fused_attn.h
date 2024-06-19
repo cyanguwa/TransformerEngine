@@ -182,8 +182,10 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
  *  \param[out]    O                        The output O tensor.
  *  \param[out]    Aux_CTX_Tensors          Auxiliary output tensors when training,
  *                                          e.g. M, ZInv, rng_state.
- *  \param[in]     cu_seqlens               Cumulative sequence lengths, [batch_size + 1].
- *  \param[in]     cu_seqlens_padded        Cumulative sequence offsets for QKV, [batch_size + 1].
+ *  \param[in]     cu_seqlens_q              Cumulative sequence lengths for Q, [batch_size + 1].
+ *  \param[in]     cu_seqlens_kv             Cumulative sequence lengths for KV, [batch_size + 1].
+ *  \param[in]     cu_seqlens_q_padded       Cumulative sequence offsets for Q, [batch_size + 1].
+ *  \param[in]     cu_seqlens_kv_padded      Cumulative sequence offsets for KV, [batch_size + 1].
  *  \param[in]     rng_state                Seed and offset of CUDA random number generator.
  *  \param[in]     max_seqlen               Max sequence length used for computing,
  *                                          it may be >= max(seqlen_i) for i=0,...batch_size-1.
@@ -198,7 +200,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
  */
 void nvte_fused_attn_fwd_qkvpacked(const NVTETensor QKV, const NVTETensor Bias, NVTETensor S,
                                    NVTETensor O, NVTETensorPack* Aux_CTX_Tensors,
-                                   const NVTETensor cu_seqlens, const NVTETensor cu_seqlens_padded,
+                                   const NVTETensor cu_seqlens_q, const NVTETensor cu_seqlens_kv, const NVTETensor cu_seqlens_q_padded, const NVTETensor cu_seqlens_kv_padded,
                                    const NVTETensor rng_state, size_t max_seqlen, bool is_training,
                                    float attn_scale, float dropout, NVTE_QKV_Layout qkv_layout,
                                    NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
@@ -235,8 +237,10 @@ void nvte_fused_attn_fwd_qkvpacked(const NVTETensor QKV, const NVTETensor Bias, 
  *                                          e.g. M, ZInv, rng_state.
  *  \param[out]    dQKV                     The gradient of the QKV tensor.
  *  \param[out]    dBias                    The gradient of the Bias tensor.
- *  \param[in]     cu_seqlens               Cumulative sequence lengths, [batch_size + 1].
- *  \param[in]     cu_seqlens_padded        Cumulative sequence offsets for QKV, [batch_size + 1].
+ *  \param[in]     cu_seqlens_q              Cumulative sequence lengths for Q, [batch_size + 1].
+ *  \param[in]     cu_seqlens_kv             Cumulative sequence lengths for KV, [batch_size + 1].
+ *  \param[in]     cu_seqlens_q_padded       Cumulative sequence offsets for Q, [batch_size + 1].
+ *  \param[in]     cu_seqlens_kv_padded      Cumulative sequence offsets for KV, [batch_size + 1].
  *  \param[in]     max_seqlen               Max sequence length used for computing,
  *                                          it may be >= max(seqlen_i) for i=0,...batch_size-1.
  *  \param[in]     attn_scale               Scaling factor for Q * K.T.
@@ -250,8 +254,8 @@ void nvte_fused_attn_fwd_qkvpacked(const NVTETensor QKV, const NVTETensor Bias, 
 void nvte_fused_attn_bwd_qkvpacked(const NVTETensor QKV, const NVTETensor O, const NVTETensor dO,
                                    const NVTETensor S, NVTETensor dP,
                                    const NVTETensorPack* Aux_CTX_Tensors, NVTETensor dQKV,
-                                   NVTETensor dBias, const NVTETensor cu_seqlens,
-                                   const NVTETensor cu_seqlens_padded, size_t max_seqlen,
+                                   NVTETensor dBias, const NVTETensor cu_seqlens_q, const NVTETensor cu_seqlens_kv,
+                                   const NVTETensor cu_seqlens_q_padded, const NVTETensor cu_seqlens_kv_padded, size_t max_seqlen,
                                    float attn_scale, float dropout, NVTE_QKV_Layout qkv_layout,
                                    NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
                                    NVTETensor workspace, cudaStream_t stream);

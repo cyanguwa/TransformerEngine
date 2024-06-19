@@ -24,27 +24,27 @@ void fused_attn_max_512_fwd_qkvpacked(size_t batch, size_t num_head, size_t max_
                                       NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                       const Tensor *input_QKV, const Tensor *input_Bias,
                                       Tensor *output_O, NVTETensorPack *Aux_CTX_Tensors,
-                                      const Tensor *cu_seqlens, const Tensor *rng_state,
+                                      const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv, const Tensor *rng_state,
                                       Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
-void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t q_max_seqlen,
-                                     size_t kv_max_seqlen, size_t head_dim, bool is_training,
+void fused_attn_max_512_fwd_kvpacked(size_t batch, size_t num_head, size_t max_seqlen_q,
+                                     size_t max_seqlen_kv, size_t head_dim, bool is_training,
                                      float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
                                      NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                      const Tensor *input_Q, const Tensor *input_KV,
                                      const Tensor *input_Bias, Tensor *output_O,
-                                     NVTETensorPack *Aux_CTX_Tensors, const Tensor *q_cu_seqlens,
-                                     const Tensor *kv_cu_seqlens, const Tensor *rng_state,
+                                     NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q,
+                                     const Tensor *cu_seqlens_kv, const Tensor *rng_state,
                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
-void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t q_max_seqlen,
-                            size_t kv_max_seqlen, size_t head_dim, bool is_training,
+void fused_attn_max_512_fwd(size_t batch, size_t num_head, size_t max_seqlen_q,
+                            size_t max_seqlen_kv, size_t head_dim, bool is_training,
                             float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
                             NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                             const Tensor *input_Q, const Tensor *input_K, const Tensor *input_V,
                             const Tensor *input_Bias, Tensor *output_O,
-                            NVTETensorPack *Aux_CTX_Tensors, const Tensor *q_cu_seqlens,
-                            const Tensor *kv_cu_seqlens, const Tensor *rng_state, Tensor *workspace,
+                            NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q,
+                            const Tensor *cu_seqlens_kv, const Tensor *rng_state, Tensor *workspace,
                             cudaStream_t stream, cudnnHandle_t handle);
 
 void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t num_head, size_t max_seqlen,
@@ -52,27 +52,27 @@ void fused_attn_max_512_bwd_qkvpacked(size_t batch, size_t num_head, size_t max_
                                       NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
                                       NVTE_Mask_Type mask_type, const Tensor *input_QKV,
                                       const Tensor *input_dO, Tensor *output_S, Tensor *output_dQKV,
-                                      Tensor *output_dBias, const Tensor *cu_seqlens,
+                                      Tensor *output_dBias, const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv,
                                       Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
-void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t q_max_seqlen,
-                                     size_t kv_max_seqlen, size_t head_dim, float attn_scale,
+void fused_attn_max_512_bwd_kvpacked(size_t batch, size_t num_head, size_t max_seqlen_q,
+                                     size_t max_seqlen_kv, size_t head_dim, float attn_scale,
                                      float p_dropout, NVTE_QKV_Layout qkv_layout,
                                      NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
                                      const Tensor *input_Q, const Tensor *input_KV,
                                      const Tensor *input_dO, Tensor *output_S, Tensor *output_dQ,
                                      Tensor *output_dKV, Tensor *output_dBias,
-                                     const Tensor *q_cu_seqlens, const Tensor *kv_cu_seqlens,
+                                     const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv,
                                      Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
-void fused_attn_max_512_bwd(size_t batch, size_t num_head, size_t q_max_seqlen,
-                            size_t kv_max_seqlen, size_t head_dim, float attn_scale,
+void fused_attn_max_512_bwd(size_t batch, size_t num_head, size_t max_seqlen_q,
+                            size_t max_seqlen_kv, size_t head_dim, float attn_scale,
                             float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
                             NVTE_Mask_Type mask_type, const Tensor *input_Q, const Tensor *input_K,
                             const Tensor *input_V, const Tensor *input_dO, Tensor *output_S,
                             Tensor *output_dQ, Tensor *output_dK, Tensor *output_dV,
-                            Tensor *output_dBias, const Tensor *q_cu_seqlens,
-                            const Tensor *kv_cu_seqlens, Tensor *workspace, cudaStream_t stream,
+                            Tensor *output_dBias, const Tensor *cu_seqlens_q,
+                            const Tensor *cu_seqlens_kv, Tensor *workspace, cudaStream_t stream,
                             cudnnHandle_t handle);
 #endif  // CUDNN_VERSION >= 8901
 }  // namespace transformer_engine
