@@ -203,7 +203,7 @@ model_configs_base = {
     #     test:             b,  h, hg,   d,   sq,  skv,   p,      mask,      bias   # attn , backend
     "base_1_0": ModelConfig(8, 16, 16, 64, 128, 128, 0.0, "no_mask", "no_bias"),  # self , 0
     "base_1_1": ModelConfig(4, 16, 16, 64, 128, 256, 0.0, "no_mask", "no_bias"),  # cross, 0
-    "base_2_0": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "no_bias"),  # self , 1
+    "base_2_0": ModelConfig(4, 24, 24, 128, 8192, 8192, 0.0, "no_mask", "no_bias"),  # self , 1
     "base_2_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "no_bias"),  # cross, 1
     "base_3_0": ModelConfig(8, 16, 16, 128, 1, 2048, 0.0, "no_mask", "no_bias"),  # inference
     "base_3_1": ModelConfig(8, 16, 16, 256, 1, 2048, 0.0, "no_mask", "no_bias"),  # inference
@@ -297,17 +297,19 @@ def test_dot_product_attention(
     # FusedAttention backend
     if fused_attn_supported:
         if len(fused_attn_backend) == 1:
-            fused_attn_fwd, fused_attn_bwd = _run_dot_product_attention(
-                dtype,
-                config,
-                "FusedAttention",
-                ckpt_attn,
-                qkv_layout,
-                workspace_opt,
-                swa,
-                pad_between_seqs,
-                is_training,
-            )
+            for i in range(10):
+                print('iter ',i)
+                fused_attn_fwd, fused_attn_bwd = _run_dot_product_attention(
+                    dtype,
+                    config,
+                    "FusedAttention",
+                    ckpt_attn,
+                    qkv_layout,
+                    workspace_opt,
+                    swa,
+                    pad_between_seqs,
+                    is_training,
+                )
         if len(fused_attn_backend) == 2:
             os.environ["NVTE_FUSED_ATTN_BACKEND"] = "0"
             fused_attn_fwd, fused_attn_bwd = _run_dot_product_attention(
@@ -958,6 +960,7 @@ def _run_dot_product_attention(
                 return out_orig, (None, None, None)
         else:
             if is_training:
+                print('sum of qkv grads', [torch.sum(x).item() for x in [q.grad, k.grad, v.grad]])
                 return out, (q.grad, k.grad, v.grad)
             else:
                 return out, (None, None, None)

@@ -1024,6 +1024,7 @@ def fused_attn_bwd(
     qkv_layout: str = "sbh3d",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
+    deterministic: bool = False,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention BWD for packed KV input.
 
@@ -1156,6 +1157,7 @@ def fused_attn_bwd(
         QKVLayout[qkv_layout],
         AttnBiasType[attn_bias_type],
         AttnMaskType[attn_mask_type],
+        deterministic,
         cu_seqlens_q,
         cu_seqlens_kv,
         q,

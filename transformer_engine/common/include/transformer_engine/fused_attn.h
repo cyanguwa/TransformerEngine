@@ -506,7 +506,7 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
                          const NVTETensor cu_seqlens_kv_padded, size_t max_seqlen_q,
                          size_t max_seqlen_kv, float attn_scale, float dropout,
                          NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
-                         NVTE_Mask_Type attn_mask_type, NVTETensor workspace, cudaStream_t stream);
+                         NVTE_Mask_Type attn_mask_type, bool deterministic, NVTETensor workspace, cudaStream_t stream);
 
 #ifdef __cplusplus
 }  // extern "C"

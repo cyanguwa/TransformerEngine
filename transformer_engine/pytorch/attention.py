@@ -3467,6 +3467,7 @@ class FusedAttnFunc(torch.autograd.Function):
         use_FAv2_bwd,
         fp8,
         fp8_meta,
+        deterministic,
     ):
         logger = logging.getLogger("FusedAttnFunc")
         if fp8:
@@ -3703,6 +3704,7 @@ class FusedAttnFunc(torch.autograd.Function):
             fused_attention_backend if ctx.fp8 else FusedAttnBackend["F16_arbitrary_seqlen"]
         )
         ctx.use_FAv2_bwd = use_FAv2_bwd
+        ctx.deterministic = deterministic
 
         return out_ret
 
@@ -3817,6 +3819,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.qkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
+                        ctx.deterministic,
                     )
 
                     if ctx.fp8_meta["recipe"].fp8_mha:
@@ -3941,6 +3944,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.qkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
+                        ctx.deterministic,
                     )
 
         # if no_bias or alibi, return dqkv
@@ -3971,6 +3975,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 None,
                 None,
                 None,
+                None,
             )
         # else, return (dqkv, dbias)
         return (
@@ -3986,6 +3991,7 @@ class FusedAttnFunc(torch.autograd.Function):
             dv,
             None,
             rest[0],
+            None,
             None,
             None,
             None,
@@ -4050,21 +4056,25 @@ class FusedAttention(torch.nn.Module):
             "NVTE_FUSED_ATTN_USE_FAv2_BWD", "0"
         ) == "1" and get_device_compute_capability() == (9, 0)
         self.layer_number = 1 if layer_number is None else layer_number
-        if deterministic:
-            # workspace optimization path is deterministic
-            os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "-1"
+        self.deterministic = (
+            not bool(int(os.getenv("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "1")))
+            or torch.are_deterministic_algorithms_enabled()
+        )
+        #if deterministic:
+        #    # workspace optimization path is deterministic
+        #    os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "-1"
 
-        # CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
-        # - unset:       enables workspace optimization when required workspace is <= 256MB
-        #                or when bias gradient needs to be computed
-        # - n:           enables workspace optimization when required workspace is <= n bytes
-        # - -1:          enables workspace optimization always
-        # - 0:           disables workspace optimization always
-        if "NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT" in os.environ:
-            if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "0":
-                os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
-            if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "1":
-                os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "-1"
+        ## CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT
+        ## - unset:       enables workspace optimization when required workspace is <= 256MB
+        ##                or when bias gradient needs to be computed
+        ## - n:           enables workspace optimization when required workspace is <= n bytes
+        ## - -1:          enables workspace optimization always
+        ## - 0:           disables workspace optimization always
+        #if "NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT" in os.environ:
+        #    if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "0":
+        #        os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "0"
+        #    if os.environ["NVTE_FUSED_ATTN_FORCE_WORKSPACE_OPT"] == "1":
+        #        os.environ["CUDNN_FRONTEND_ATTN_DP_WORKSPACE_LIMIT"] = "-1"
 
         def remove_extra_states_check(self, incompatible_keys):  # pylint: disable=unused-argument
             """
@@ -4258,6 +4268,7 @@ class FusedAttention(torch.nn.Module):
                     use_FAv2_bwd,
                     fp8,
                     fp8_meta,
+                    self.deterministic,
                 )
 
         # ...hd -> ...(hd)
