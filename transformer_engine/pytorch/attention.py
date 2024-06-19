@@ -3462,6 +3462,7 @@ class FusedAttnFunc(torch.autograd.Function):
         qkv_layout,
         attn_bias_type,
         attn_mask_type,
+        window_size,
         rng_gen,
         fused_attention_backend,
         use_FAv2_bwd,
@@ -3541,6 +3542,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 qkv_layout,
                 attn_bias_type,
                 attn_mask_type,
+                window_size,
                 rng_gen,
             )
             if fp8_meta["recipe"].fp8_mha:
@@ -3664,6 +3666,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 qkv_layout,
                 attn_bias_type,
                 attn_mask_type,
+                window_size,
                 rng_gen,
             )
             out_save = out_ret
@@ -3699,6 +3702,7 @@ class FusedAttnFunc(torch.autograd.Function):
         ctx.qkv_layout = qkv_layout
         ctx.attn_bias_type = attn_bias_type
         ctx.attn_mask_type = attn_mask_type
+        ctx.window_size = window_size
         ctx.fused_attention_backend = (
             fused_attention_backend if ctx.fp8 else FusedAttnBackend["F16_arbitrary_seqlen"]
         )
@@ -3817,6 +3821,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.qkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
+                        ctx.window_size,
                     )
 
                     if ctx.fp8_meta["recipe"].fp8_mha:
@@ -3941,6 +3946,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.qkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
+                        ctx.window_size,
                     )
 
         # if no_bias or alibi, return dqkv
@@ -4102,6 +4108,7 @@ class FusedAttention(torch.nn.Module):
         max_seqlen_kv: Optional[int] = None,
         attn_mask_type: str = "causal",
         attention_mask: Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]] = None,
+        window_size: Optional[Tuple[int, int]] = None,
         fused_attention_backend: tex.NVTE_Fused_Attn_Backend = tex.NVTE_Fused_Attn_Backend.NVTE_No_Backend,
         core_attention_bias_type: str = "no_bias",
         core_attention_bias: Optional[torch.Tensor] = None,
@@ -4234,6 +4241,7 @@ class FusedAttention(torch.nn.Module):
                     assert (
                         fp8_meta is not None
                     ), "FP8 metadata fp8_meta is required for FP8 attention!"
+                print('ssss ',type(window_size))
                 output = FusedAttnFunc.apply(
                     self.training,
                     max_seqlen_q,
@@ -4253,6 +4261,7 @@ class FusedAttention(torch.nn.Module):
                     qkv_layout,
                     core_attention_bias_type,
                     attn_mask_type,
+                    window_size,
                     None,  # rng_gen
                     fused_attention_backend,
                     use_FAv2_bwd,
@@ -4975,23 +4984,27 @@ class DotProductAttention(TransformerEngineBaseModule):
                     "changed its behavior for causal mask in cross attention. See "
                     "https://github.com/Dao-AILab/flash-attention#21-change-behavior-of-causal-flag"
                 )
-                use_flash_attention = False
+                #use_flash_attention = False
+                #if "causal_bottom_right" in attn_mask_type and get_cudnn_version() < (9,3,0):
+                #    self.logger.warning(
+                #        "Disabling FusedAttention as bottom-right causal mask requires cuDNN 9.3+"
+                #    )
+                #    use_fused_attention = False
 
             context_parallel = (
                 self.cp_group is not None and get_distributed_world_size(self.cp_group) != 1
             )
 
             # Filter: sliding window attention.
-            # UnfusedDotProductAttention can support SWA via arbitrary attention mask.
             if window_size not in ((-1, -1), (-1, 0)):
-                if use_fused_attention:
-                    self.logger.debug("Disabling FusedAttention for SWA")
-                use_fused_attention = False
+                if use_fused_attention and (window_size[0] < 0 or window_size[1] != 0):
+                    self.logger.debug("Disabling FusedAttention as it only supports window_size[>=0, 0].")
+                    use_fused_attention = False
                 if (not _flash_attn_2_3_plus) or context_parallel:
                     if use_flash_attention:
                         self.logger.debug(
                             "Disabling FusedAttention as it requires flash-attn 2.3+ "
-                            "and no context parallelism"
+                            "and no context parallelism."
                         )
                     use_flash_attention = False
 
@@ -5184,6 +5197,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                 "qkv_format": qkv_format,
                 "qkv_layout": qkv_layout,
                 "mask_type": attn_mask_type,
+                "window_size": window_size,
                 "bias_type": core_attention_bias_type,
                 "bias_shape": (
                     core_attention_bias.shape if core_attention_bias is not None else None
@@ -5224,6 +5238,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                     max_seqlen_kv=max_seqlen_kv,
                 )
 
+            print('ssssdddddd ',type(window_size))
             if use_fused_attention:
                 self.logger.info(
                     "Running with FusedAttention backend (sub-backend %s)",
@@ -5254,6 +5269,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                         max_seqlen_kv=max_seqlen_kv,
                         attn_mask_type=attn_mask_type,
                         attention_mask=attention_mask,
+                        window_size=window_size,
                         fused_attention_backend=fused_attention_backend,
                         core_attention_bias_type=fu_core_attention_bias_type,
                         core_attention_bias=fu_core_attention_bias,
@@ -5277,6 +5293,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                     max_seqlen_kv=max_seqlen_kv,
                     attn_mask_type=attn_mask_type,
                     attention_mask=attention_mask,
+                    window_size=window_size,
                     fused_attention_backend=fused_attention_backend,
                     core_attention_bias_type=fu_core_attention_bias_type,
                     core_attention_bias=fu_core_attention_bias,

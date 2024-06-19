@@ -816,6 +816,7 @@ def fused_attn_fwd(
     qkv_layout: str = "sbh3d",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
+    window_size: Tuple[int, int] = None,
     rng_gen: torch.Generator = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention FWD for separate QKV input.
@@ -959,6 +960,7 @@ def fused_attn_fwd(
         assert amax_o is not None, "amax_o is required as an input for FP8 fused attention."
 
     # execute kernel
+    print('type ',type(window_size))
     output_tensors = tex.fused_attn_fwd(
         max_seqlen_q,
         max_seqlen_kv,
@@ -969,6 +971,7 @@ def fused_attn_fwd(
         QKVLayout[qkv_layout],
         AttnBiasType[attn_bias_type],
         AttnMaskType[attn_mask_type],
+        window_size,
         cu_seqlens_q,
         cu_seqlens_kv,
         q,
@@ -1024,6 +1027,7 @@ def fused_attn_bwd(
     qkv_layout: str = "sbh3d",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
+    window_size: Tuple[int, int] = None,
 ) -> Tuple[Union[torch.Tensor, None], ...]:
     """Fused Attention BWD for packed KV input.
 
@@ -1156,6 +1160,7 @@ def fused_attn_bwd(
         QKVLayout[qkv_layout],
         AttnBiasType[attn_bias_type],
         AttnMaskType[attn_mask_type],
+        window_size,
         cu_seqlens_q,
         cu_seqlens_kv,
         q,
