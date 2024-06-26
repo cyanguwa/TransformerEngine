@@ -104,6 +104,9 @@ struct FADescriptor_v1 {
   cudnn_frontend::DataType_t bwd_tensor_type;
 
   bool operator<(const FADescriptor_v1 &rhs) const {
+//  std::cout << " b" <<  b<< " h" <<  h<< " hg" <<  hg<< " s_q" <<  s_q<< " s_kv" <<  s_kv<< " d" <<  d<< std::endl;
+//  std::cout << " bias_b" <<  bias_b<< " bias_h" <<  bias_h<< " attnScale" <<  attnScale<< " isTraining" << isTraining<<" dropoutProbability" <<  dropoutProbability<< std::endl;
+//  std::cout << " layout" << (int)layout << " mask_type" <<  (int)mask_type<< " bias_type" <<  (int)bias_type<< " fwd_tensor_type" << (int)fwd_tensor_type<<" bwd_tensor_type"<<(int)bwd_tensor_type << std::endl;
     return std::tie(b, h, hg, s_q, s_kv, d, bias_b, bias_h, attnScale, isTraining,
                     dropoutProbability, layout, mask_type, bias_type, fwd_tensor_type,
                     bwd_tensor_type) <

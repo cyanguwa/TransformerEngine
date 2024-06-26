@@ -919,6 +919,10 @@ def fused_attn_fwd(
                     [seed, offset], dtype uint64
     """
 
+    print(f"{cu_seqlens_q=}")
+    print(f"{cu_seqlens_kv=}")
+    print(f"{cu_seqlens_q_padded=}")
+    print(f"{cu_seqlens_kv_padded=}")
     if attn_scale is None:
         d = q.size(-1)
         attn_scale = 1.0 / math.sqrt(d)

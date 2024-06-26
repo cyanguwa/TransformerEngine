@@ -115,9 +115,16 @@ void fused_attn_arbitrary_seqlen_fwd_impl(
       auto it = cache.find(descriptor);
       if (it != cache.end()) {
         auto graph = it->second;
+        std::cout << "----  Found " << std::endl;
+  std::cout << "graph "<< std::get<0>(it->second) << std::endl;
+  std::cout << " b" <<  descriptor.b<< " h" <<  descriptor.h<< " hg" <<  descriptor.hg<< " s_q" <<  descriptor.s_q<< " s_kv" <<  descriptor.s_kv<< " d" <<  descriptor.d<< std::endl;
+  std::cout << " bias_b" <<  descriptor.bias_b<< " bias_h" <<  descriptor.bias_h<< " attnScale" <<  descriptor.attnScale<< " isTraining" << descriptor.isTraining<<" dropoutProbability" <<  descriptor.dropoutProbability<< std::endl;
+  std::cout << " layout" <<  (int)(descriptor.layout) << " mask_type" <<  (int)(descriptor.mask_type)<< " bias_type" <<  (int)(descriptor.bias_type)<< " fwd_tensor_type" << (int)descriptor.fwd_tensor_type<<" bwd_tensor_type"<< (int)descriptor.bwd_tensor_type << std::endl;
+
         return graph;
       }
 
+      std::cout << "----  Create " << std::endl;
       // otherwise, build the op_graph and the plan. Then update cache
       auto mha_graph = std::make_shared<fe::graph::Graph>();
       mha_graph->set_io_data_type(tensorType)
