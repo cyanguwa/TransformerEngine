@@ -19,6 +19,7 @@ from packaging.version import Version as PkgVersion
 
 import torch
 import torch.nn.functional as F
+from torch.nn.parameter import Parameter
 
 import transformer_engine_torch as tex
 import transformer_engine as te
@@ -53,7 +54,7 @@ from transformer_engine.pytorch.fp8 import (
     get_fp8_torch_dtype,
 )
 from transformer_engine.pytorch.float8_tensor import Float8Tensor
-from transformer_engine.pytorch.module import LayerNormLinear, Linear
+from transformer_engine.pytorch.module import LayerNormLinear, Linear, RMSNorm
 from transformer_engine.pytorch.module.base import TransformerEngineBaseModule
 from transformer_engine.pytorch.utils import (
     divide,
@@ -7634,12 +7635,12 @@ class DotProductAttention(TransformerEngineBaseModule):
             ), "Keys and values must have the same batch size, sequence length and number of heads!"
             assert (
                 key_layer.shape[-1] == self.hidden_size_per_attention_head_k
-            ), f"Keys have head_dim = {key_layer.shape[-1]}, "
-            "but expected head_dim = {self.hidden_size_per_attention_head_k}!"
+            ), (f"Keys have head_dim = {key_layer.shape[-1]}, "
+            f"but expected head_dim = {self.hidden_size_per_attention_head_k}!")
             assert (
                 value_layer.shape[-1] == self.hidden_size_per_attention_head_v
-            ), f"Values have head_dim = {value_layer.shape[-1]}, "
-            "but expected head_dim = {self.hidden_size_per_attention_head_v}!"
+            ), (f"Values have head_dim = {value_layer.shape[-1]}, "
+            "but expected head_dim = {self.hidden_size_per_attention_head_v}!")
 
             if attn_mask_type is None:
                 attn_mask_type = self.attn_mask_type
@@ -8175,6 +8176,9 @@ class MultiheadAttention(torch.nn.Module):
             equal length. Please note that these formats do not reflect how
             tensors `query_layer`, `key_layer`, `value_layer` are laid out in memory.
             For that, please use `get_qkv_layout` to gain the layout information.
+    diff_transformer: bool, default = `False`
+                     Whether to employ the `differential transformer
+                     <https://arxiv.org/pdf/2410.05258>`_ architecture.
 
     Parallelism parameters
     ----------------------
@@ -8253,6 +8257,7 @@ class MultiheadAttention(torch.nn.Module):
         normalization: str = "LayerNorm",
         device: Union[torch.device, str] = "cuda",
         qkv_format: str = "sbhd",
+        diff_transformer: bool = False,
     ) -> None:
         super().__init__()
 
@@ -8398,19 +8403,68 @@ class MultiheadAttention(torch.nn.Module):
             )
 
         # Attention.
-        self.core_attention = DotProductAttention(
-            num_attention_heads,
-            self.hidden_size_per_attention_head,
-            num_gqa_groups=self.num_gqa_groups,
-            attention_dropout=attention_dropout,
-            qkv_format=self.qkv_format,
-            tp_size=tp_size,
-            get_rng_state_tracker=get_rng_state_tracker,
+        self.diff_transformer = diff_transformer
+        # if self.diff_transformer?
+        # what's depth?
+        def lambda_init_fn(depth):
+            return 0.8 - 0.6 * math.exp(-0.3 * depth)
+        depth = 0.5
+        self.lambda_init = lambda_init_fn(depth)
+        self.lambda_q1 = Parameter(torch.zeros(hidden_size, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.lambda_k1 = Parameter(torch.zeros(hidden_size, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.lambda_q2 = Parameter(torch.zeros(hidden_size, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.lambda_k2 = Parameter(torch.zeros(hidden_size, dtype=torch.float32).normal_(mean=0,std=0.1))
+        self.sub_layernorm = RMSNorm(
+            hidden_size,
+            eps=layernorm_epsilon,
             sequence_parallel=sequence_parallel,
-            tp_group=tp_group,
-            layer_number=self.layer_number,
-            attention_type=self.attention_type,
+            params_dtype=self.params_dtype,
+            zero_centered_gamma=zero_centered_gamma,
+            device=device,
         )
+        self.out_proj = Linear(
+            hidden_size,
+            self.hidden_size_q + 2 * self.hidden_size_kv,
+            init_method=init_method,
+            bias=False,
+            return_bias=False,
+            parallel_mode=qkv_parallel_mode,
+            parameters_split=parameters_split,
+            **common_gemm_kwargs,
+        )
+        print('MHA inti ',self.diff_transformer, [self.hidden_size_per_attention_head//2, self.hidden_size_per_attention_head])
+        if self.diff_transformer:
+            # self.core_attention_1 and _2?
+            # assert divisible self.hidden_size_per_attention_head//2,
+            # kv_channels = [self.hidden_size_per_attention_head//2, self.hidden_size_per_attention_head],
+            # kv_channels = self.hidden_size_per_attention_head,
+            self.core_attention = DotProductAttention(
+                num_attention_heads,
+                [self.hidden_size_per_attention_head//2, self.hidden_size_per_attention_head],
+                num_gqa_groups=self.num_gqa_groups,
+                attention_dropout=attention_dropout,
+                qkv_format=self.qkv_format,
+                tp_size=tp_size,
+                get_rng_state_tracker=get_rng_state_tracker,
+                sequence_parallel=sequence_parallel,
+                tp_group=tp_group,
+                layer_number=self.layer_number,
+                attention_type=self.attention_type,
+            )
+        else:
+            self.core_attention = DotProductAttention(
+                num_attention_heads,
+                self.hidden_size_per_attention_head,
+                num_gqa_groups=self.num_gqa_groups,
+                attention_dropout=attention_dropout,
+                qkv_format=self.qkv_format,
+                tp_size=tp_size,
+                get_rng_state_tracker=get_rng_state_tracker,
+                sequence_parallel=sequence_parallel,
+                tp_group=tp_group,
+                layer_number=self.layer_number,
+                attention_type=self.attention_type,
+            )
 
         # Linear
         self.proj = Linear(
@@ -8511,6 +8565,7 @@ class MultiheadAttention(torch.nn.Module):
         max_seqlen_q: Optional[int] = None,
         max_seqlen_kv: Optional[int] = None,
         fast_zero_fill: bool = True,
+        #diff_transformer: bool = False,
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         """
         Forward propagation for MultiheadAttention layer.
@@ -8589,6 +8644,9 @@ class MultiheadAttention(torch.nn.Module):
                        Calculated from `cu_seqlens_kv` if not provided.
         fast_zero_fill: bool, default = `True`
                     Whether to set output tensors to 0 or not before use.
+        diff_transformer: bool, default = `False`
+                         Whether to employ the `differential transformer
+                         <https://arxiv.org/pdf/2410.05258>`_ architecture.
         """
         # hidden_states: [sq, b, h]
 
@@ -8825,25 +8883,82 @@ class MultiheadAttention(torch.nn.Module):
         # Core attention computation
         # ===========================
 
-        context_layer = self.core_attention(
-            query_layer,
-            key_layer,
-            value_layer,
-            qkv_format=self.qkv_format,
-            cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_kv=cu_seqlens_kv,
-            max_seqlen_q=max_seqlen_q,
-            max_seqlen_kv=max_seqlen_kv,
-            attention_mask=attention_mask,
-            attn_mask_type=attn_mask_type,
-            window_size=window_size,
-            checkpoint_core_attention=checkpoint_core_attention,
-            core_attention_bias_type=core_attention_bias_type,
-            core_attention_bias=core_attention_bias,
-            alibi_slopes=alibi_slopes,
-            fast_zero_fill=fast_zero_fill,
-            inference_params=inference_params,
-        )
+        print('MHA fwd ',self.diff_transformer)
+        if self.diff_transformer:
+            # how does checkpoint work, for f16 activation, and fp8 metadata?
+            # what about inference params? half the d
+            def split_q_k_head_dim(tensor):
+                split_dim = tensor.ndim - 1
+                tensor = tensor.reshape(*tensor.shape[:-1], 2, tensor.shape[-1]//2)
+                t1, t2 = _SplitAlongDim.apply(tensor, split_dim, [1, 1])
+                t1, t2 = [x.squeeze(split_dim).contiguous() for x in [t1, t2]]
+                return t1, t2
+            query_layer1, query_layer2 = split_q_k_head_dim(query_layer)
+            key_layer1, key_layer2 = split_q_k_head_dim(key_layer)
+            context_layer1 = self.core_attention(
+                query_layer1,
+                key_layer1,
+                value_layer,
+                qkv_format=self.qkv_format,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_kv=cu_seqlens_kv,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_kv=max_seqlen_kv,
+                attention_mask=attention_mask,
+                attn_mask_type=attn_mask_type,
+                window_size=window_size,
+                checkpoint_core_attention=checkpoint_core_attention,
+                core_attention_bias_type=core_attention_bias_type,
+                core_attention_bias=core_attention_bias,
+                alibi_slopes=alibi_slopes,
+                fast_zero_fill=fast_zero_fill,
+                inference_params=inference_params,
+            )
+            context_layer2 = self.core_attention(
+                query_layer2,
+                key_layer2,
+                value_layer,
+                qkv_format=self.qkv_format,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_kv=cu_seqlens_kv,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_kv=max_seqlen_kv,
+                attention_mask=attention_mask,
+                attn_mask_type=attn_mask_type,
+                window_size=window_size,
+                checkpoint_core_attention=checkpoint_core_attention,
+                core_attention_bias_type=core_attention_bias_type,
+                core_attention_bias=core_attention_bias,
+                alibi_slopes=alibi_slopes,
+                fast_zero_fill=fast_zero_fill,
+                inference_params=inference_params,
+            )
+            lambda_1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda_k1, dim=-1).float()).type_as(query_layer1)
+            lambda_2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda_k2, dim=-1).float()).type_as(query_layer2)
+            lambda_full = lambda_1 - lambda_2 + self.lambda_init
+            context_layer = context_layer1 - lambda_full * context_layer2
+            context_layer = self.sub_layernorm(context_layer)
+            context_layer = context_layer * (1 - self.lambda_init)
+        else:
+            context_layer = self.core_attention(
+                query_layer,
+                key_layer,
+                value_layer,
+                qkv_format=self.qkv_format,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_kv=cu_seqlens_kv,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_kv=max_seqlen_kv,
+                attention_mask=attention_mask,
+                attn_mask_type=attn_mask_type,
+                window_size=window_size,
+                checkpoint_core_attention=checkpoint_core_attention,
+                core_attention_bias_type=core_attention_bias_type,
+                core_attention_bias=core_attention_bias,
+                alibi_slopes=alibi_slopes,
+                fast_zero_fill=fast_zero_fill,
+                inference_params=inference_params,
+            )
 
         # ===================
         # Output. [sq, b, h]

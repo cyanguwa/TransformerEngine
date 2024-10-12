@@ -184,6 +184,9 @@ class TransformerLayer(torch.nn.Module):
                          head size. Note that these formats are very closely
                          related to the `qkv_format` in the `MultiHeadAttention`
                          and `DotProductAttention` modules.
+    diff_transformer: bool, default = `False`
+                     Whether to employ the `differential transformer
+                     <https://arxiv.org/pdf/2410.05258>`_ architecture.
 
     Parallelism parameters
     ----------------------
@@ -277,6 +280,7 @@ class TransformerLayer(torch.nn.Module):
         normalization: str = "LayerNorm",
         device: Union[torch.device, str] = "cuda",
         attn_input_format: str = "sbhd",
+        diff_transformer: bool = False,
     ) -> None:
         super().__init__()
 
@@ -335,6 +339,7 @@ class TransformerLayer(torch.nn.Module):
         self.get_rng_state_tracker = get_rng_state_tracker
 
         self.attn_input_format = attn_input_format
+        self.diff_transformer = diff_transformer
 
         attention_args = (
             hidden_size,
@@ -376,6 +381,7 @@ class TransformerLayer(torch.nn.Module):
             return_bias=not self.parallel_attention_mlp,
             normalization=normalization,
             device=device,
+            diff_transformer=diff_transformer,
         )
 
         if layer_type == "decoder":
@@ -389,6 +395,7 @@ class TransformerLayer(torch.nn.Module):
                 return_bias=True,
                 normalization=normalization,
                 device=device,
+                diff_transformer=diff_transformer,
             )
 
         # LayerNorm -> activation(Linear + Bias) -> Linear
@@ -546,6 +553,7 @@ class TransformerLayer(torch.nn.Module):
         max_seqlen_q: Optional[int] = None,
         max_seqlen_kv: Optional[int] = None,
         fast_zero_fill: bool = True,
+        #diff_transformer: bool = False,
     ) -> torch.Tensor:
         """
         Transformer Layer: attention block and a feedforward network (MLP)
@@ -637,6 +645,9 @@ class TransformerLayer(torch.nn.Module):
         inference_params: InferenceParams, default = None
                          Inference parameters that are passed to the main model in order
                          to efficiently calculate and store the context during inference.
+        diff_transformer: bool, default = `False`
+                         Whether to employ the `differential transformer
+                         <https://arxiv.org/pdf/2410.05258>`_ architecture.
         """
 
         if self_attn_mask_type is None:
@@ -675,6 +686,9 @@ class TransformerLayer(torch.nn.Module):
                 enc_dec_attn_mask[i].dtype == torch.bool for i in range(len(enc_dec_attn_mask))
             ), "Encoder-decoder attention mask must be boolean tensor(s)"
 
+        #if diff_transformer is None:
+        #    diff_transformer = self.diff_transformer 
+
         # For AMP
         if torch.is_autocast_enabled():
             hidden_states = cast_if_needed(hidden_states, torch.get_autocast_gpu_dtype())
@@ -697,6 +711,7 @@ class TransformerLayer(torch.nn.Module):
             max_seqlen_q=max_seqlen_q,
             max_seqlen_kv=max_seqlen_kv,
             fast_zero_fill=fast_zero_fill,
+            #diff_transformer=diff_transformer,
         )
 
         if self.apply_residual_connection_post_layernorm and not self.output_layernorm:
@@ -724,6 +739,7 @@ class TransformerLayer(torch.nn.Module):
                 core_attention_bias=core_attention_bias,
                 alibi_slopes=alibi_slopes,
                 fast_zero_fill=fast_zero_fill,
+#                diff_transformer=diff_transformer,
             )
             if self.apply_residual_connection_post_layernorm:
                 attention_output, attention_bias, residual = inter_attention_outputs
