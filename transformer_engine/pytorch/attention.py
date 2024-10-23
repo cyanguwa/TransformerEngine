@@ -5215,6 +5215,7 @@ class FlashAttention(torch.nn.Module):
         qkv_layout: str = "sbh3d",
         cu_seqlens_q: Optional[torch.Tensor] = None,
         cu_seqlens_kv: Optional[torch.Tensor] = None,
+        page_table: Optional[torch.Tensor] = None,
         max_seqlen_q: Optional[int] = None,
         max_seqlen_kv: Optional[int] = None,
         attn_mask_type: str = "causal",
@@ -5494,6 +5495,7 @@ class FlashAttention(torch.nn.Module):
                         self.attention_dropout if self.training else 0.0,
                         softmax_scale=self.softmax_scale,
                         causal="causal" in attn_mask_type,
+                        #block_table=page_table,
                         **fa_optional_forward_kwargs,
                     )
 
@@ -6402,6 +6404,7 @@ class FusedAttnFunc(torch.autograd.Function):
         cu_seqlens_kv,
         cu_seqlens_q_padded,
         cu_seqlens_kv_padded,
+        page_table,
         q,
         k,
         v,
@@ -6421,6 +6424,7 @@ class FusedAttnFunc(torch.autograd.Function):
         fp8_meta,
         deterministic,
     ):
+        print('FFFFF ',page_table)
         # pylint: disable=missing-function-docstring
         is_input_fp8 = False
         is_output_fp8 = fp8_meta["recipe"].fp8_mha
@@ -6599,6 +6603,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 fp8_meta["scaling_fwd"].scale_inv.clone(),
             )
         else:
+            print('-------- Func fused_attn_fwd')
             out_ret, aux_ctx_tensors = fused_attn_fwd(
                 is_training,
                 max_seqlen_q,
@@ -6613,6 +6618,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 attn_bias,
                 cu_seqlens_q_padded,
                 cu_seqlens_kv_padded,
+                page_table,
                 None,  # d_scale_qkv
                 0,  # d_scale_qkv_offset
                 None,  # d_scale_s
@@ -6934,6 +6940,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 None,
                 None,
                 None,
+                None,
                 dq,
                 dk,
                 dv,
@@ -6957,6 +6964,7 @@ class FusedAttnFunc(torch.autograd.Function):
             )
         # else, return (dqkv, dbias)
         return (
+            None,
             None,
             None,
             None,
@@ -7068,6 +7076,7 @@ class FusedAttention(torch.nn.Module):
         cu_seqlens_kv: Optional[torch.Tensor] = None,
         cu_seqlens_q_padded: Optional[torch.Tensor] = None,
         cu_seqlens_kv_padded: Optional[torch.Tensor] = None,
+        page_table: Optional[torch.Tensor] = None,
         max_seqlen_q: Optional[int] = None,
         max_seqlen_kv: Optional[int] = None,
         attn_mask_type: str = "causal",
@@ -7223,6 +7232,33 @@ class FusedAttention(torch.nn.Module):
                 )
         else:
             with self.attention_dropout_ctx():
+                print(self.training,
+                    max_seqlen_q,
+                    max_seqlen_kv,
+                    cu_seqlens_q,
+                    cu_seqlens_kv,
+                    cu_seqlens_q_padded,
+                    cu_seqlens_kv_padded,
+                    page_table,
+                    query_layer.shape,
+                    key_layer.shape,
+                    value_layer.shape,
+                    qkv_dtype,
+                    core_attention_bias.shape if core_attention_bias is not None else None,
+                    self.softmax_scale,
+                    self.attention_dropout if self.training else 0.0,
+                    fast_zero_fill,
+                    qkv_layout,
+                    core_attention_bias_type,
+                    attn_mask_type,
+                    window_size,
+                    None,  # rng_gen
+                    fused_attention_backend,
+                    use_FAv2_bwd,
+                    fp8,
+                    fp8_meta,
+                    self.deterministic,
+                    )
                 output = FusedAttnFunc.apply(
                     self.training,
                     max_seqlen_q,
@@ -7231,6 +7267,7 @@ class FusedAttention(torch.nn.Module):
                     cu_seqlens_kv,
                     cu_seqlens_q_padded,
                     cu_seqlens_kv_padded,
+                    page_table,
                     query_layer,
                     key_layer,
                     value_layer,
@@ -7835,6 +7872,7 @@ class DotProductAttention(TransformerEngineBaseModule):
             if qkv_format is None:
                 qkv_format = self.qkv_format
 
+            page_table = None
             if inference_params is not None:
                 assert self.layer_number is not None, "Layer number must be set!"
 
@@ -7844,6 +7882,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                     attn_mask_type = attn_mask_type + "_bottom_right"
 
                 if qkv_format == "bshd":
+                    print('ssssssss key_layer ',key_layer.shape)
                     key_layer = key_layer.transpose(0, 1)
                     value_layer = value_layer.transpose(0, 1)
 
@@ -7854,10 +7893,12 @@ class DotProductAttention(TransformerEngineBaseModule):
 
                 batch_start = inference_params.batch_size_offset
                 batch_end = batch_start + key_layer.size(1)
+                print('batch_start ',batch_start,'batch_end',batch_end)
                 assert batch_end <= inference_key_memory.size(1)
 
                 sequence_start = inference_params.sequence_len_offset
                 sequence_end = sequence_start + key_layer.size(0)
+                print('sequence_start ',sequence_start,'sequence_end',sequence_end)
                 assert sequence_end <= inference_key_memory.size(0)
 
                 # Copy keys and values into KV-cache
@@ -7867,8 +7908,10 @@ class DotProductAttention(TransformerEngineBaseModule):
                 inference_value_memory[sequence_start:sequence_end, batch_start:batch_end, ...] = (
                     value_layer
                 )
-                key_layer = inference_key_memory[:sequence_end, batch_start:batch_end, ...]
-                value_layer = inference_value_memory[:sequence_end, batch_start:batch_end, ...]
+                #key_layer = inference_key_memory[:sequence_end, batch_start:batch_end, ...]
+                #value_layer = inference_value_memory[:sequence_end, batch_start:batch_end, ...]
+                key_layer = inference_key_memory[:, batch_start:batch_end, ...]
+                value_layer = inference_value_memory[:, batch_start:batch_end, ...]
 
                 if qkv_format == "bshd":
                     key_layer = key_layer.transpose(0, 1)
@@ -7876,6 +7919,8 @@ class DotProductAttention(TransformerEngineBaseModule):
 
                 key_layer = key_layer.contiguous()
                 value_layer = value_layer.contiguous()
+                print('shapesssssss ',key_layer.shape, value_layer.shape)
+                page_table = torch.Tensor([[0], [1]]).to(device='cuda', dtype=torch.int32)
 
             assert (
                 key_layer.shape[-2] == self.num_gqa_groups_per_partition
@@ -7929,15 +7974,20 @@ class DotProductAttention(TransformerEngineBaseModule):
                     len(x.shape) == 4 for x in (query_layer, key_layer, value_layer)
                 ), f"Queries, keys and values must be 4D tensors when qkv_format = {qkv_format}!"
                 if qkv_format == "sbhd":
-                    max_seqlen_q, max_seqlen_kv = (query_layer.shape[0], key_layer.shape[0])
+                    print('sbhd real shape q',query_layer.shape, key_layer.shape)
+                    if max_seqlen_q is None and max_seqlen_kv is None:
+                        max_seqlen_q, max_seqlen_kv = (query_layer.shape[0], key_layer.shape[0])
                     batch_size = query_layer.shape[1]
                 else:
-                    max_seqlen_q, max_seqlen_kv = (query_layer.shape[1], key_layer.shape[1])
+                    print('bshd real shape q',query_layer.shape, key_layer.shape)
+                    if max_seqlen_q is None and max_seqlen_kv is None:
+                        max_seqlen_q, max_seqlen_kv = (query_layer.shape[1], key_layer.shape[1])
                     batch_size = query_layer.shape[0]
                 max_seqlen_q *= cp_size
                 max_seqlen_kv *= cp_size
                 if cu_seqlens_q is not None:
                     seqlens_q = cu_seqlens_q[1:] - cu_seqlens_q[:-1]
+                    print(cu_seqlens_q, seqlens_q, max_seqlen_q)
                     assert all(
                         seqlens_q <= max_seqlen_q
                     ), """Sequence lengths indicated by cu_seqlens_q must be no greater than
@@ -7983,6 +8033,8 @@ class DotProductAttention(TransformerEngineBaseModule):
                 qkv_layout, query_layer, key_layer, value_layer = get_qkv_layout(
                     query_layer, key_layer, value_layer, qkv_format=qkv_format
                 )
+            if inference_params is not None:
+                qkv_layout = "paged_kv_bshd_2bshd"
 
             global _alibi_cache
             if alibi_slopes is not None:
@@ -8154,6 +8206,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                         cu_seqlens_kv=cu_seqlens_kv,
                         cu_seqlens_q_padded=cu_seqlens_q_padded,
                         cu_seqlens_kv_padded=cu_seqlens_kv_padded,
+                        page_table=page_table,
                         max_seqlen_q=max_seqlen_q,
                         max_seqlen_kv=max_seqlen_kv,
                         attn_mask_type=attn_mask_type,
@@ -8179,6 +8232,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                     cu_seqlens_kv=cu_seqlens_kv,
                     cu_seqlens_q_padded=cu_seqlens_q_padded,
                     cu_seqlens_kv_padded=cu_seqlens_kv_padded,
+                    page_table=page_table,
                     max_seqlen_q=max_seqlen_q,
                     max_seqlen_kv=max_seqlen_kv,
                     attn_mask_type=attn_mask_type,
@@ -8595,7 +8649,7 @@ class MultiheadAttention(torch.nn.Module):
         self, inference_max_sequence_len: int, batch_size: int, dtype: torch.dtype
     ) -> torch.Tensor:
         """Allocates memory for KV cache."""
-        return torch.empty(
+        return torch.zeros(
             inference_max_sequence_len,
             batch_size,
             self.num_gqa_groups_per_partition,
@@ -8793,11 +8847,11 @@ class MultiheadAttention(torch.nn.Module):
                     inference_key_memory,
                     inference_value_memory,
                 )
-            else:
-                (
-                    inference_key_memory,
-                    inference_value_memory,
-                ) = inference_params.key_value_memory_dict[self.layer_number]
+            #else:
+            #    (
+            #        inference_key_memory,
+            #        inference_value_memory,
+            #    ) = inference_params.key_value_memory_dict[self.layer_number]
 
         # ======================
         # Query, Key, and Value

@@ -359,7 +359,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .value("NVTE_TH3D", NVTE_QKV_Layout::NVTE_TH3D)
       .value("NVTE_THD_T2HD", NVTE_QKV_Layout::NVTE_THD_T2HD)
       .value("NVTE_THD_TH2D", NVTE_QKV_Layout::NVTE_THD_TH2D)
-      .value("NVTE_THD_THD_THD", NVTE_QKV_Layout::NVTE_THD_THD_THD);
+      .value("NVTE_THD_THD_THD", NVTE_QKV_Layout::NVTE_THD_THD_THD)
+      .value("NVTE_Paged_KV_BSHD_2BSHD", NVTE_QKV_Layout::NVTE_Paged_KV_BSHD_2BSHD)
+      .value("NVTE_Paged_KV_BSHD_2SBHD", NVTE_QKV_Layout::NVTE_Paged_KV_BSHD_2SBHD)
+      .value("NVTE_Paged_KV_SBHD_2BSHD", NVTE_QKV_Layout::NVTE_Paged_KV_SBHD_2BSHD)
+      .value("NVTE_Paged_KV_SBHD_2SBHD", NVTE_QKV_Layout::NVTE_Paged_KV_SBHD_2SBHD)
+      .value("NVTE_Paged_KV_THD_2BSHD", NVTE_QKV_Layout::NVTE_Paged_KV_THD_2BSHD)
+      .value("NVTE_Paged_KV_THD_2SBHD", NVTE_QKV_Layout::NVTE_Paged_KV_THD_2SBHD);
 
   py::enum_<NVTE_Fused_Attn_Backend>(m, "NVTE_Fused_Attn_Backend")
       .value("NVTE_F16_max512_seqlen", NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen)

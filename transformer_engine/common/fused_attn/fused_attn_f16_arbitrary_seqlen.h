@@ -58,12 +58,14 @@ void fused_attn_arbitrary_seqlen_bwd_kvpacked(
 
 void fused_attn_arbitrary_seqlen_fwd(
     size_t batch, size_t num_attn_heads, size_t num_gqa_groups, size_t max_seqlen_q,
-    size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v, bool is_training, float attn_scale,
+    size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v, 
+    int64_t num_pages_k, int64_t num_pages_v, int64_t page_size_k, int64_t page_size_v, int64_t max_num_pages_per_seq,
+    bool is_training, float attn_scale,
     float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
     int64_t window_size_left, int64_t window_size_right, const Tensor *input_Q,
     const Tensor *input_K, const Tensor *input_V, const Tensor *input_Bias, Tensor *output_O,
     NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv,
-    const Tensor *cu_seqlens_q_padded, const Tensor *cu_seqlens_kv_padded, const Tensor *rng_state,
+    const Tensor *cu_seqlens_q_padded, const Tensor *cu_seqlens_kv_padded, const Tensor *page_table_k, const Tensor *page_table_v, const Tensor *rng_state,
     Tensor *workspace, cudaStream_t stream, cudnnHandle_t handle);
 
 void fused_attn_arbitrary_seqlen_bwd(

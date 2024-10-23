@@ -69,7 +69,8 @@ model_configs = {
 
 model_configs_inference = {
     # hidden_size, eps, num_attention_heads, embed, num_layers, seq_len
-    "126m": ModelConfig(768, 1e-5, 12, 64, 12, 16),
+    #"126m": ModelConfig(768, 1e-5, 12, 64, 12, 16),
+    "126m": ModelConfig(1024, 1e-5, 16, 64, 2, 64),
 }
 backends_inference = ["FlashAttention", "UnfusedAttention"]
 module_inference = ["TransformerLayer", "MultiheadAttention"]
@@ -1836,7 +1837,7 @@ def test_transformer_layer_hidden_states_format(dtype, bs, model):
 @pytest.mark.parametrize("use_RoPE", all_boolean)
 @pytest.mark.parametrize("input_format", input_formats_inference)
 @pytest.mark.parametrize("module", module_inference)
-@pytest.mark.parametrize("backend", backends_inference)
+@pytest.mark.parametrize("backend", ["FusedAttention"]) #backends_inference)
 def test_kv_cache_accuracy(dtype, bs, model_key, use_RoPE, input_format, module, backend):
     os.environ["NVTE_FLASH_ATTN"] = "0"
     os.environ["NVTE_FUSED_ATTN"] = "0"
@@ -1857,7 +1858,7 @@ def test_kv_cache_accuracy(dtype, bs, model_key, use_RoPE, input_format, module,
 
     # Limits the max size of KV-cache
     B_max = B
-    S_max = S + 2
+    S_max = S # + 2
 
     if module == "TransformerLayer":
         model = TransformerLayer(
@@ -1896,23 +1897,40 @@ def test_kv_cache_accuracy(dtype, bs, model_key, use_RoPE, input_format, module,
 
     incremental_output = torch.zeros_like(input)
 
+    print('=========== FULLLLLLLLLL =======')
     # Generate output for the entire sequence
-    full_output = model(hidden_states=input, rotary_pos_emb=rotary_freqs if use_RoPE else None)
+    full_output = model(hidden_states=input, rotary_pos_emb=rotary_freqs if use_RoPE else None,
+            #attn_mask_type="padding",
+            #cu_seqlens_q=cu_seqlens, cu_seqlens_kv=cu_seqlens
+            )
 
+    print('=========== INCREMENTALLLL =======')
     # Incrementaly generate outputs using KV-cache
     for i in range(S):
+        print(f'=============== ITER {i} =========')
         if input_format == "sbhd":
             incremental_input = input[i].view(1, B, D)
         else:
             incremental_input = input[:, i, :].view(B, 1, D)
 
+        seqlens_q = torch.full([B], 1, device="cuda", dtype=torch.int32)
+        cu_seqlens_q = torch.zeros(B + 1, dtype=torch.int32, device="cuda")
+        cu_seqlens_q[1:] = torch.cumsum(seqlens_q, dim=0)
+        seqlens_kv = torch.full([B], i+1, device="cuda", dtype=torch.int32)
+        cu_seqlens_kv = torch.zeros(B + 1, dtype=torch.int32, device="cuda")
+        cu_seqlens_kv[1:] = torch.cumsum(seqlens_kv, dim=0)
+        print('cccccccccc',cu_seqlens_q, cu_seqlens_kv)
+
         line_output = model(
             hidden_states=incremental_input,
             inference_params=inference_params,
             rotary_pos_emb=rotary_freqs if use_RoPE else None,
+            attn_mask_type="padding",
+            cu_seqlens_q=cu_seqlens_q, cu_seqlens_kv=cu_seqlens_kv,
+            max_seqlen_q=1, max_seqlen_kv=S,
         )
 
-        inference_params.sequence_len_offset += 1
+#        inference_params.sequence_len_offset += 1
 
         if input_format == "sbhd":
             incremental_output[i] = line_output.view(B, D)

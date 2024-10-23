@@ -50,6 +50,12 @@ QKVLayout = {
     "thd_t2hd": NVTE_QKV_Layout.NVTE_THD_T2HD,
     "thd_th2d": NVTE_QKV_Layout.NVTE_THD_TH2D,
     "thd_thd_thd": NVTE_QKV_Layout.NVTE_THD_THD_THD,
+    "paged_kv_bshd_2bshd": NVTE_QKV_Layout.NVTE_Paged_KV_BSHD_2BSHD,
+    "paged_kv_bshd_2sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_BSHD_2SBHD,
+    "paged_kv_sbhd_2bshd": NVTE_QKV_Layout.NVTE_Paged_KV_SBHD_2BSHD,
+    "paged_kv_sbhd_2sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_SBHD_2SBHD,
+    "paged_kv_thd_2bshd": NVTE_QKV_Layout.NVTE_Paged_KV_THD_2BSHD,
+    "paged_kv_thd_2sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_THD_2SBHD,
 }
 
 AttnBiasType = {
@@ -900,6 +906,7 @@ def fused_attn_fwd(
     attn_bias: torch.Tensor = None,
     cu_seqlens_q_padded: torch.Tensor = None,
     cu_seqlens_kv_padded: torch.Tensor = None,
+    page_table: torch.Tensor = None,
     d_scale_qkv: torch.Tensor = None,
     d_scale_qkv_offset: int = META_QKV,
     d_scale_s: torch.Tensor = None,
@@ -1078,6 +1085,7 @@ def fused_attn_fwd(
     else:
         raise ValueError(f"Unsupported backend {fused_attention_backend}")
 
+    print('ppppppppppp ', page_table)
     # execute kernel
     output_tensors = tex.fused_attn_fwd(
         max_seqlen_q,
@@ -1098,6 +1106,8 @@ def fused_attn_fwd(
         qkv_dtype,
         cu_seqlens_q_padded,
         cu_seqlens_kv_padded,
+        page_table,
+        page_table,
         d_scale_qkv,
         d_scale_qkv_offset,
         d_scale_s,
