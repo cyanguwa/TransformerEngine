@@ -204,8 +204,8 @@ model_configs_base = {
     #     test:             b,  h, hg,   d,   sq,  skv,   p,      mask,      bias   # attn , backend
     #"base_1_0": ModelConfig(8, 16, 16, 64, 128, 128, 0.0, "no_mask", "no_bias"),  # self , 0
     #"base_1_1": ModelConfig(4, 16, 16, 64, 128, 256, 0.0, "no_mask", "no_bias"),  # cross, 0
-    "base_2_0": ModelConfig(2, 12, 12, 128, 2048, 2048, 0.0, "causal", "no_bias"),  # self , 1
-    "base_2_1": ModelConfig(2, 12, 12, 128, 512, 2048, 0.0, "causal_bottom_right", "no_bias"),  # cross, 1
+    "base_2_0": ModelConfig(1, 12, 12, 128, 4096, 4096, 0.0, "causal", "no_bias"),  # self , 1
+    "base_2_1": ModelConfig(1, 12, 12, 128, 1024, 4096, 0.0, "causal_bottom_right", "no_bias"),  # cross, 1
     #"base_3_0": ModelConfig(8, 16, 16, 128, 1, 2048, 0.0, "no_mask", "no_bias"),  # inference
     #"base_3_1": ModelConfig(8, 16, 16, 256, 1, 2048, 0.0, "no_mask", "no_bias"),  # inference
 }
@@ -945,20 +945,20 @@ def _run_dot_product_attention(
         k = inp[1]
         v = inp[2]
         d_out = out_grad
-        if config.max_seqlen_q == 2048:
+        if config.max_seqlen_q == 4096:
             print('saving q,k,v,do...')
             torch.save(q, 'q.pt')
             torch.save(k, 'k.pt')
             torch.save(v, 'v.pt')
             torch.save(d_out, 'd_out.pt')
-        if config.max_seqlen_q == 512:
+        if config.max_seqlen_q == 1024:
             print('loading q,k,v,do...')
             q= torch.load('q.pt')
             k= torch.load('k.pt')
             v= torch.load('v.pt')
             d_out= torch.load('d_out.pt')
-            q = q[:,-512:,:,:].contiguous()
-            d_out = d_out[:,-512:,:].contiguous()
+            q = q[:,-1024:,:,:].contiguous()
+            d_out = d_out[:,-1024:,:].contiguous()
     out = block(
         q,
         k,
@@ -979,14 +979,14 @@ def _run_dot_product_attention(
         alibi_slopes=alibi_slopes,
         fast_zero_fill=True,
     )
-    if config.max_seqlen_q == 2048:
+    if config.max_seqlen_q == 4096:
         print('saving o_s2048...')
         torch.save(out, 'o_s2048.pt')
-    if config.max_seqlen_q == 512:
+    if config.max_seqlen_q == 1024:
         print('saving o_s512...')
         torch.save(out, 'o_s512.pt')
         o_h12 = torch.load('o_s2048.pt')
-        o_h12= o_h12[:,-512:,:]
+        o_h12= o_h12[:,-1024:,:]
         #torch.testing.assert_close(o_h12, out, atol=1e-3, rtol=1e-3)
         torch.equal(o_h12, out)
         print("o_s512 matches last quater of o_s2048")
