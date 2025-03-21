@@ -218,7 +218,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
         // TODO(cyang): replace with cudnn-frontend check_support for cleaner logic and better error messaging
         // special conditions for blackwell
         // TODO: enable THD max_t in f16_arbitrary_seqlen when support becomes available in 9.7
-        !(sm_arch_ >= 100 && (head_dim_qk > 128 || head_dim_v > 128)) &&
+        //!(sm_arch_ >= 100 && (head_dim_qk > 128 || head_dim_v > 128)) &&
         // architecture
         ((cudnn_runtime_version >= 8903 && sm_arch_ >= 80) ||
          (cudnn_runtime_version < 8903 && (sm_arch_ == 80 || sm_arch_ == 90))) &&

@@ -5998,6 +5998,10 @@ class DotProductAttention(TransformerEngineBaseModule):
                 cu_seqlens_q_padded = None
                 cu_seqlens_kv_padded = None
 
+            query_layer, key_layer, value_layer = [
+                x.contiguous() if not x.is_contiguous() else x
+                for x in [query_layer, key_layer, value_layer]
+            ]
             # get qkv's memory layout
             if all(isinstance(x, Float8Tensor) for x in [query_layer, key_layer, value_layer]):
                 (
