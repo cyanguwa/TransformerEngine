@@ -190,6 +190,8 @@ class AttentionParams:
         `causal_bottom_right`, `padding_causal_bottom_right`, `arbitrary`}
     window_size: Tuple[int, int], default = None
         Sliding window attention size.
+    chunk_size: int, default = None
+        Chunk size for context parallelism.
     alibi_slopes_shape: Optional[Union[torch.Size, List]], default = `None`
         Tensor shape of :attr:`alibi_slopes` in `DotProductAttention`.
     core_attention_bias_type: str, default = `no_bias`
@@ -229,6 +231,7 @@ class AttentionParams:
     head_dim_v: int = 64
     attn_mask_type: str = "no_mask"
     window_size: Union[Tuple[int, int], None] = None
+    chunk_size: int = None
     alibi_slopes_shape: Union[torch.Size, List, None] = None
     core_attention_bias_type: str = "no_bias"
     core_attention_bias_shape: str = "1hss"
@@ -1793,3 +1796,203 @@ def get_attention_quantizers(fp8, quantizers, cp_specific_quantizers=False):
         )
 
     return QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer
+
+
+def thd_chunkify(
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_padded: torch.Tensor,
+    start_idx: Optional[torch.Tensor] = None,
+    chunk_size: int = None,
+    cp_load_balance: bool = False,
+    cp_rank: Optional[int] = None,
+    cp_size: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Chunkify the cu_seqlens tensor.
+    Returns new cu_seqlens, cu_seqlens_padded tensors
+
+    First and last chunks in every sequence can be not full.
+    """
+    seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+    pad_seq_lens = cu_seqlens_padded[1:] - cu_seqlens_padded[:-1]
+    pad_lens = pad_seq_lens - seq_lens
+    new_cu_seqlens = []
+    new_cu_seqlens_padded = []
+
+
+    new_seq_lens = []
+    new_seq_lens_padded = []
+    for i in range(cu_seqlens.size(0)):
+        seq_len = seq_lens[i]
+        new_seq_len = 0
+        pad_len = pad_lens[i]
+        if start_idx is None:
+            start_id = seq_len // 2 * cp_rank
+        else:
+            start_id = start_idx[i]
+
+        # first chunk
+        first_chunk_lenght = (chunk_size - start_id) % chunk_size
+
+        if cp_load_balance:
+            first_chunk_lenght = min(first_chunk_lenght, seq_len // 2)
+        first_chunk_lenght = min(first_chunk_lenght, seq_len)
+
+        new_seq_lens.append(first_chunk_lenght)
+        new_seq_lens_padded.append(first_chunk_lenght)
+        new_seq_len += first_chunk_lenght
+
+        if new_seq_len == seq_len:
+            continue
+
+        while True:
+            if cp_load_balance:
+                if new_seq_len + chunk_size > seq_len // 2:
+                    break
+            else:
+                if new_seq_len + chunk_size > seq_len:
+                    break
+            
+            new_seq_lens.append(chunk_size)
+            new_seq_lens_padded.append(chunk_size)
+            new_seq_len += chunk_size
+        
+        if cp_load_balance:
+            last_token_first_part_id = start_id + seq_len // 2 - 1
+            total_seq_size = seq_len * cp_size // 2
+            first_token_second_part_id = total_seq_size - last_token_first_part_id # is symmetrical to last token of first part with respect to the middle of the sequence
+
+            last_chunk_of_first_part_id = last_token_first_part_id // chunk_size
+            first_chunk_of_second_part_id = first_token_second_part_id // chunk_size
+
+            
+            extend_last_chunk = last_chunk_of_first_part_id == first_chunk_of_second_part_id
+
+            # first chunk of second part
+            first_chunk_lenght = (chunk_size - first_token_second_part_id) % chunk_size
+
+            first_chunk_lenght = min(first_chunk_lenght, seq_len // 2)
+
+            if extend_last_chunk:
+                new_seq_lens[-1] += first_chunk_lenght
+                new_seq_lens_padded[-1] += first_chunk_lenght
+            else:
+                new_seq_lens.append(first_chunk_lenght)
+                new_seq_lens_padded.append(first_chunk_lenght)
+            new_seq_len += first_chunk_lenght
+
+            while True:
+                if new_seq_len + chunk_size > seq_len // 2:
+                    break
+
+                new_seq_lens.append(chunk_size)
+                new_seq_lens_padded.append(chunk_size)
+                new_seq_len += chunk_size
+
+        last_chunk_lenght = seq_len - new_seq_len
+        new_seq_lens.append(last_chunk_lenght)
+        new_seq_len += last_chunk_lenght
+        # add last_chunk + padding to new_seq_lens_padded
+        new_seq_lens_padded.append(last_chunk_lenght + pad_len)
+        assert new_seq_len == seq_len
+    
+    new_cu_seqlens = torch.cumsum(torch.tensor(new_seq_lens), dim=0)
+    new_cu_seqlens_padded = torch.cumsum(torch.tensor(new_seq_lens_padded), dim=0)
+
+    return new_cu_seqlens, new_cu_seqlens_padded
+
+    
+
+@jit_fuser
+def thd_seq_tweak_below_diagonal(
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_padded: torch.Tensor,
+    cp_rank: int,
+    cp_size: int,
+    chunk_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+    pad_lens = (
+        cu_seqlens_padded[1:]
+        - cu_seqlens_padded[:-1]
+        - seq_lens
+    )
+
+    seq_plus_pad = seq_lens + pad_lens
+    half_seq_lens  = seq_plus_pad // 2
+
+    last_kv_first_half_id = cp_rank * (half_seq_lens + 1) - 1
+    last_kv_chunk_pos = half_seq_lens - (half_seq_lens % chunk_size)
+    last_kv_chunk_id = last_kv_first_half_id // chunk_size
+
+    first_half_q_first_chunk_id = (cp_rank * seq_plus_pad) // chunk_size
+    first_half_q_second_chunk_id = (
+        (2 * cp_size - 1 - cp_rank) * half_seq_lens
+    ) // chunk_size
+    
+    first_half_q_first_chunk_last_pos  = torch.min(
+        half_seq_lens, (first_half_q_first_chunk_id * chunk_size) % half_seq_lens)
+    second_half_q_first_chunk_last_pos = torch.min(
+        seq_lens, half_seq_lens + (first_half_q_second_chunk_id * chunk_size) % half_seq_lens)
+
+    take_0 = last_kv_chunk_id != first_half_q_first_chunk_last_pos
+    take_first_half_q = last_kv_chunk_id != second_half_q_first_chunk_last_pos
+    take_second_half_q = (~take_0) & (~take_first_half_q)
+
+    chunk_end_q_seqs = torch.zeros_like(seq_lens)
+    chunk_end_q_seqs[take_0] = 0
+    chunk_end_q_seqs[take_first_half_q] = first_half_q_first_chunk_last_pos
+    chunk_end_q_seqs[take_second_half_q] = second_half_q_first_chunk_last_pos
+
+    chunk_start_kv_seqs = torch.zeros_like(seq_lens)
+    chunk_start_kv_seqs[~take_0] = last_kv_chunk_pos[~take_0]
+
+    # Helper aliases
+    zeros_like = torch.zeros_like
+    minimum = torch.minimum
+
+    # 1. Build per-sequence chunk sizes
+    #    Q chunks   : [0, first_part, second_part]
+    #    KV chunks  : [first_part, second_part, 0 third_part]
+    q_0 = zeros_like(seq_lens)
+    q_1 = chunk_end_q_seqs
+    q_2 = seq_plus_pad - chunk_end_q_seqs
+    q_3 = zeros_like(seq_lens)
+    q_chunks = torch.stack((q_0, q_1, q_2, q_3), dim=1)
+
+    kv_0 = chunk_start_kv_seqs
+    kv_1 = zeros_like(seq_lens)
+    kv_2 = half_seq_lens - chunk_start_kv_seqs
+    kv_3 = half_seq_lens
+    kv_chunks = torch.stack((kv_0, kv_1, kv_2, kv_3), dim=1)
+
+    # 2. Padded variants – keep padding only in the final chunk
+    q_chunks_padded  = torch.stack(
+        (q_0, q_1, q_2, seq_plus_pad - q_0 - q_1 - q_2), dim=1
+    )
+    kv_chunks_padded = torch.stack(
+        (kv_0, kv_1, kv_2, seq_plus_pad - kv_0 - kv_1 - kv_2), dim=1
+    )
+
+    cu_seqlens_q_per_step = q_chunks.flatten().cumsum(0)
+    cu_seqlens_kv_per_step = kv_chunks.flatten().cumsum(0)
+    cu_seqlens_q_padded_per_step  = q_chunks_padded.flatten().cumsum(0)
+    cu_seqlens_kv_padded_per_step = kv_chunks_padded.flatten().cumsum(0)
+
+    return cu_seqlens_q_per_step, cu_seqlens_kv_per_step, cu_seqlens_q_padded_per_step, cu_seqlens_kv_padded_per_step
+
+
+@jit_fuser
+def thd_seq_tweak_above_diagonal(
+    cu_seqlens: torch.Tensor,
+    cu_seqlens_padded: torch.Tensor,
+    cp_rank: int,
+    cp_size: int,
+    chunk_size: int,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+
+    seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
+    pad_lens = (
+        cu_seqlens_padded[1:]
+        - cu_seqlens_padded[:-1]
+        - seq_lens

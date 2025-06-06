@@ -217,6 +217,7 @@ class DotProductAttention(TransformerEngineBaseModule):
         tp_group: Optional[dist_group_type] = None,
         layer_number: Optional[int] = None,
         attention_type: str = "self",
+        chunk_size: Optional[int] = None,
         cp_group: Optional[Union[dist_group_type, List[dist_group_type]]] = None,
         cp_global_ranks: List[int] = None,
         cp_stream: torch.cuda.Stream = None,
@@ -263,6 +264,9 @@ class DotProductAttention(TransformerEngineBaseModule):
         assert (
             num_attention_heads % self.num_gqa_groups == 0
         ), "The number of attention heads must be divisible by the number of GQA groups!"
+
+        assert chunk_size is None or qkv_format == "thd", "Chunk size is only supported for thd format"
+        self.chunk_size = chunk_size
 
         self.rng_states_tracker = None
         if sequence_parallel or get_rng_state_tracker is None:
@@ -747,6 +751,15 @@ class DotProductAttention(TransformerEngineBaseModule):
                 assert (
                     cu_seqlens_q.dtype == torch.int32 and cu_seqlens_kv.dtype == torch.int32
                 ), "cu_seqlens_q and cu_seqlens_q must both be in dtype torch.int32!"
+
+                if self.chunk_size is not None and self.cp_group is not None:
+                    # todo: check if this condition is correct
+                    cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
+                        cu_seqlens_q,  cu_seqlens_q_padded, 0, self.chunk_size)
+                    cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
+                        cu_seqlens_kv,  cu_seqlens_kv_padded, 0, self.chunk_size)
+
+
                 batch_size = len(cu_seqlens_q) - 1
                 if max_seqlen_q is None:
                     if cu_seqlens_q_padded is not None:
@@ -760,6 +773,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                     else:
                         seqlens_kv = cu_seqlens_kv[1:] - cu_seqlens_kv[:-1]
                     max_seqlen_kv = int((seqlens_kv.max().item() + 63) // 64 * 64)
+                
 
             # update KV cache and retrieve saved tokens from cache for inference
             if inference_params is not None:
@@ -947,6 +961,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                 head_dim_v=head_dim_v,
                 attn_mask_type=attn_mask_type,
                 window_size=window_size,
+                chunk_size=self.chunk_size,
                 alibi_slopes_shape=alibi_slopes.shape if alibi_slopes is not None else None,
                 core_attention_bias_type=core_attention_bias_type,
                 core_attention_bias_shape=core_attention_bias_shape,
