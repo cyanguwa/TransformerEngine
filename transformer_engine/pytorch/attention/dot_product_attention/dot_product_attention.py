@@ -752,14 +752,11 @@ class DotProductAttention(TransformerEngineBaseModule):
                     cu_seqlens_q.dtype == torch.int32 and cu_seqlens_kv.dtype == torch.int32
                 ), "cu_seqlens_q and cu_seqlens_q must both be in dtype torch.int32!"
 
-                if self.chunk_size is not None and self.cp_group is not None:
-                    # todo: check if this condition is correct
+                if self.chunk_size is not None and self.cp_group is None:
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_q,  cu_seqlens_q_padded, 0, self.chunk_size)
+                        cu_seqlens_q,  cu_seqlens_q_padded, torch.zeros_like(cu_seqlens_q, device=cu_seqlens_q.device), self.chunk_size)
                     cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_kv,  cu_seqlens_kv_padded, 0, self.chunk_size)
-
-
+                        cu_seqlens_kv,  cu_seqlens_kv_padded, torch.zeros_like(cu_seqlens_kv, device=cu_seqlens_kv.device), self.chunk_size)
                 batch_size = len(cu_seqlens_q) - 1
                 if max_seqlen_q is None:
                     if cu_seqlens_q_padded is not None:
@@ -1095,6 +1092,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                         attn_mask_type=attn_mask_type,
                         attention_mask=attention_mask,
                         window_size=window_size,
+                        chunk_size=self.chunk_size,
                         fused_attention_backend=fused_attention_backend,
                         core_attention_bias_type=fu_core_attention_bias_type,
                         core_attention_bias=fu_core_attention_bias,
@@ -1122,6 +1120,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                     max_seqlen_kv=max_seqlen_kv,
                     attn_mask_type=attn_mask_type,
                     attention_mask=attention_mask,
+                    chunk_size=self.chunk_size,
                     window_size=window_size,
                     fused_attention_backend=fused_attention_backend,
                     core_attention_bias_type=fu_core_attention_bias_type,

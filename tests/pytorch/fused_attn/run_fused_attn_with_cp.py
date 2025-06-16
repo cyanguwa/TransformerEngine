@@ -41,7 +41,7 @@ def run_dpa_with_cp(
     if kernel_backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
         config = model_configs_fused_attn[model]
-
+        
     assert config.attn_mask_type in [
         "causal",
         "no_mask",
@@ -95,6 +95,7 @@ def run_dpa_with_cp(
         qkv_format=qkv_format,
         attn_mask_type=config.attn_mask_type,
         window_size=config.window_size,
+        chunk_size=config.chunk_size,
     )
     core_attn = core_attn.cuda()
 
@@ -272,6 +273,7 @@ def run_dpa_with_cp(
     else:
         fp8_context = nullcontext()
 
+
     with fp8_context:
         out_ = core_attn(
             q_,
@@ -295,6 +297,8 @@ def run_dpa_with_cp(
         assert isinstance(out_, Float8Tensor)
         out = out.dequantize()
         out_ = out_.dequantize()
+    
+
 
     for x in [out_, q_.grad, k_.grad, v_.grad]:
         assert torch.all(~torch.isnan(x))
@@ -401,8 +405,12 @@ def run_dpa_with_cp(
             _error(a[0], b[0])
             _error(a[1], b[1])
     elif qkv_format == "thd":
+        i = 0
         for a, b in zip([out_, dq_, dk_, dv_], [out, dq, dk, dv]):
             _error(a, b)
+            str_names = ["out_", "dq_", "dk_", "dv_"]
+            print(f"{str_names[i]} passed on rank {rank}")
+            i += 1
     else:
         assert False, f"{qkv_format} is an unsupported qkv_format!"
 
