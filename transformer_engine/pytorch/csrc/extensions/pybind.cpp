@@ -281,13 +281,15 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         "Generate partitioned indices for inputs in THD format",
         py::call_guard<py::gil_scoped_release>());
   m.def("thd_chunkify", &transformer_engine::pytorch::thd_chunkify, "Chunkify THD tensor",
-        py::arg("cu_seqlens"), py::arg("cu_seqlens_padded"), py::arg("total_seq_len"), py::arg("chunk_size"),
+        py::arg("cu_seqlens"), py::arg("cu_seqlens_padded"), py::arg("total_seq_len"),
+        py::arg("chunk_size"), py::call_guard<py::gil_scoped_release>());
+  m.def("thd_chunkify_p2p", &transformer_engine::pytorch::thd_chunkify_p2p,
+        "Chunkify THD tensor for P2P communication", py::call_guard<py::gil_scoped_release>());
+  m.def("thd_seq_tweak_below_diag", &transformer_engine::pytorch::thd_seq_tweak_below_diag,
+        "Tweak the sequence below the diagonal for THD tensor",
         py::call_guard<py::gil_scoped_release>());
-  m.def("thd_chunkify_p2p", &transformer_engine::pytorch::thd_chunkify_p2p, "Chunkify THD tensor for P2P communication",
-        py::call_guard<py::gil_scoped_release>());
-  m.def("thd_seq_tweak_below_diag", &transformer_engine::pytorch::thd_seq_tweak_below_diag, "Tweak the sequence below the diagonal for THD tensor",
-        py::call_guard<py::gil_scoped_release>());
-  m.def("thd_seq_tweak_above_diag", &transformer_engine::pytorch::thd_seq_tweak_above_diag, "Tweak the sequence above the diagonal for THD tensor",
+  m.def("thd_seq_tweak_above_diag", &transformer_engine::pytorch::thd_seq_tweak_above_diag,
+        "Tweak the sequence above the diagonal for THD tensor",
         py::call_guard<py::gil_scoped_release>());
 
   // nvshmem functions

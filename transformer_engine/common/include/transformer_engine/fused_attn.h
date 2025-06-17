@@ -757,8 +757,8 @@ void nvte_cp_thd_get_partitioned_indices(const NVTETensor &cu_seqlens, NVTETenso
  */
 
 void nvte_cp_thd_chunkify(const NVTETensor &cu_seqlens, const NVTETensor &cu_seqlens_padded,
-                          NVTETensor out_cu_seqlens, NVTETensor out_cu_seqlens_padded,
-                          int batch, int output_len, int chunk_size, cudaStream_t stream);
+                          NVTETensor out_cu_seqlens, NVTETensor out_cu_seqlens_padded, int batch,
+                          int output_len, int chunk_size, cudaStream_t stream);
 
 /*!  \brief Support THD format for Context Parallel: Split sequence into chunks for one P2P part on diagonal.
  *
@@ -778,9 +778,9 @@ void nvte_cp_thd_chunkify(const NVTETensor &cu_seqlens, const NVTETensor &cu_seq
 
 void nvte_cp_thd_chunkify_p2p(const NVTETensor &cu_seqlens, const NVTETensor &cu_seqlens_padded,
                               NVTETensor out_cu_seqlens, NVTETensor out_cu_seqlens_padded,
-                              int batch, int output_len, int chunk_size, int cp_rank, int cp_size, 
+                              int batch, int output_len, int chunk_size, int cp_rank, int cp_size,
                               cudaStream_t stream);
-  
+
 /*!  \brief Support THD format for Context Parallel: Split sequence into chunks for one P2P part below diagonal.
  *
  * \warning   This API is **experimental** and subject to change.
@@ -801,12 +801,11 @@ void nvte_cp_thd_chunkify_p2p(const NVTETensor &cu_seqlens, const NVTETensor &cu
  *  \param[in]     stream               CUDA stream used for this operation.
  */
 
-void nvte_cp_thd_seq_tweak_below_diag(const NVTETensor &cu_seqlens_q, const NVTETensor &cu_seqlens_kv_halfs,
-                                      const NVTETensor &cu_seqlens_padded,
-                                      NVTETensor out_cu_seqlens_q, NVTETensor out_cu_seqlens_kv,
-                                      NVTETensor out_cu_seqlens_q_padded, NVTETensor out_cu_seqlens_kv_padded,
-                                      int cp_rank_q, int cp_rank_kv, int cp_size,
-                                      int batch, int output_len, int chunk_size, cudaStream_t stream);
+void nvte_cp_thd_seq_tweak_below_diag(
+    const NVTETensor &cu_seqlens_q, const NVTETensor &cu_seqlens_kv_halfs,
+    const NVTETensor &cu_seqlens_padded, NVTETensor out_cu_seqlens_q, NVTETensor out_cu_seqlens_kv,
+    NVTETensor out_cu_seqlens_q_padded, NVTETensor out_cu_seqlens_kv_padded, int cp_rank_q,
+    int cp_rank_kv, int cp_size, int batch, int output_len, int chunk_size, cudaStream_t stream);
 
 /*!  \brief Support THD format for Context Parallel: Split sequence into chunks for one P2P part above diagonal.
  *
@@ -821,14 +820,11 @@ void nvte_cp_thd_seq_tweak_below_diag(const NVTETensor &cu_seqlens_q, const NVTE
  *  \param[in]     stream               CUDA stream used for this operation.
  */
 
-void nvte_cp_thd_seq_tweak_above_diag(const NVTETensor &cu_seqlens_q_halfs, const NVTETensor &cu_seqlens_kv,
-                                      const NVTETensor &cu_seqlens_padded,
-                                      NVTETensor out_cu_seqlens_q, NVTETensor out_cu_seqlens_kv,
-                                      NVTETensor out_cu_seqlens_q_padded, NVTETensor out_cu_seqlens_kv_padded,
-                                      int cp_rank_q, int cp_rank_kv, int cp_size,
-                                      int batch, int output_len,
-                                      int chunk_size, cudaStream_t stream);
-
+void nvte_cp_thd_seq_tweak_above_diag(
+    const NVTETensor &cu_seqlens_q_halfs, const NVTETensor &cu_seqlens_kv,
+    const NVTETensor &cu_seqlens_padded, NVTETensor out_cu_seqlens_q, NVTETensor out_cu_seqlens_kv,
+    NVTETensor out_cu_seqlens_q_padded, NVTETensor out_cu_seqlens_kv_padded, int cp_rank_q,
+    int cp_rank_kv, int cp_size, int batch, int output_len, int chunk_size, cudaStream_t stream);
 
 /*!  \brief Convert tensor from THD to BSHD format.
  *

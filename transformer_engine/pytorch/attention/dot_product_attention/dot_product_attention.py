@@ -265,7 +265,9 @@ class DotProductAttention(TransformerEngineBaseModule):
             num_attention_heads % self.num_gqa_groups == 0
         ), "The number of attention heads must be divisible by the number of GQA groups!"
 
-        assert chunk_size is None or qkv_format == "thd", "Chunk size is only supported for thd format"
+        assert (
+            chunk_size is None or qkv_format == "thd"
+        ), "Chunk size is only supported for thd format"
         self.chunk_size = chunk_size
 
         self.rng_states_tracker = None
@@ -755,9 +757,11 @@ class DotProductAttention(TransformerEngineBaseModule):
                 if self.chunk_size is not None and self.cp_group is None:
                     total_seq_len = query_layer.shape[0]
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_q,  cu_seqlens_q_padded, self.chunk_size, total_seq_len)
+                        cu_seqlens_q, cu_seqlens_q_padded, self.chunk_size, total_seq_len
+                    )
                     cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_kv,  cu_seqlens_kv_padded, self.chunk_size, total_seq_len)
+                        cu_seqlens_kv, cu_seqlens_kv_padded, self.chunk_size, total_seq_len
+                    )
                 batch_size = len(cu_seqlens_q) - 1
                 if max_seqlen_q is None:
                     if cu_seqlens_q_padded is not None:
@@ -771,7 +775,6 @@ class DotProductAttention(TransformerEngineBaseModule):
                     else:
                         seqlens_kv = cu_seqlens_kv[1:] - cu_seqlens_kv[:-1]
                     max_seqlen_kv = int((seqlens_kv.max().item() + 63) // 64 * 64)
-                
 
             # update KV cache and retrieve saved tokens from cache for inference
             if inference_params is not None:

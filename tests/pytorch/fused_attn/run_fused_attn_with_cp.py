@@ -41,7 +41,7 @@ def run_dpa_with_cp(
     if kernel_backend == "FusedAttention":
         os.environ["NVTE_FUSED_ATTN"] = "1"
         config = model_configs_fused_attn[model]
-        
+
     assert config.attn_mask_type in [
         "causal",
         "no_mask",
@@ -273,7 +273,6 @@ def run_dpa_with_cp(
     else:
         fp8_context = nullcontext()
 
-
     with fp8_context:
         out_ = core_attn(
             q_,
@@ -298,8 +297,6 @@ def run_dpa_with_cp(
         assert isinstance(out_, Float8Tensor)
         out = out.dequantize()
         out_ = out_.dequantize()
-    
-
 
     for x in [out_, q_.grad, k_.grad, v_.grad]:
         assert torch.all(~torch.isnan(x))

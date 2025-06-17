@@ -113,6 +113,7 @@ class ModelConfig:
         self.max_ctx_len = max_ctx_len
         self.chunk_size = chunk_size
 
+
 @contextmanager
 def logging_context(highest_level=logging.WARNING):
     previous_level = logging.root.manager.disable
