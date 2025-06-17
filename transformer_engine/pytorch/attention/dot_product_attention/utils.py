@@ -1845,8 +1845,8 @@ def thd_seq_tweak_below_diagonal(
         cu_seqlens_q, cu_seqlens_kv_halfs, cu_seqlens_padded, cp_rank_q, cp_rank_kv, cp_size, chunk_size
     )
     
-    new_cu_seqlens_q =  torch.cumsum(new_seqlens_q, dim=0)
-    new_cu_seqlens_kv_halfs = torch.cumsum(new_seqlens_kv_halfs, dim=0)
+    new_cu_seqlens_q =  torch.cumsum(new_seqlens_q, dim=0, dtype=torch.int32)
+    new_cu_seqlens_kv_halfs = torch.cumsum(new_seqlens_kv_halfs, dim=0, dtype=torch.int32)
 
     return new_cu_seqlens_q, new_cu_seqlens_kv_halfs, new_cu_seqlens_q_padded, new_cu_seqlens_kv_padded
 
@@ -1865,7 +1865,7 @@ def thd_seq_tweak_above_diagonal(
         cu_seqlens_q_halfs, cu_seqlens_kv, cu_seqlens_padded, 
         cp_rank_q, cp_rank_kv, cp_size, chunk_size
     )
-    new_cu_seqlens_q_halfs = torch.cumsum(new_seqlens_q, dim=0)
-    new_cu_seqlens_kv = torch.cumsum(new_seqlens_kv, dim=0)
+    new_cu_seqlens_q_halfs = torch.cumsum(new_seqlens_q, dim=0, dtype=torch.int32)
+    new_cu_seqlens_kv = torch.cumsum(new_seqlens_kv, dim=0, dtype=torch.int32)
 
     return new_cu_seqlens_q_halfs, new_cu_seqlens_kv, new_cu_seqlens_q_padded, new_cu_seqlens_kv_padded

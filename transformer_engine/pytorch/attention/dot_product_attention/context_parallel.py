@@ -685,11 +685,6 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             p2p_comm_buffers[0] = torch.cat((k.unsqueeze(0), v.unsqueeze(0)), dim=0)
         send_recv_reqs = [[], []]
 
-        import torch.distributed as dist
-        if dist.get_rank() == 0:
-            print(f"rank = {rank}")
-        dist.barrier()
-
         out = None
         for i in range(cp_size + 1):
             if i < cp_size:
@@ -1885,7 +1880,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                             )
                             fp8_meta_kwargs["dp_quantizer"] = dP_quantizer_per_step[i]
                             fp8_meta_kwargs["dqkv_quantizer"] = dQKV_CP_quantizer_per_step[i]
-                        
+
                         dq_, dk_, dv_, dbias_ = fused_attn_bwd(
                             ctx.max_seqlen_q,
                             ctx.max_seqlen_kv // 2,
@@ -2012,7 +2007,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                             )
                             fp8_meta_kwargs["dp_quantizer"] = dP_quantizer_per_step[i]
                             fp8_meta_kwargs["dqkv_quantizer"] = dQKV_CP_quantizer_per_step[i]
-                            
+
                         dq_, dk_, dv_, dbias_ = fused_attn_bwd(
                             ctx.max_seqlen_q // 2,
                             ctx.max_seqlen_kv,
@@ -2140,7 +2135,6 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         deterministic=ctx.deterministic,
                         **fp8_meta_kwargs,
                     )
-
                     if ctx.fp8:
                         dq_ = dq_._data
                         dk_ = dk_._data

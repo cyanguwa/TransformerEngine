@@ -286,6 +286,7 @@ def run_dpa_with_cp(
             cu_seqlens_q_padded=cu_seqlens_q_padded,
             cu_seqlens_kv_padded=cu_seqlens_kv_padded,
         )
+
         if fp8_mha:
             dout_fp8_ = dout_quantizer(dout_)
             out_.backward(dout_fp8_)
