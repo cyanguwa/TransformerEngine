@@ -84,6 +84,11 @@ class _Buffer:
         # It is used for weights and microbatching.
         if self.modified[0] and not self.reduce_within_microbatch:
             return
+        
+        # We do not feed the tensor with 0 elements,
+        # we behave the same way as if feed() was not called.
+        if tensor.numel() == 0:
+            return
 
         # save stats for tensor to tmp buffer
         for stat_name in self.stats_to_compute:

@@ -753,10 +753,11 @@ class DotProductAttention(TransformerEngineBaseModule):
                 ), "cu_seqlens_q and cu_seqlens_q must both be in dtype torch.int32!"
 
                 if self.chunk_size is not None and self.cp_group is None:
+                    total_seq_len = query_layer.shape[0]
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_q,  cu_seqlens_q_padded, torch.zeros_like(cu_seqlens_q, device=cu_seqlens_q.device), self.chunk_size)
+                        cu_seqlens_q,  cu_seqlens_q_padded, self.chunk_size, total_seq_len)
                     cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_kv,  cu_seqlens_kv_padded, torch.zeros_like(cu_seqlens_kv, device=cu_seqlens_kv.device), self.chunk_size)
+                        cu_seqlens_kv,  cu_seqlens_kv_padded, self.chunk_size, total_seq_len)
                 batch_size = len(cu_seqlens_q) - 1
                 if max_seqlen_q is None:
                     if cu_seqlens_q_padded is not None:

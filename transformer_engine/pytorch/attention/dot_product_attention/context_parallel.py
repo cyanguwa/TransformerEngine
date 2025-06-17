@@ -747,12 +747,13 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     -1, k.shape[2], 2, *k.shape[-2:]
                                 )
                             elif qkv_format == "thd":
+                                thd_total_seq_len = q.shape[0]
                                 q_inputs[i % 2] = q
                                 if chunk_size is not None:
-                                    cu_seqlens_q_per_step[i], cu_seqlens_q_padded_per_step[i] = dpa_utils.thd_chunkify(
-                                        cu_seqlens_q_per_step[i], cu_seqlens_q_padded_per_step[i], None, chunk_size, True, rank, cp_size)
-                                    cu_seqlens_kv_per_step[i], cu_seqlens_kv_padded_per_step[i] = dpa_utils.thd_chunkify(
-                                        cu_seqlens_kv_per_step[i], cu_seqlens_kv_padded_per_step[i], None, chunk_size, True, rank, cp_size)
+                                    cu_seqlens_q_per_step[i], cu_seqlens_q_padded_per_step[i] = dpa_utils.thd_chunkify_p2p(
+                                        cu_seqlens_q_per_step[i], cu_seqlens_q_padded_per_step[i], chunk_size, rank, cp_size, thd_total_seq_len)
+                                    cu_seqlens_kv_per_step[i], cu_seqlens_kv_padded_per_step[i] = dpa_utils.thd_chunkify_p2p(
+                                        cu_seqlens_kv_per_step[i], cu_seqlens_kv_padded_per_step[i], chunk_size, rank, cp_size, thd_total_seq_len)
 
                             if use_fused_attention:
                                 if attn_bias is not None:

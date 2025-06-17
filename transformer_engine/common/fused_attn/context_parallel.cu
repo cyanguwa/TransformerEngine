@@ -487,6 +487,15 @@ __global__ void thd_seq_tweak_below_diag_kernel(
     int  batch)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(i == 0) {
+      q_chunks[0] = 0;
+      kv_chunks[0] = 0;
+      q_pads[0] = 0;
+      kv_pads[0] = 0;
+    }
+    __syncthreads();
+
     if (i >= batch) return;
 
     // ───────── prefix-sum diffs ────────────────────────────────
@@ -544,22 +553,22 @@ __global__ void thd_seq_tweak_below_diag_kernel(
     // ───────── flat output (row-major) ─────────────────────────
     const int out_base = 3 * i;
 
-    q_chunks[out_base + 0] = q_start;
-    q_chunks[out_base + 1] = q_start + q_seq_len;
-    q_chunks[out_base + 2] = q_start + q_seq_len;
+    q_chunks[out_base + 0 + 1] = 0;
+    q_chunks[out_base + 1 + 1] = q_seq_len;
+    q_chunks[out_base + 2 + 1] = 0;
 
-    q_pads  [out_base + 0] = pad_start;
-    q_pads  [out_base + 1] = pad_start + q_seq_len;
-    q_pads  [out_base + 2] = pad_start + seq_plus_pad;
+    q_pads  [out_base + 0 + 1] = pad_start;
+    q_pads  [out_base + 1 + 1] = pad_start + q_seq_len;
+    q_pads  [out_base + 2 + 1] = pad_start + seq_plus_pad;
 
-    kv_chunks[out_base + 0] = kv_start;
-    kv_chunks[out_base + 1] = kv_start + kv_seq_len;
-    kv_chunks[out_base + 2] = kv_start + kv_seq_len;
+    kv_chunks[out_base + 0 + 1] = 0;
+    kv_chunks[out_base + 1 + 1] = kv_seq_len;
+    kv_chunks[out_base + 2 + 1] = 0;
 
     const int32_t kv_pad_base = pad_start >> 1;
-    kv_pads[out_base + 0] = kv_pad_base + (half_seq_len - kv_seq_len - pad_len_kv);
-    kv_pads[out_base + 1] = kv_pad_base + (half_seq_len - pad_len_kv);
-    kv_pads[out_base + 2] = kv_pad_base +  half_seq_len;
+    kv_pads[out_base + 0 + 1] = kv_pad_base + (half_seq_len - kv_seq_len - pad_len_kv);
+    kv_pads[out_base + 1 + 1] = kv_pad_base + (half_seq_len - pad_len_kv);
+    kv_pads[out_base + 2 + 1] = kv_pad_base +  half_seq_len;
 }
 
 
@@ -583,6 +592,14 @@ __global__ void thd_seq_tweak_above_diag_kernel(
     int  batch)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(i == 0) {
+      q_chunks[0] = 0;
+      kv_chunks[0] = 0;
+      q_pads[0] = 0;
+      kv_pads[0] = 0;
+    }
+    __syncthreads();
     if (i >= batch) return;
  
     // ───────── prefix‑sum diffs ───────────────────────────────
@@ -647,25 +664,25 @@ __global__ void thd_seq_tweak_above_diag_kernel(
     const int out_base = 3 * i;
 
     // Q chunks: [0, sequence, 0]
-    q_chunks[out_base + 0] = q_start;               // beginning of Q half‑sequence
-    q_chunks[out_base + 1] = q_start + q_seq_len;   // after the chunk we keep
-    q_chunks[out_base + 2] = q_start + q_seq_len;   // stays flat afterwards
+    q_chunks[out_base + 0 + 1] = 0;               // beginning of Q half‑sequence
+    q_chunks[out_base + 1 + 1] = q_seq_len;   // after the chunk we keep
+    q_chunks[out_base + 2 + 1] = 0;   // stays flat afterwards
 
     // Q pads:  [0, 0, garbage]  (pads live in the *first* half of padded area)
     const int32_t half_pad_start = pad_start >> 1;  // start of Q‑related pad area
-    q_pads[out_base + 0] = half_pad_start;
-    q_pads[out_base + 1] = half_pad_start + q_seq_len;
-    q_pads[out_base + 2] = half_pad_start + half_seq_len; // complete half padded length
+    q_pads[out_base + 0 + 1] = half_pad_start;
+    q_pads[out_base + 1 + 1] = half_pad_start + q_seq_len;
+    q_pads[out_base + 2 + 1] = half_pad_start + half_seq_len; // complete half padded length
 
     // KV chunks: [0, sequence, 0]
-    kv_chunks[out_base + 0] = kv_start;
-    kv_chunks[out_base + 1] = kv_start + kv_seq_len;
-    kv_chunks[out_base + 2] = kv_start + seq_len_kv;
+    kv_chunks[out_base + 0 + 1] = 0;
+    kv_chunks[out_base + 1 + 1] = kv_seq_len;
+    kv_chunks[out_base + 2 + 1] = 0;
 
     // KV pads: [garbage, 0, 0] (pads precede KV if from first half)
-    kv_pads[out_base + 0] = pad_start + (seq_len_kv - kv_seq_len);
-    kv_pads[out_base + 1] = pad_start + seq_len_kv;
-    kv_pads[out_base + 2] = pad_start + seq_plus_pad;
+    kv_pads[out_base + 0 + 1] = pad_start + (seq_len_kv - kv_seq_len);
+    kv_pads[out_base + 1 + 1] = pad_start + seq_len_kv;
+    kv_pads[out_base + 2 + 1] = pad_start + seq_plus_pad;
 }
   
 
@@ -1061,12 +1078,6 @@ void thd_chunkify(
   NVTE_CHECK(out_cu_seqlens.dim() == 1);
   NVTE_CHECK(out_cu_seqlens_padded.dim() == 1);
 
-  NVTE_CHECK(cu_seqlens_shape[0] == batch + 1);
-  NVTE_CHECK(cu_seqlens_padded_shape[0] == batch + 1);
-
-  NVTE_CHECK(out_cu_seqlens_shape[0] == output_len);
-  NVTE_CHECK(out_cu_seqlens_padded_shape[0] == output_len);
-
   const unsigned int block = 256;
   const unsigned int grid = (output_len + block - 1) / block;
   thd_chunkify_kernel<<<grid, block, sizeof(int) * (batch + 1), stream>>>(
@@ -1088,6 +1099,8 @@ void thd_chunkify_p2p(
   int batch,
   int output_len,
   int chunk_size,
+  int cp_rank,
+  int cp_size,
   cudaStream_t stream
 ) {
   using namespace transformer_engine;
@@ -1102,13 +1115,6 @@ void thd_chunkify_p2p(
   NVTE_CHECK(out_cu_seqlens.dim() == 1);
   NVTE_CHECK(out_cu_seqlens_padded.dim() == 1);
 
-  // length of cu_seqlens and cu_seqlens_padded should be batch + 1
-  NVTE_CHECK(cu_seqlens_shape[0] == batch + 1);
-  NVTE_CHECK(cu_seqlens_padded_shape[0] == batch + 1);
-
-  // length of out_cu_seqlens and out_cu_seqlens_padded should be output_len
-  NVTE_CHECK(out_cu_seqlens_shape[0] == output_len);
-  NVTE_CHECK(out_cu_seqlens_padded_shape[0] == output_len);
 
   const unsigned int block = 256;
   const unsigned int grid = (output_len + block - 1) / block;
@@ -1116,7 +1122,7 @@ void thd_chunkify_p2p(
       reinterpret_cast<int *>(cu_seqlens.data.dptr),
       reinterpret_cast<int *>(cu_seqlens_padded.data.dptr),
       reinterpret_cast<int *>(out_cu_seqlens.data.dptr),
-      reinterpret_cast<int *>(out_cu_seqlens_padded.data.dptr), batch, output_len, chunk_size);
+      reinterpret_cast<int *>(out_cu_seqlens_padded.data.dptr), batch, output_len, chunk_size, cp_rank, cp_size);
 }
 
 /***************************************************************************************************
@@ -1126,11 +1132,17 @@ void thd_chunkify_p2p(
 void thd_seq_tweak_below_diag(
   const Tensor &cu_seqlens_q,
   const Tensor &cu_seqlens_kv_halfs,
+  const Tensor &cu_seqlens_padded,
   Tensor &out_cu_seqlens_q,
   Tensor &out_cu_seqlens_kv_halfs,
+  Tensor &out_cu_seqlens_q_padded,
+  Tensor &out_cu_seqlens_kv_halfs_padded,
   int batch,
   int output_len,
   int chunk_size,
+  int cp_rank_q,
+  int cp_rank_kv,
+  int cp_size,
   cudaStream_t stream
 ) {
   using namespace transformer_engine;
@@ -1146,23 +1158,23 @@ void thd_seq_tweak_below_diag(
   NVTE_CHECK(out_cu_seqlens_q.dim() == 1);
   NVTE_CHECK(out_cu_seqlens_kv_halfs.dim() == 1);
 
-  // length of cu_seqlens_q and cu_seqlens_kv_halfs should be batch + 1
-  NVTE_CHECK(cu_seqlens_q_shape[0] == batch + 1);
-  NVTE_CHECK(cu_seqlens_kv_halfs_shape[0] == batch + 1);
-
-  // length of out_cu_seqlens_q and out_cu_seqlens_kv_halfs should be output_len
-  NVTE_CHECK(out_cu_seqlens_q_shape[0] == output_len);
-  NVTE_CHECK(out_cu_seqlens_kv_halfs_shape[0] == output_len);
-
   const unsigned int block = 256;
   const unsigned int grid = (output_len + block - 1) / block;
   thd_seq_tweak_below_diag_kernel<<<grid, block, sizeof(int) * (batch + 1), stream>>>(
       reinterpret_cast<int *>(cu_seqlens_q.data.dptr),
       reinterpret_cast<int *>(cu_seqlens_kv_halfs.data.dptr),
+      reinterpret_cast<int *>(cu_seqlens_padded.data.dptr),
       reinterpret_cast<int *>(out_cu_seqlens_q.data.dptr),
-      reinterpret_cast<int *>(out_cu_seqlens_kv_halfs.data.dptr), batch, output_len, chunk_size);
+      reinterpret_cast<int *>(out_cu_seqlens_kv_halfs.data.dptr),
+      reinterpret_cast<int *>(out_cu_seqlens_q_padded.data.dptr),
+      reinterpret_cast<int *>(out_cu_seqlens_kv_halfs_padded.data.dptr), 
+      cp_rank_q, 
+      cp_rank_kv, 
+      cp_size, 
+      chunk_size,
+      batch
+      );
 }
-
 
 /***************************************************************************************************
  * Support THD format for Context Parallel: Split sequence into chunks for one P2P part above diagonal.
@@ -1170,11 +1182,16 @@ void thd_seq_tweak_below_diag(
 
 
 void thd_seq_tweak_above_diag(
-
   const Tensor &cu_seqlens_q_halfs,
-  const Tensor &cu_seqlens_kv_halfs,
+  const Tensor &cu_seqlens_kv,
+  const Tensor &cu_seqlens_padded,
   Tensor &out_cu_seqlens_q_halfs,
-  Tensor &out_cu_seqlens_kv_halfs,
+  Tensor &out_cu_seqlens_kv,
+  Tensor &out_cu_seqlens_q_halfs_padded,
+  Tensor &out_cu_seqlens_kv_padded,
+  int cp_rank_q,
+  int cp_rank_kv,
+  int cp_size,
   int batch,
   int output_len,
   int chunk_size,
@@ -1183,31 +1200,40 @@ void thd_seq_tweak_above_diag(
   using namespace transformer_engine;
 
   NVTE_CHECK(cu_seqlens_q_halfs.dtype() == DType::kInt32);
-  NVTE_CHECK(cu_seqlens_kv_halfs.dtype() == DType::kInt32);
+  NVTE_CHECK(cu_seqlens_kv.dtype() == DType::kInt32);
+  NVTE_CHECK(cu_seqlens_padded.dtype() == DType::kInt32);
   NVTE_CHECK(out_cu_seqlens_q_halfs.dtype() == DType::kInt32);
-  NVTE_CHECK(out_cu_seqlens_kv_halfs.dtype() == DType::kInt32);
+  NVTE_CHECK(out_cu_seqlens_kv.dtype() == DType::kInt32);
+  NVTE_CHECK(out_cu_seqlens_q_halfs_padded.dtype() == DType::kInt32);
+  NVTE_CHECK(out_cu_seqlens_kv_padded.dtype() == DType::kInt32);
 
   // This tensors should be one dimensional
   NVTE_CHECK(cu_seqlens_q_halfs.dim() == 1);
-  NVTE_CHECK(cu_seqlens_kv_halfs.dim() == 1);
+  NVTE_CHECK(cu_seqlens_kv.dim() == 1);
+  NVTE_CHECK(cu_seqlens_padded.dim() == 1);
   NVTE_CHECK(out_cu_seqlens_q_halfs.dim() == 1);
-  NVTE_CHECK(out_cu_seqlens_kv_halfs.dim() == 1);
-
-  // length of cu_seqlens_q_halfs and cu_seqlens_kv_halfs should be batch + 1
-  NVTE_CHECK(cu_seqlens_q_halfs_shape[0] == batch + 1);
-  NVTE_CHECK(cu_seqlens_kv_halfs_shape[0] == batch + 1);
-
-  // length of out_cu_seqlens_q_halfs and out_cu_seqlens_kv_halfs should be output_len
-  NVTE_CHECK(out_cu_seqlens_q_halfs_shape[0] == output_len);
-  NVTE_CHECK(out_cu_seqlens_kv_halfs_shape[0] == output_len);
+  NVTE_CHECK(out_cu_seqlens_kv.dim() == 1);
+  NVTE_CHECK(out_cu_seqlens_q_halfs_padded.dim() == 1);
+  NVTE_CHECK(out_cu_seqlens_kv_padded.dim() == 1);
 
   const unsigned int block = 256;
-  const unsigned int grid = (output_len + block - 1) / block;
+  const unsigned int grid = (batch + 1 + block - 1) / block;
   thd_seq_tweak_above_diag_kernel<<<grid, block, sizeof(int) * (batch + 1), stream>>>(
       reinterpret_cast<int *>(cu_seqlens_q_halfs.data.dptr),
-      reinterpret_cast<int *>(cu_seqlens_kv_halfs.data.dptr),
+      reinterpret_cast<int *>(cu_seqlens_kv.data.dptr),
+      reinterpret_cast<int *>(cu_seqlens_padded.data.dptr),
       reinterpret_cast<int *>(out_cu_seqlens_q_halfs.data.dptr),
-      reinterpret_cast<int *>(out_cu_seqlens_kv_halfs.data.dptr), batch, output_len, chunk_size);
+      reinterpret_cast<int *>(out_cu_seqlens_kv.data.dptr),
+      reinterpret_cast<int *>(out_cu_seqlens_q_halfs_padded.data.dptr),
+      reinterpret_cast<int *>(out_cu_seqlens_kv_padded.data.dptr),
+      cp_rank_q,
+      cp_rank_kv,
+      cp_size, 
+      chunk_size, 
+      batch
+      );
+  // synchronize
+  cudaStreamSynchronize(stream);
 }
 
 }  // namespace context_parallel
@@ -1284,7 +1310,7 @@ void nvte_cp_thd_get_partitioned_indices(const NVTETensor &cu_seqlens, NVTETenso
 }
 
 void nvte_cp_thd_chunkify(const NVTETensor &cu_seqlens, const NVTETensor &cu_seqlens_padded,
-                          NVTETensor &out_cu_seqlens, NVTETensor &out_cu_seqlens_padded,
+                          NVTETensor out_cu_seqlens, NVTETensor out_cu_seqlens_padded,
                           int batch, int output_len, int chunk_size, cudaStream_t stream) {
   NVTE_API_CALL(nvte_thd_chunkify);
   using namespace transformer_engine;
@@ -1296,40 +1322,55 @@ void nvte_cp_thd_chunkify(const NVTETensor &cu_seqlens, const NVTETensor &cu_seq
 }
 
 void nvte_cp_thd_chunkify_p2p(const NVTETensor &cu_seqlens, const NVTETensor &cu_seqlens_padded,
-                              NVTETensor &out_cu_seqlens, NVTETensor &out_cu_seqlens_padded,
-                              int batch, int output_len, int chunk_size, cudaStream_t stream) {
+                              NVTETensor out_cu_seqlens, NVTETensor out_cu_seqlens_padded,
+                              int batch, int output_len, int chunk_size, int cp_rank, int cp_size, 
+                              cudaStream_t stream) {
   NVTE_API_CALL(nvte_thd_chunkify_p2p);
   using namespace transformer_engine;
 
   context_parallel::thd_chunkify_p2p(*convertNVTETensorCheck(cu_seqlens),
                                      *convertNVTETensorCheck(cu_seqlens_padded),
                                      *convertNVTETensorCheck(out_cu_seqlens),
-                                     *convertNVTETensorCheck(out_cu_seqlens_padded), batch, output_len, chunk_size, stream);
+                                     *convertNVTETensorCheck(out_cu_seqlens_padded), 
+                                     batch, output_len, chunk_size, cp_rank, cp_size, stream);
 }
 
 void nvte_cp_thd_seq_tweak_below_diag(const NVTETensor &cu_seqlens_q, const NVTETensor &cu_seqlens_kv_halfs,
-                                      NVTETensor &out_cu_seqlens_q, NVTETensor &out_cu_seqlens_kv_halfs,
+                                      const NVTETensor &cu_seqlens_padded,
+                                      NVTETensor out_cu_seqlens_q, NVTETensor out_cu_seqlens_kv,
+                                      NVTETensor out_cu_seqlens_q_padded, NVTETensor out_cu_seqlens_kv_padded,
+                                      int cp_rank_q, int cp_rank_kv, int cp_size,
                                       int batch, int output_len, int chunk_size, cudaStream_t stream) {
   NVTE_API_CALL(nvte_thd_seq_tweak_below_diag);
   using namespace transformer_engine;
-
   context_parallel::thd_seq_tweak_below_diag(*convertNVTETensorCheck(cu_seqlens_q), 
                                               *convertNVTETensorCheck(cu_seqlens_kv_halfs),
+                                              *convertNVTETensorCheck(cu_seqlens_padded),
                                               *convertNVTETensorCheck(out_cu_seqlens_q),
-                                              *convertNVTETensorCheck(out_cu_seqlens_kv_halfs),
-                                              batch, output_len, chunk_size, stream);
+                                              *convertNVTETensorCheck(out_cu_seqlens_kv),
+                                              *convertNVTETensorCheck(out_cu_seqlens_q_padded),
+                                              *convertNVTETensorCheck(out_cu_seqlens_kv_padded),
+                                              batch, output_len, chunk_size, cp_rank_q, cp_rank_kv, cp_size, stream);
 }
 
-void nvte_cp_thd_seq_tweak_above_diag(const NVTETensor &cu_seqlens_q_halfs, const NVTETensor &cu_seqlens_kv_halfs,
-                                      NVTETensor &out_cu_seqlens_q_halfs, NVTETensor &out_cu_seqlens_kv_halfs,
-                                      int batch, int output_len, cudaStream_t stream) {
+void nvte_cp_thd_seq_tweak_above_diag(const NVTETensor &cu_seqlens_q_halfs, const NVTETensor &cu_seqlens_kv,
+                                      const NVTETensor &cu_seqlens_padded,
+                                      NVTETensor out_cu_seqlens_q, NVTETensor out_cu_seqlens_kv,
+                                      NVTETensor out_cu_seqlens_q_padded, NVTETensor out_cu_seqlens_kv_padded,
+                                      int cp_rank_q, int cp_rank_kv, int cp_size,
+                                      int batch, int output_len,
+                                      int chunk_size, cudaStream_t stream) {
   NVTE_API_CALL(nvte_thd_seq_tweak_above_diag); 
   using namespace transformer_engine;
 
   context_parallel::thd_seq_tweak_above_diag(*convertNVTETensorCheck(cu_seqlens_q_halfs),
-                                              *convertNVTETensorCheck(cu_seqlens_kv_halfs),
-                                              *convertNVTETensorCheck(out_cu_seqlens_q_halfs),
-                                              *convertNVTETensorCheck(out_cu_seqlens_kv_halfs),
+                                              *convertNVTETensorCheck(cu_seqlens_kv),
+                                              *convertNVTETensorCheck(cu_seqlens_padded),
+                                              *convertNVTETensorCheck(out_cu_seqlens_q),
+                                              *convertNVTETensorCheck(out_cu_seqlens_kv),
+                                              *convertNVTETensorCheck(out_cu_seqlens_q_padded),
+                                              *convertNVTETensorCheck(out_cu_seqlens_kv_padded),
+                                              cp_rank_q, cp_rank_kv, cp_size,
                                               batch, output_len, chunk_size, stream);
 }
 
