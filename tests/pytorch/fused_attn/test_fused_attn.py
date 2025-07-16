@@ -193,6 +193,7 @@ def _get_attention_backends(
             fp8_meta=fp8_meta,
             is_training=is_training,
             inference_params=inference_params,
+            chunk_size=config.chunk_size,
         )
         (
             use_flash_attention,
@@ -227,6 +228,7 @@ model_configs_base = {
     #     test:             b,  h, hg,  d,  sq, skv,   p,      mask,      bias
     "base_1_0": ModelConfig(8, 16, 16, 64, 128, 128, 0.0, "no_mask", "no_bias"),
     "base_1_1": ModelConfig(4, 16, 16, 64, 128, 256, 0.0, "no_mask", "no_bias"),
+    "base_1_2": ModelConfig(8, 16, 16, 64, 2048, 2048, 0.0, "no_mask", "no_bias", chunk_size=128),
     "base_2_0": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "no_bias"),
     "base_2_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "no_bias"),
     "base_3_0": ModelConfig(8, 16, 16, 128, 1, 2048, 0.0, "no_mask", "no_bias"),
@@ -750,6 +752,9 @@ model_configs_layout_thd = {
         "no_bias",
         window_size=(4, 0),
     ),
+    "layout_6_0": ModelConfig(
+        2, 16, 16, 64, 2048, 2048, 0.0, "causal", "no_bias", chunk_size=128
+    ),
 }
 
 
@@ -1147,6 +1152,7 @@ model_configs_te_layer = {
     "te_2_3": ModelConfig(1, 16, 16, 64, 2048, 4096, 0.0, "padding_causal_bottom_right", "no_bias"),
     "te_3_0": ModelConfig(4, 16, 16, 64, 128, 128, 0.0, "causal", "alibi"),
     "te_3_1": ModelConfig(4, 16, 16, 64, 2048, 2048, 0.0, "causal", "alibi"),
+    "te_4_0": ModelConfig(4, 16, 16, 64, 2048, 2048, 0.0, "causal", "no_bias", chunk_size=128),
 }
 
 

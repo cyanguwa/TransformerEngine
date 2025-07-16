@@ -150,8 +150,6 @@ def test_cp_with_fused_attention(dtype, model, qkv_format, cp_comm_type, fp8_mha
     config = model_configs_fused_attn[model]
     if qkv_format == "thd" and config.attn_bias_type == "post_scale_bias":
         pytest.skip("THD format does not support post_scale_bias yet!")
-    if qkv_format != "thd" and config.chunk_size is not None:
-        pytest.skip("Only THD format supports chunking!")
     if qkv_format == "thd" and cp_comm_type == "all_gather":
         pytest.skip("CP implementation with KV all-gather does not support THD format yet!")
     if qkv_format == "thd" and "a2a" in cp_comm_type:

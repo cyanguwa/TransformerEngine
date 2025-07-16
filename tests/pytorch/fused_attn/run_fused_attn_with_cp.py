@@ -420,12 +420,8 @@ def run_dpa_with_cp(
             _error(a[0], b[0])
             _error(a[1], b[1])
     elif qkv_format == "thd":
-        i = 0
         for a, b in zip([out_, dq_, dk_, dv_], [out, dq, dk, dv]):
             _error(a, b)
-            str_names = ["out_", "dq_", "dk_", "dv_"]
-            print(f"{str_names[i]} passed on rank {rank}")
-            i += 1
     else:
         assert False, f"{qkv_format} is an unsupported qkv_format!"
 
