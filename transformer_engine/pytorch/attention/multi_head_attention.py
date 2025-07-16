@@ -137,7 +137,7 @@ class MultiheadAttention(torch.nn.Module):
                 if set, chunked attention will be used. For bshd and sbhd formats,
                 this will result in internal reshape to (b*s/chunk_size, chunk_size h, d)
                 or (chunk_size, b*s/chunk_size, h, d). For thd format, this will split
-                sequence lengths into chunks of size chunk_size. 
+                sequence lengths into chunks of size chunk_size.
                 It is supported with context parallelism.
     name: str, default = `None`
         name of the module, currently used for debugging purposes.

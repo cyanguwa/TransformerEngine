@@ -168,8 +168,8 @@ class DotProductAttention(TransformerEngineBaseModule):
                 softmax scale for the attention scores. If `None`, defaults to
                 `1.0/math.sqrt(kv_channels if isinstance(kv_channels, int) else kv_channels[0])`.
     chunk_size: Optional[int], default = `None`
-                if set, chunked attention will be used. 
-                For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d). 
+                if set, chunked attention will be used.
+                For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d).
                 For thd format, this will split sequence lengths into chunks of size chunk_size. It is supported with context parallelism.
 
     Parallelism parameters
@@ -205,8 +205,8 @@ class DotProductAttention(TransformerEngineBaseModule):
                   across each CP sub-group (e.g., via NVLink), then exchanging KV with
                   p2p between sub-groups (e.g., via IBLink).
     chunk_size: Optional[int], default = `None`
-                if set, chunked attention will be used. 
-                For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d). 
+                if set, chunked attention will be used.
+                For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d).
                 For thd format, this will split sequence lengths into chunks of size chunk_size. It is supported with context parallelism.
     """
 
@@ -645,8 +645,8 @@ class DotProductAttention(TransformerEngineBaseModule):
             If None, inferred from qkv_format, cu_seqlens and cu_seqlens_padded.
             If true, there are padding tokens between individual sequences in a packed batch.
         chunk_size: Optional[int], default = `None`
-            If set, chunked attention will be used. 
-            For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d). 
+            If set, chunked attention will be used.
+            For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d).
             For thd format, this will split sequence lengths into chunks of size chunk_size. It is supported with context parallelism.
         """
 
@@ -759,7 +759,6 @@ class DotProductAttention(TransformerEngineBaseModule):
                     cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
                         cu_seqlens_kv, cu_seqlens_kv_padded, self.chunk_size, total_seq_len
                     )
-                
 
             batch_size = None
             if qkv_format in ["sbhd", "bshd"]:
@@ -793,7 +792,6 @@ class DotProductAttention(TransformerEngineBaseModule):
                     cu_seqlens_q.dtype == torch.int32 and cu_seqlens_kv.dtype == torch.int32
                 ), "cu_seqlens_q and cu_seqlens_q must both be in dtype torch.int32!"
 
-               
                 batch_size = len(cu_seqlens_q) - 1
                 if max_seqlen_q is None:
                     if cu_seqlens_q_padded is not None:
