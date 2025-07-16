@@ -1817,11 +1817,29 @@ def thd_chunkify(
     cu_seqlens: torch.Tensor,
     cu_seqlens_padded: torch.Tensor,
     chunk_size: int,
-    total_seq_len: int = 20,
+    total_seq_len: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Chunkify the cu_seqlens tensor.
-    Returns new cu_seqlens, cu_seqlens_padded tensors
+    Perform chunkification of sequences stored in `thd` format when chunked
+    attention is required.
+
+    The function receives `cu_seqlens` and `cu_seqlens_padded`, which encode
+    the cumulative sequence lengths of the original (unpadded) sequences and
+    of the right-padded sequences, respectively.  It returns the corresponding
+    tensors after the sequences have been partitioned into chunks of size
+    `chunk_size`.
+
+    Example
+    -------
+    Given original sequence lengths `[10, 20]` with three padding tokens
+    appended to the second sequence and `chunk_size = 8`, the sequences are
+    split into `[8, 2]` and `[8, 8, 2 (+3 padding)]`.
+
+        cu_seqlens        : [0, 10, 30]  →  [0, 8, 10, 18, 30]
+        cu_seqlens_padded : [0, 10, 33]  →  [0, 8, 10, 18, 33]
+
+    `total_seq_len` denotes the total number of (padded) tokens in the input
+    tensor—that is, the length of the `t` dimension in `thd` layout.
     """
     new_cu_seqlens, new_cu_seqlens_padded = tex.thd_chunkify(
         cu_seqlens, cu_seqlens_padded, total_seq_len, chunk_size
@@ -1839,8 +1857,12 @@ def thd_chunkify_p2p(
     total_seq_len: int,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Chunkify the cu_seqlens tensor.
-    Returns new cu_seqlens, cu_seqlens_padded tensors
+    Utility function used in chunked attention support for thd P2P context parallelism.
+
+    Process cu_seqlens and cu_seqlens_padded for the case when q part on the GPU
+    corresponds to the current pair of the kv part on the GPU - this happens once,
+    at the beginning. In this case returned cu_seqlens will be used both as
+    a cu_seqlens_q and as a cu_seqlens_kv.
     """
 
     new_cu_seqlens, new_cu_seqlens_padded = tex.thd_chunkify_p2p(
@@ -1859,6 +1881,12 @@ def thd_seq_tweak_below_diagonal(
     cp_size: int,
     chunk_size: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Utility function used in chunked attention support for thd P2P context parallelism.
+
+    Process cu_seqlens_q and cu_seqlens_kv_halfs for the case when q part on the GPU
+    has bigger index than the kv part on the GPU.
+    """
     assert cp_rank_q > cp_rank_kv
 
     new_seqlens_q, new_seqlens_kv_halfs, new_cu_seqlens_q_padded, new_cu_seqlens_kv_padded = (
@@ -1893,6 +1921,12 @@ def thd_seq_tweak_above_diagonal(
     cp_size: int,
     chunk_size: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Utility function used in chunked attention support for thd P2P context parallelism.
+
+    Process cu_seqlens_q_halfs and cu_seqlens_kv for the case when q part on the GPU
+    has smaller index than the kv part on the GPU.
+    """
     assert cp_rank_q < cp_rank_kv
 
     new_seqlens_q, new_seqlens_kv, new_cu_seqlens_q_padded, new_cu_seqlens_kv_padded = (

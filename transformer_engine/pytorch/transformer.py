@@ -392,7 +392,7 @@ class TransformerLayer(torch.nn.Module):
             "qkv_format": self.attn_input_format,
             "seq_length": seq_length,
             "micro_batch_size": micro_batch_size,
-            "attn_chunk_size": attn_chunk_size,
+            "chunk_size": attn_chunk_size,
         }
 
         self.self_attention = MultiheadAttention(
