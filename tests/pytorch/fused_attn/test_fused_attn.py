@@ -752,7 +752,7 @@ model_configs_layout_thd = {
         "no_bias",
         window_size=(4, 0),
     ),
-    "layout_6_0": ModelConfig(2, 16, 16, 64, 2048, 2048, 0.0, "causal", "no_bias", chunk_size=128),
+    "layout_6_0": ModelConfig(2, 16, 16, 64, 2048, 2048, 0.0, "padding_causal", "no_bias", chunk_size=128),
 }
 
 
@@ -1491,6 +1491,7 @@ def _run_transformer_layer(
         max_seqlen_kv=config.max_seqlen_kv,
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_kv=cu_seqlens_kv,
+        attn_chunk_size=config.chunk_size,
     )
     if is_training:
         loss = out.sum()

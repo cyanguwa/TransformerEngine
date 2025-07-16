@@ -170,7 +170,8 @@ class DotProductAttention(TransformerEngineBaseModule):
     chunk_size: Optional[int], default = `None`
                 if set, chunked attention will be used.
                 For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d).
-                For thd format, this will split sequence lengths into chunks of size chunk_size. It is supported with context parallelism.
+                For thd format, this will split sequence lengths into chunks of size chunk_size.
+                Context parallelism of chunked attention is supported only for thd format.
 
     Parallelism parameters
     ----------------------
@@ -207,7 +208,8 @@ class DotProductAttention(TransformerEngineBaseModule):
     chunk_size: Optional[int], default = `None`
                 if set, chunked attention will be used.
                 For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d).
-                For thd format, this will split sequence lengths into chunks of size chunk_size. It is supported with context parallelism.
+                For thd format, this will split sequence lengths into chunks of size chunk_size.
+                Context parallelism of chunked attention is supported only for thd format.
     """
 
     def __init__(
@@ -273,11 +275,6 @@ class DotProductAttention(TransformerEngineBaseModule):
         assert (
             num_attention_heads % self.num_gqa_groups == 0
         ), "The number of attention heads must be divisible by the number of GQA groups!"
-
-        assert (
-            chunk_size is None or qkv_format == "thd"
-        ), "Chunk size is only supported for thd format"
-        self.chunk_size = chunk_size
 
         self.rng_states_tracker = None
         if sequence_parallel or get_rng_state_tracker is None:
@@ -646,7 +643,8 @@ class DotProductAttention(TransformerEngineBaseModule):
         chunk_size: Optional[int], default = `None`
             If set, chunked attention will be used.
             For bshd and sbhd formats, this will result in internal reshape to (b*s/chunk_size, chunk_size h, d) or (chunk_size, b*s/chunk_size, h, d).
-            For thd format, this will split sequence lengths into chunks of size chunk_size. It is supported with context parallelism.
+            For thd format, this will split sequence lengths into chunks of size chunk_size.
+            Context parallelism of chunked attention is supported only for thd format.
         """
 
         with self.prepare_forward(
@@ -737,28 +735,37 @@ class DotProductAttention(TransformerEngineBaseModule):
                 "thd",
             ], "DotProductAttention only supports qkv_format = {'sbhd', 'bshd', 'thd'}!"
 
-            if chunk_size is not None:
+            if chunk_size is None:
                 chunk_size = self.chunk_size
 
-            if chunk_size is not None:
+            context_parallel = self.cp_group is not None
+            if chunk_size is not None and not context_parallel:
                 if qkv_format == "bshd":
+                    input_batch_size = query_layer.shape[0]
+                    total_seq_len = input_batch_size * query_layer.shape[1]
                     query_layer = query_layer.reshape(-1, chunk_size, *query_layer.shape[2:])
                     key_layer = key_layer.reshape(-1, chunk_size, *key_layer.shape[2:])
                     value_layer = value_layer.reshape(-1, chunk_size, *value_layer.shape[2:])
                 elif qkv_format == "sbhd":
+                    input_batch_size = query_layer.shape[1]
+                    total_seq_len = input_batch_size * query_layer.shape[0]
                     query_layer = query_layer.reshape(chunk_size, -1, *query_layer.shape[2:])
                     key_layer = key_layer.reshape(chunk_size, -1, *key_layer.shape[2:])
                     value_layer = value_layer.reshape(chunk_size, -1, *value_layer.shape[2:])
-                elif qkv_format == "thd" and self.cp_group is None:
-                    # self.cp_group is None means that context parallelism is not used
-                    # for context parallelism, chunking is more complex and happens inside the context parallel logic.
+                else:
                     total_seq_len = query_layer.shape[0]
+                if cu_seqlens_q is not None:
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_q, cu_seqlens_q_padded, self.chunk_size, total_seq_len
+                        cu_seqlens_q, cu_seqlens_q_padded, chunk_size, total_seq_len
                     )
+                    max_seqlen_q = chunk_size
+                if cu_seqlens_kv is not None:
                     cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
-                        cu_seqlens_kv, cu_seqlens_kv_padded, self.chunk_size, total_seq_len
+                        cu_seqlens_kv, cu_seqlens_kv_padded, chunk_size, total_seq_len
                     )
+                    max_seqlen_kv = chunk_size
+            elif context_parallel and chunk_size is not None:
+                assert qkv_format == "thd", "Chunked attention with context parallelism is supported only for thd format."
 
             batch_size = None
             if qkv_format in ["sbhd", "bshd"]:
@@ -1126,7 +1133,6 @@ class DotProductAttention(TransformerEngineBaseModule):
                         attn_mask_type=attn_mask_type,
                         attention_mask=attention_mask,
                         window_size=window_size,
-                        chunk_size=self.chunk_size,
                         fused_attention_backend=fused_attention_backend,
                         core_attention_bias_type=fu_core_attention_bias_type,
                         core_attention_bias=fu_core_attention_bias,
@@ -1135,6 +1141,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                         cp_global_ranks=self.cp_global_ranks,
                         cp_stream=self.cp_stream,
                         cp_comm_type=self.cp_comm_type,
+                        cp_chunk_size=self.chunk_size,
                         fp8=self.fp8 and self.fp8_meta["recipe"].fp8_dpa,
                         fp8_meta=self.fp8_meta,
                         quantizers=self.quantizers,
@@ -1155,7 +1162,6 @@ class DotProductAttention(TransformerEngineBaseModule):
                         max_seqlen_kv=max_seqlen_kv,
                         attn_mask_type=attn_mask_type,
                         attention_mask=attention_mask,
-                        chunk_size=self.chunk_size,
                         window_size=window_size,
                         fused_attention_backend=fused_attention_backend,
                         core_attention_bias_type=fu_core_attention_bias_type,
@@ -1165,6 +1171,7 @@ class DotProductAttention(TransformerEngineBaseModule):
                         cp_global_ranks=self.cp_global_ranks,
                         cp_stream=self.cp_stream,
                         cp_comm_type=self.cp_comm_type,
+                        cp_chunk_size=self.chunk_size,
                         fp8=self.fp8 and self.fp8_meta["recipe"].fp8_dpa,
                         fp8_meta=self.fp8_meta,
                         quantizers=self.quantizers,
@@ -1217,11 +1224,10 @@ class DotProductAttention(TransformerEngineBaseModule):
                         inference_params=inference_params,
                     )
 
-            if chunk_size is not None:
+            if chunk_size is not None and not context_parallel:
                 # Reshape back to original format
                 if qkv_format == "bshd":
-                    out = out.reshape(batch_size, -1, *out.shape[2:])
+                    out = out.reshape(input_batch_size, -1, *out.shape[2:])
                 elif qkv_format == "sbhd":
-                    out = out.reshape(-1, batch_size, *out.shape[2:])
-
+                    out = out.reshape(-1, input_batch_size, *out.shape[2:])
             return out

@@ -7,6 +7,7 @@ import collections
 from typing import Callable, List, Optional, Tuple, Union
 import torch
 
+import transformer_engine.pytorch.attention.dot_product_attention.utils as dpa_utils
 from transformer_engine.debug.pytorch.debug_state import TEDebugState
 from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
 from transformer_engine.pytorch.float8_tensor import Float8Tensor
@@ -138,7 +139,7 @@ class MultiheadAttention(torch.nn.Module):
                 this will result in internal reshape to (b*s/chunk_size, chunk_size h, d)
                 or (chunk_size, b*s/chunk_size, h, d). For thd format, this will split
                 sequence lengths into chunks of size chunk_size.
-                It is supported with context parallelism.
+                Context parallelism of chunked attention is supported only for thd format.
     name: str, default = `None`
         name of the module, currently used for debugging purposes.
 
@@ -526,6 +527,7 @@ class MultiheadAttention(torch.nn.Module):
         max_seqlen_kv: Optional[int] = None,
         fast_zero_fill: bool = True,
         pad_between_seqs: Optional[bool] = None,
+        chunk_size: Optional[int] = None,
     ) -> Tuple[Union[torch.Tensor, None], ...]:
         """
         Forward propagation for MultiheadAttention layer.
@@ -613,6 +615,12 @@ class MultiheadAttention(torch.nn.Module):
         pad_between_seqs: Optional[bool], default = `None`
             If None, inferred from qkv_format, cu_seqlens and cu_seqlens_padded.
             If true, there are padding tokens between individual sequences in a packed batch.
+        chunk_size: Optional[int], default = `None`
+            if set, chunked attention will be used. For bshd and sbhd formats,
+            this will result in internal reshape to (b*s/attn_chunk_size, chunk_size h, d)
+            or (chunk_size, b*s/attn_chunk_size, h, d). For thd format, this will split
+            sequence lengths into chunks of size attn_chunk_size.
+            Context parallelism of chunked attention is supported only for thd format.
         """
         # hidden_states: [sq, b, h]
 
@@ -620,6 +628,8 @@ class MultiheadAttention(torch.nn.Module):
             attn_mask_type = self.attn_mask_type
         if window_size is None:
             window_size = self.window_size
+        if chunk_size is None:
+            chunk_size = self.chunk_size
 
         if "padding" in attn_mask_type and attention_mask is not None:
             for mask in attention_mask:
@@ -652,13 +662,33 @@ class MultiheadAttention(torch.nn.Module):
         )
 
         input_shape = hidden_states.shape
-        if self.chunk_size is not None:
-            if self.qkv_format == "bshd":
-                hidden_states = hidden_states.reshape(-1, self.chunk_size, *input_shape[2:])
-            elif self.qkv_format == "sbhd":
-                hidden_states = hidden_states.reshape(self.chunk_size, -1, *input_shape[2:])
-            # thd is reshaped inside dot product attention
 
+        context_parallel = self.cp_group is not None
+        if chunk_size is not None:
+            if context_parallel:
+                # For CP only thd is supported.
+                assert self.qkv_format == "thd", "Chunked attention with context parallelism is supported only for thd format."
+            else:
+                # For non-CP, we can chunk the input tensor.
+                if self.qkv_format == "bshd":
+                    total_seq_len = hidden_states.shape[1] * hidden_states.shape[0]
+                    hidden_states = hidden_states.reshape(-1, chunk_size, *input_shape[2:])
+                elif self.qkv_format == "sbhd":
+                    total_seq_len = hidden_states.shape[1] * hidden_states.shape[0]
+                    hidden_states = hidden_states.reshape(chunk_size, -1, *hidden_states.shape[2:])
+                else: # thd
+                    total_seq_len = query_layer.shape[0]
+                if cu_seqlens_q is not None:
+                    cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
+                        cu_seqlens_q, cu_seqlens_q_padded, chunk_size, total_seq_len
+                    )
+                if cu_seqlens_kv is not None:
+                    cu_seqlens_kv, cu_seqlens_kv_padded = dpa_utils.thd_chunkify(
+                        cu_seqlens_kv, cu_seqlens_kv_padded, chunk_size, total_seq_len
+                    )
+                max_seqlen_q = max_seqlen_kv = chunk_size
+            
+    
         layernorm_output = None
         if self.attention_type == "self":
             # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn]
@@ -894,12 +924,8 @@ class MultiheadAttention(torch.nn.Module):
             chunk_size=self.chunk_size,
         )
 
-        if self.chunk_size is not None:
-            if self.qkv_format == "bshd":
-                context_layer = context_layer.reshape(input_shape)
-            elif self.qkv_format == "sbhd":
-                context_layer = context_layer.reshape(input_shape)
-            # thd is reshaped inside dot product attention
+        if chunk_size is not None:
+            context_layer = context_layer.reshape(input_shape)
 
         # ===================
         # Output. [sq, b, h]

@@ -303,6 +303,7 @@ def get_attention_backend(
     head_dim_v = attention_params.head_dim_v
     attn_mask_type = attention_params.attn_mask_type
     window_size = attention_params.window_size
+    chunk_size = attention_params.chunk_size
     alibi_slopes_shape = attention_params.alibi_slopes_shape
     core_attention_bias_type = attention_params.core_attention_bias_type
     core_attention_bias_shape = attention_params.core_attention_bias_shape
@@ -582,6 +583,11 @@ def get_attention_backend(
                 logger.debug(
                     "Disabling FlashAttention as it does not support context parallelism with"
                     " attention bias for THD format"
+                )
+                use_flash_attention = False
+            elif qkv_format == "thd" and chunk_size is not None:
+                logger.debug(
+                    "Disabling FlashAttention as it does not support context parallelism with chunked attention for THD format"
                 )
                 use_flash_attention = False
 
@@ -1841,6 +1847,8 @@ def thd_chunkify(
     `total_seq_len` denotes the total number of (padded) tokens in the input
     tensor—that is, the length of the `t` dimension in `thd` layout.
     """
+    if cu_seqlens_padded is None:
+        cu_seqlens_padded = cu_seqlens
     new_cu_seqlens, new_cu_seqlens_padded = tex.thd_chunkify(
         cu_seqlens, cu_seqlens_padded, total_seq_len, chunk_size
     )

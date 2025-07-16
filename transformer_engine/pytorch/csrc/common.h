@@ -346,10 +346,10 @@ size_t product(const NVTEShape& shape, size_t begin, size_t end);
 std::vector<size_t> nvte_shape_to_vector(const NVTEShape& nvte_shape);
 
 at::Tensor allocateSpace(const std::vector<size_t>& shape, const transformer_engine::DType type,
-                         bool init_to_zeros);
+                         bool init_to_zeros, bool init_to_minus_inf);
 
 at::Tensor allocateSpace(const NVTEShape& shape, const transformer_engine::DType type,
-                         bool init_to_zeros = false, bool init_to_minus_inf = false);
+                         bool init_to_zeros = false);
 
 at::Tensor allocateTorchTensor(int M, int N, transformer_engine::DType dtype);
 
