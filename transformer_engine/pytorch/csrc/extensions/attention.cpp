@@ -212,7 +212,7 @@ std::vector<py::object> fused_attn_fwd(
           NVTEShape temp_shape = nvte_tensor_shape(nvte_aux_tensor_pack.tensors[i]);
           output_tensor = allocateSpace(
               nvte_shape_to_vector(temp_shape),
-              static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false);
+              static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false, true);
         } else if (i == nvte_aux_tensor_pack.size - 2) {
           output_tensor = rng_state;
         } else if (i == nvte_aux_tensor_pack.size - 1) {
@@ -224,14 +224,14 @@ std::vector<py::object> fused_attn_fwd(
             (i < nvte_aux_tensor_pack.size - 1)
                 ? allocateSpace(
                       nvte_shape_to_vector(temp_shape),
-                      static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false)
+                      static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false, true)
                 : rng_state;
       }
     } else {
       NVTEShape temp_shape = nvte_tensor_shape(nvte_aux_tensor_pack.tensors[i]);
       output_tensor = allocateSpace(
           nvte_shape_to_vector(temp_shape),
-          static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false);
+          static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false, true);
     }
     output_tensors.push_back(py::cast(output_tensor));
     NVTEBasicTensor temp_data = {output_tensor.data_ptr(),

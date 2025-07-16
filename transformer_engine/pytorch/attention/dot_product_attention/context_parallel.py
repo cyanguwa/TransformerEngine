@@ -942,10 +942,22 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     kv_inputs[i % 2] = kv_inputs[i % 2][0]
                             elif qkv_format == "thd":
                                 q_inputs[i % 2] = q
-                                # [2, t, np, hn] -> [2, t/2, np, hn]
-
+                                if chunk_size is not None:
+                                    (
+                                        cu_seqlens_q_per_step[i],
+                                        cu_seqlens_kv_per_step[i],
+                                        cu_seqlens_q_padded_per_step[i],
+                                        cu_seqlens_kv_padded_per_step[i],
+                                    ) = dpa_utils.thd_seq_tweak_below_diagonal(
+                                        cu_seqlens_q_per_step[i],
+                                        cu_seqlens_kv_per_step[i],
+                                        cu_seqlens_q_padded,
+                                        rank,
+                                        rank - i,
+                                        cp_size,
+                                        chunk_size,
+                                    )
                                 if enable_mla:
-                                    assert chunk_size is None
                                     # [t, np, hn] -> [t/2, np, hn]
                                     k_part = tex.thd_read_half_tensor(
                                         k_part, cu_seqlens_kv_padded, 0
@@ -955,21 +967,6 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                                     )
                                 else:
                                     # [2, t, np, hn] -> [2, t/2, np, hn]
-                                    if chunk_size is not None:
-                                        (
-                                            cu_seqlens_q_per_step[i],
-                                            cu_seqlens_kv_per_step[i],
-                                            cu_seqlens_q_padded_per_step[i],
-                                            cu_seqlens_kv_padded_per_step[i],
-                                        ) = dpa_utils.thd_seq_tweak_below_diagonal(
-                                            cu_seqlens_q_per_step[i],
-                                            cu_seqlens_kv_per_step[i],
-                                            cu_seqlens_q_padded,
-                                            rank,
-                                            rank - i,
-                                            cp_size,
-                                            chunk_size,
-                                        )
                                     kv_inputs[i % 2] = tex.thd_read_half_tensor(
                                         kv_inputs[i % 2], cu_seqlens_kv_padded, 0
                                     )

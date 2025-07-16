@@ -751,7 +751,8 @@ class DotProductAttention(TransformerEngineBaseModule):
                     key_layer = key_layer.reshape(chunk_size, -1, *key_layer.shape[2:])
                     value_layer = value_layer.reshape(chunk_size, -1, *value_layer.shape[2:])
                 elif qkv_format == "thd" and self.cp_group is None:
-                    # Logic is different for context parallelism
+                    # self.cp_group is None means that context parallelism is not used
+                    # for context parallelism, chunking is more complex and happens inside the context parallel logic.
                     total_seq_len = query_layer.shape[0]
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
                         cu_seqlens_q, cu_seqlens_q_padded, self.chunk_size, total_seq_len
