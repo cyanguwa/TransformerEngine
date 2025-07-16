@@ -190,7 +190,9 @@ class TransformerLayer(torch.nn.Module):
     attn_chunk_size: Optional[int], default = `None`
                         if set, chunked attention will be used. For bshd and sbhd formats,
                         this will result in internal reshape to (b*s/attn_chunk_size, chunk_size h, d)
-                        or (chunk_size, b*s/attn_chunk_size, h, d).
+                        or (chunk_size, b*s/attn_chunk_size, h, d). For thd format, this will split
+                        sequence lengths into chunks of size attn_chunk_size. 
+                        It is supported with context parallelism.
     name: str, default = `None`
         name of the module, currently used for debugging purposes.
 
@@ -298,6 +300,7 @@ class TransformerLayer(torch.nn.Module):
         name: str = None,
         use_qk_norm: bool = False,
         qk_norm_eps: float = 1e-6,
+        attn_chunk_size: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -389,6 +392,7 @@ class TransformerLayer(torch.nn.Module):
             "qkv_format": self.attn_input_format,
             "seq_length": seq_length,
             "micro_batch_size": micro_batch_size,
+            "attn_chunk_size": attn_chunk_size,
         }
 
         self.self_attention = MultiheadAttention(

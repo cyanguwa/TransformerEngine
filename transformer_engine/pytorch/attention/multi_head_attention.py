@@ -133,6 +133,12 @@ class MultiheadAttention(torch.nn.Module):
             equal length. Please note that these formats do not reflect how
             tensors `query_layer`, `key_layer`, `value_layer` are laid out in memory.
             For that, please use `get_qkv_layout` to gain the layout information.
+    chunk_size: Optional[int], default = `None`
+                if set, chunked attention will be used. For bshd and sbhd formats,
+                this will result in internal reshape to (b*s/chunk_size, chunk_size h, d)
+                or (chunk_size, b*s/chunk_size, h, d). For thd format, this will split
+                sequence lengths into chunks of size chunk_size. 
+                It is supported with context parallelism.
     name: str, default = `None`
         name of the module, currently used for debugging purposes.
 
@@ -235,12 +241,14 @@ class MultiheadAttention(torch.nn.Module):
         qk_norm_eps: float = 1e-6,
         seq_length: Optional[int] = None,
         micro_batch_size: Optional[int] = None,
+        chunk_size: Optional[int] = None,
     ) -> None:
         super().__init__()
 
         self.qkv_format = qkv_format
         self.attn_mask_type = attn_mask_type
         self.window_size = window_size
+        self.chunk_size = chunk_size
         self.layer_number = 1 if layer_number is None else layer_number
         self.input_layernorm = input_layernorm
         self.attention_type = attention_type
@@ -643,6 +651,14 @@ class MultiheadAttention(torch.nn.Module):
             and FP8GlobalStateManager.get_fp8_recipe().fp8_mha
         )
 
+        input_shape = hidden_states.shape
+        if self.chunk_size is not None:
+            if self.qkv_format == "bshd":
+                hidden_states = hidden_states.reshape(-1, self.chunk_size, *input_shape[2:])
+            elif self.qkv_format == "sbhd":
+                hidden_states = hidden_states.reshape(self.chunk_size, -1, *input_shape[2:])
+            # thd is reshaped inside dot product attention
+
         layernorm_output = None
         if self.attention_type == "self":
             # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn]
@@ -875,7 +891,15 @@ class MultiheadAttention(torch.nn.Module):
             fast_zero_fill=fast_zero_fill,
             inference_params=inference_params,
             pad_between_seqs=pad_between_seqs,
+            chunk_size=self.chunk_size,
         )
+
+        if self.chunk_size is not None:
+            if self.qkv_format == "bshd":
+                context_layer = context_layer.reshape(input_shape)
+            elif self.qkv_format == "sbhd":
+                context_layer = context_layer.reshape(input_shape)
+            # thd is reshaped inside dot product attention
 
         # ===================
         # Output. [sq, b, h]
