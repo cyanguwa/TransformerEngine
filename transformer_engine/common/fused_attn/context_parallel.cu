@@ -309,8 +309,7 @@ __global__ void thd_grad_correction_kernel(dtype *grad, dtype *grad_per_step, in
 __global__ void thd_chunkify_kernel(const int *__restrict__ d_cu_seqlens,
                                     const int *__restrict__ d_cu_seqlens_padded,
                                     int *__restrict__ d_out_cu_seqlens,
-                                    int *__restrict__ d_out_cu_seqlens_padded,
-                                    int batch,
+                                    int *__restrict__ d_out_cu_seqlens_padded, int batch,
                                     int output_len, int chunk_size) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= output_len) return;

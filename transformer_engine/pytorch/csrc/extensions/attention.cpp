@@ -224,7 +224,8 @@ std::vector<py::object> fused_attn_fwd(
             (i < nvte_aux_tensor_pack.size - 1)
                 ? allocateSpace(
                       nvte_shape_to_vector(temp_shape),
-                      static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false, true)
+                      static_cast<DType>(nvte_tensor_type(nvte_aux_tensor_pack.tensors[i])), false,
+                      true)
                 : rng_state;
       }
     } else {

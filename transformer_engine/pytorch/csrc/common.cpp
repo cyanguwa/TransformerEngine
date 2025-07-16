@@ -239,7 +239,8 @@ at::Tensor allocateSpace(const std::vector<size_t>& shape, const transformer_eng
   if (init_to_zeros) {
     return at::zeros(ar_shape, at::CUDA(GetATenDType(type)));
   } else if (init_to_minus_inf) {
-    return at::full(ar_shape, -std::numeric_limits<float>::infinity(), at::CUDA(GetATenDType(type)));
+    return at::full(ar_shape, -std::numeric_limits<float>::infinity(),
+                    at::CUDA(GetATenDType(type)));
   } else {
     return at::empty(ar_shape, at::CUDA(GetATenDType(type)));
   }
