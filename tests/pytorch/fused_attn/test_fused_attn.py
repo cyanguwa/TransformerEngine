@@ -752,7 +752,9 @@ model_configs_layout_thd = {
         "no_bias",
         window_size=(4, 0),
     ),
-    "layout_6_0": ModelConfig(2, 16, 16, 64, 2048, 2048, 0.0, "padding_causal", "no_bias", chunk_size=128),
+    "layout_6_0": ModelConfig(
+        2, 16, 16, 64, 2048, 2048, 0.0, "padding_causal", "no_bias", chunk_size=128
+    ),
 }
 
 

@@ -687,7 +687,7 @@ class TransformerLayer(torch.nn.Module):
         pad_between_seqs: Optional[bool], default = `None`
             If None, inferred from qkv_format, cu_seqlens and cu_seqlens_padded.
             If true, there are padding tokens between individual sequences in a packed batch,
-            i.e. qkv_format = 'thd'.    
+            i.e. qkv_format = 'thd'.
         attn_chunk_size: Optional[int], default = `None`
             if set, chunked attention will be used. For bshd and sbhd formats,
             this will result in internal reshape to (b*s/attn_chunk_size, chunk_size h, d)

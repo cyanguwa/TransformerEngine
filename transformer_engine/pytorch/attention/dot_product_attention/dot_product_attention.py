@@ -765,7 +765,9 @@ class DotProductAttention(TransformerEngineBaseModule):
                     )
                     max_seqlen_kv = chunk_size
             elif context_parallel and chunk_size is not None:
-                assert qkv_format == "thd", "Chunked attention with context parallelism is supported only for thd format."
+                assert (
+                    qkv_format == "thd"
+                ), "Chunked attention with context parallelism is supported only for thd format."
 
             batch_size = None
             if qkv_format in ["sbhd", "bshd"]:

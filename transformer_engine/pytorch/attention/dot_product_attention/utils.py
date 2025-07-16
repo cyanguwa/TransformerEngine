@@ -587,7 +587,8 @@ def get_attention_backend(
                 use_flash_attention = False
             elif qkv_format == "thd" and chunk_size is not None:
                 logger.debug(
-                    "Disabling FlashAttention as it does not support context parallelism with chunked attention for THD format"
+                    "Disabling FlashAttention as it does not support context parallelism with"
+                    " chunked attention for THD format"
                 )
                 use_flash_attention = False
 

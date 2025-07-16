@@ -667,7 +667,9 @@ class MultiheadAttention(torch.nn.Module):
         if chunk_size is not None:
             if context_parallel:
                 # For CP only thd is supported.
-                assert self.qkv_format == "thd", "Chunked attention with context parallelism is supported only for thd format."
+                assert (
+                    self.qkv_format == "thd"
+                ), "Chunked attention with context parallelism is supported only for thd format."
             else:
                 # For non-CP, we can chunk the input tensor.
                 if self.qkv_format == "bshd":
@@ -676,7 +678,7 @@ class MultiheadAttention(torch.nn.Module):
                 elif self.qkv_format == "sbhd":
                     total_seq_len = hidden_states.shape[1] * hidden_states.shape[0]
                     hidden_states = hidden_states.reshape(chunk_size, -1, *hidden_states.shape[2:])
-                else: # thd
+                else:  # thd
                     total_seq_len = query_layer.shape[0]
                 if cu_seqlens_q is not None:
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
@@ -687,8 +689,7 @@ class MultiheadAttention(torch.nn.Module):
                         cu_seqlens_kv, cu_seqlens_kv_padded, chunk_size, total_seq_len
                     )
                 max_seqlen_q = max_seqlen_kv = chunk_size
-            
-    
+
         layernorm_output = None
         if self.attention_type == "self":
             # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn]
