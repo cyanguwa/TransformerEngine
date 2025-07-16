@@ -187,6 +187,10 @@ class TransformerLayer(torch.nn.Module):
                          Note that these formats are very closely
                          related to the `qkv_format` in the `MultiHeadAttention`
                          and `DotProductAttention` modules.
+    attn_chunk_size: Optional[int], default = `None`
+                        if set, chunked attention will be used. For bshd and sbhd formats,
+                        this will result in internal reshape to (b*s/attn_chunk_size, chunk_size h, d)
+                        or (chunk_size, b*s/attn_chunk_size, h, d).
     name: str, default = `None`
         name of the module, currently used for debugging purposes.
 
