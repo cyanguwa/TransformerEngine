@@ -310,7 +310,7 @@ __global__ void thd_chunkify_kernel(const int *__restrict__ d_cu_seqlens,
                                     const int *__restrict__ d_cu_seqlens_padded,
                                     int *__restrict__ d_out_cu_seqlens,
                                     int *__restrict__ d_out_cu_seqlens_padded,
-                                    int batch,  // = len(cu_seqlens)-1
+                                    int batch,
                                     int output_len, int chunk_size) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= output_len) return;
@@ -573,30 +573,26 @@ __global__ void thd_seq_tweak_above_diag_kernel(
   const int32_t pad_start = cu_seqlens_padded[i];
   const int32_t pad_end = cu_seqlens_padded[i + 1];
 
-  const int32_t seq_len_q_half = q_end - q_start;    // |Q|/2  (actual)
-  const int32_t seq_len_kv = kv_end - kv_start;      // |KV| (full)
-  const int32_t seq_plus_pad = pad_end - pad_start;  // |KV|+pads (full)
+  const int32_t seq_len_q_half = q_end - q_start;
+  const int32_t seq_len_kv = kv_end - kv_start;
+  const int32_t seq_plus_pad = pad_end - pad_start;
 
-  const int32_t half_seq_len = seq_plus_pad >> 1;  // |KV|/2 + pads/2
+  const int32_t half_seq_len = seq_plus_pad >> 1;
 
-  // pad lengths for later clamping
   const int32_t pad_len_kv = seq_plus_pad - seq_len_kv;
 
   // ───────── above‑diagonal  core logic ─────────────────────
-  // 1. Tokens from Q (first half from the *opposite* side)
   const int32_t first_q_id = (2 * cp_size - 1 - cp_rank_q) * half_seq_len;
   const int32_t first_q_chunk_id = first_q_id / chunk_size;
   const int32_t first_q_chunk_len =
       min(seq_len_q_half, (first_q_chunk_id + 1) * chunk_size - first_q_id);
 
-  // 2. Tokens from KV (might come from first or second half)
   const int32_t first_half_kv_last_el_total_id = ((cp_rank_kv + 1) * half_seq_len) - 1;
   const int32_t first_half_kv_last_chunk_id = first_half_kv_last_el_total_id / chunk_size;
 
   const int32_t second_half_kv_last_el_total_id = ((2 * cp_size - cp_rank_kv) * half_seq_len) - 1;
   const int32_t second_half_kv_last_chunk_id = second_half_kv_last_el_total_id / chunk_size;
 
-  // last‑trimmed chunk lengths
   const int32_t first_half_kv_last_el_id_in_chunk = first_half_kv_last_el_total_id % chunk_size;
   const int32_t first_half_kv_last_chunk_len =
       min(seq_plus_pad, half_seq_len + first_half_kv_last_el_id_in_chunk + 1);
@@ -605,13 +601,11 @@ __global__ void thd_seq_tweak_above_diag_kernel(
   const int32_t second_half_kv_last_chunk_len =
       min(half_seq_len, second_half_kv_last_el_id_in_chunk + 1);
 
-  // 3. Decide which half(s) we actually take
   const bool take_nothing = (first_q_chunk_id != second_half_kv_last_chunk_id);
   const bool take_second_half_kv =
       (!take_nothing) && (first_q_chunk_id != first_half_kv_last_chunk_id);
   const bool take_first_half_kv = (!take_nothing) && (!take_second_half_kv);
 
-  // ───────── resulting subseq lengths ───────────────────────
   int32_t q_seq_len = take_nothing ? 0 : first_q_chunk_len;
 
   int32_t kv_seq_len = 0;
@@ -620,29 +614,23 @@ __global__ void thd_seq_tweak_above_diag_kernel(
   else if (take_first_half_kv)
     kv_seq_len = first_half_kv_last_chunk_len;
 
-  // clamp against padding
   kv_seq_len = max(0, kv_seq_len - pad_len_kv);
 
-  // ───────── flat output (row‑major) ────────────────────────
   const int out_base = 3 * i;
 
-  // Q chunks: [0, sequence, 0]
-  q_chunks[out_base + 0 + 1] = 0;          // beginning of Q half‑sequence
-  q_chunks[out_base + 1 + 1] = q_seq_len;  // after the chunk we keep
-  q_chunks[out_base + 2 + 1] = 0;          // stays flat afterwards
+  q_chunks[out_base + 0 + 1] = 0;
+  q_chunks[out_base + 1 + 1] = q_seq_len;
+  q_chunks[out_base + 2 + 1] = 0;
 
-  // Q pads:  [0, 0, garbage]  (pads live in the *first* half of padded area)
-  const int32_t half_pad_start = pad_start >> 1;  // start of Q‑related pad area
+  const int32_t half_pad_start = pad_start >> 1;
   q_pads[out_base + 0 + 1] = half_pad_start;
   q_pads[out_base + 1 + 1] = half_pad_start + q_seq_len;
-  q_pads[out_base + 2 + 1] = half_pad_start + half_seq_len;  // complete half padded length
+  q_pads[out_base + 2 + 1] = half_pad_start + half_seq_len;
 
-  // KV chunks: [0, sequence, 0]
   kv_chunks[out_base + 0 + 1] = 0;
   kv_chunks[out_base + 1 + 1] = kv_seq_len;
   kv_chunks[out_base + 2 + 1] = 0;
 
-  // KV pads: [garbage, 0, 0] (pads precede KV if from first half)
   kv_pads[out_base + 0 + 1] = pad_start + (seq_len_kv - kv_seq_len);
   kv_pads[out_base + 1 + 1] = pad_start + seq_len_kv;
   kv_pads[out_base + 2 + 1] = pad_start + seq_plus_pad;

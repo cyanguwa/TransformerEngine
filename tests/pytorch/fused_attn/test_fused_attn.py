@@ -228,7 +228,6 @@ model_configs_base = {
     #     test:             b,  h, hg,  d,  sq, skv,   p,      mask,      bias
     "base_1_0": ModelConfig(8, 16, 16, 64, 128, 128, 0.0, "no_mask", "no_bias"),
     "base_1_1": ModelConfig(4, 16, 16, 64, 128, 256, 0.0, "no_mask", "no_bias"),
-    "base_1_2": ModelConfig(8, 16, 16, 64, 2048, 2048, 0.0, "no_mask", "no_bias", chunk_size=128),
     "base_2_0": ModelConfig(2, 24, 24, 128, 2048, 2048, 0.0, "no_mask", "no_bias"),
     "base_2_1": ModelConfig(1, 24, 24, 128, 2048, 4096, 0.0, "no_mask", "no_bias"),
     "base_3_0": ModelConfig(8, 16, 16, 128, 1, 2048, 0.0, "no_mask", "no_bias"),
@@ -239,6 +238,7 @@ model_configs_base = {
     "base_5_1": ModelConfig(8, 16, 16, 512, 128, 2048, 0.0, "no_mask", "no_bias"),
     "base_6_0": ModelConfig(8, 16, 16, 1024, 1, 2048, 0.0, "no_mask", "no_bias"),
     "base_6_1": ModelConfig(8, 16, 16, 1024, 128, 2048, 0.0, "no_mask", "no_bias"),
+    "base_7_0": ModelConfig(8, 16, 16, 64, 2048, 2048, 0.0, "no_mask", "no_bias", chunk_size=128),
 }
 
 
@@ -1079,6 +1079,7 @@ def _run_dot_product_attention(
         k,
         v,
         window_size=config.window_size,
+        chunk_size=config.chunk_size,
         attention_mask=attention_mask,
         qkv_format=qkv_format,
         max_seqlen_q=config.max_seqlen_q,
