@@ -701,8 +701,6 @@ class TransformerLayer(torch.nn.Module):
             self_attn_mask_type = self.self_attn_mask_type
         if window_size is None:
             window_size = self.window_size
-        if attn_chunk_size is None:
-            attn_chunk_size = self.attn_chunk_size
         if enc_dec_attn_mask_type is None:
             enc_dec_attn_mask_type = self.enc_dec_attn_mask_type
         if enc_dec_window_size is None:

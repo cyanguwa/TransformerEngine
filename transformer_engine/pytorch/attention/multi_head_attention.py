@@ -663,7 +663,7 @@ class MultiheadAttention(torch.nn.Module):
 
         input_shape = hidden_states.shape
 
-        context_parallel = self.cp_group is not None
+        context_parallel = self.cp_size > 1
         if chunk_size is not None:
             if context_parallel:
                 # For CP only thd is supported.
@@ -679,7 +679,7 @@ class MultiheadAttention(torch.nn.Module):
                     total_seq_len = hidden_states.shape[1] * hidden_states.shape[0]
                     hidden_states = hidden_states.reshape(chunk_size, -1, *hidden_states.shape[2:])
                 else:  # thd
-                    total_seq_len = query_layer.shape[0]
+                    total_seq_len = hidden_states.shape[0]
                 if cu_seqlens_q is not None:
                     cu_seqlens_q, cu_seqlens_q_padded = dpa_utils.thd_chunkify(
                         cu_seqlens_q, cu_seqlens_q_padded, chunk_size, total_seq_len
