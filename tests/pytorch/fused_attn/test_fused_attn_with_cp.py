@@ -78,7 +78,10 @@ def test_cp_with_flash_attention(dtype, model, qkv_format, cp_comm_type):
             f" num_gqa_groups ({config.num_gqa_groups}) to be divisible by cp_size (2)!"
         )
     if config.chunk_size is not None and cp_comm_type != "p2p":
-        pytest.skip("Chunked attention with context parallelism is supported only for p2p communication type.")
+        pytest.skip(
+            "Chunked attention with context parallelism is supported only for p2p communication"
+            " type."
+        )
 
     subprocess.run(
         get_bash_arguments(

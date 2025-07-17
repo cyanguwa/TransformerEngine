@@ -3945,8 +3945,9 @@ def attn_forward_func_with_cp(
         "all_gather",
     ], "The context parallel running configs cannot support sliding window attetnion!"
 
-    assert chunk_size is None or cp_comm_type in ["p2p"], \
-        "Chunked attention with context parallelism is supported only for p2p communication type."
+    assert chunk_size is None or cp_comm_type in [
+        "p2p"
+    ], "Chunked attention with context parallelism is supported only for p2p communication type."
 
     enable_mla = k.shape[-1] != v.shape[-1]
     assert not enable_mla or cp_comm_type in [
@@ -3991,11 +3992,11 @@ def attn_forward_func_with_cp(
     elif cp_comm_type == "all_gather":
         args.pop(5)
         args.pop(8)
-        args.pop(12) # chunk_size
+        args.pop(12)  # chunk_size
         args += [window_size, cp_group, cp_stream, use_flash_attn_3]
         out = AttnFuncWithCPAndKVAllGather.apply(*args)
     elif cp_comm_type == "a2a":
-        args.pop(12) # chunk_size
+        args.pop(12)  # chunk_size
         args += [window_size, fp8, fp8_meta, cp_group, cp_stream, quantizers, use_flash_attn_3]
         out = AttnFuncWithCPAndQKVOA2A.apply(*args)
     else:
