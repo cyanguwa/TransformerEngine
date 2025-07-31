@@ -742,12 +742,16 @@ class DotProductAttention(TransformerEngineBaseModule):
             if chunk_size is not None and not context_parallel:
                 if qkv_format == "bshd":
                     input_batch_size = query_layer.shape[0]
+                    assert query_layer.shape[1] % chunk_size == 0, \
+                        f"chunk size = {chunk_size} must be a divisor of sequence length = {query_layer.shape[1]}!"
                     total_seq_len = input_batch_size * query_layer.shape[1]
                     query_layer = query_layer.reshape(-1, chunk_size, *query_layer.shape[2:])
                     key_layer = key_layer.reshape(-1, chunk_size, *key_layer.shape[2:])
                     value_layer = value_layer.reshape(-1, chunk_size, *value_layer.shape[2:])
                 elif qkv_format == "sbhd":
                     input_batch_size = query_layer.shape[1]
+                    assert query_layer.shape[0] % chunk_size == 0, \
+                        f"chunk size = {chunk_size} must be a divisor of sequence length = {query_layer.shape[0]}!"
                     total_seq_len = input_batch_size * query_layer.shape[0]
                     query_layer = query_layer.reshape(chunk_size, -1, *query_layer.shape[2:])
                     key_layer = key_layer.reshape(chunk_size, -1, *key_layer.shape[2:])
