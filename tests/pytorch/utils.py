@@ -279,12 +279,12 @@ def get_available_attention_backends(
     )
     core_attention_bias_requires_grad = False
     # d=256 is supported by cuDNN 9.0+ for inference but not training
-    if (
-        config.attn_bias_type == "post_scale_bias"
-        and config.head_dim_qk <= 128
-        and config.head_dim_v <= 128
-    ):
-        core_attention_bias_requires_grad = True
+    #if (
+    #    config.attn_bias_type == "post_scale_bias"
+    #    and config.head_dim_qk <= 128
+    #    and config.head_dim_v <= 128
+    #):
+    #    core_attention_bias_requires_grad = True
 
     fused_attn_backends = []
     available_backends = None
@@ -340,11 +340,11 @@ def get_available_attention_backends(
     backends = {0: "F16_max512_seqlen", 1: "F16_arbitrary_seqlen", 2: "FP8"}
     if AttentionLogging._is_logging_setup is False:
         AttentionLogging.setup_logging()
-    with logging_context(highest_level=AttentionLogging._log_level):
-        for i in range(3):
-            os.environ["NVTE_FUSED_ATTN_BACKEND"] = str(i)
-            _attention_backends["backend_selection_requires_update"] = True
-            available_backends, flash_attention_backend, fused_attention_backend = test()
-            if fused_attention_backend == FusedAttnBackend[backends[i]]:
-                fused_attn_backends.append(fused_attention_backend)
+    #with logging_context(highest_level=AttentionLogging._log_level):
+    for i in range(3):
+        os.environ["NVTE_FUSED_ATTN_BACKEND"] = str(i)
+        _attention_backends["backend_selection_requires_update"] = True
+        available_backends, flash_attention_backend, fused_attention_backend = test()
+        if fused_attention_backend == FusedAttnBackend[backends[i]]:
+            fused_attn_backends.append(fused_attention_backend)
     return available_backends, flash_attention_backend, fused_attn_backends

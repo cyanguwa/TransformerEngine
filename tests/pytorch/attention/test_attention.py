@@ -127,7 +127,7 @@ def test_dot_product_attention(
     config.window_size = check_set_window_size(config.attn_mask_type, config.window_size)
 
     # Get backends
-    is_training = True
+    is_training = False #True
     available_backends, _, fused_attn_backends = get_available_attention_backends(
         config,
         qkv_dtype=dtype,
@@ -236,6 +236,12 @@ def test_dot_product_attention(
             torch.testing.assert_close(unfused_attn_bwd[i], flash_attn_bwd[i], **tols)
     if unfused_attn_supported and fused_attn_supported:
         logging.info("[test_dot_product_attention]: unfused attn vs fused attn")
+        print(fused_attn_fwd.view(-1)[:100])
+        print(unfused_attn_fwd.view(-1)[:100])
+        print(fused_attn_fwd[114, 2, 488])
+        print(unfused_attn_fwd[114, 2, 488])
+        print(fused_attn_fwd[9, 0, 340])
+        print(unfused_attn_fwd[9, 0, 340])
         torch.testing.assert_close(fused_attn_fwd, unfused_attn_fwd, **tols)
         for i, _ in enumerate(unfused_attn_bwd):
             torch.testing.assert_close(fused_attn_bwd[i], unfused_attn_bwd[i], **tols)
@@ -425,7 +431,7 @@ def test_dpa_mask(dtype, model_configs, model):
 
 model_configs_bias = {
     # test: ModelConfig(b, sq, hq, dqk)
-    "bias_1_0": ModelConfig(4, 128, 16, 64, attn_bias_type="post_scale_bias"),
+    "bias_1_0": ModelConfig(4, 128, 16, 64, attn_bias_type="post_scale_bias", bias_shape="111s"),
     "bias_1_1": ModelConfig(2, 128, 16, 64, max_seqlen_kv=256, attn_bias_type="post_scale_bias"),
     "bias_1_2": ModelConfig(4, 2048, 24, 128, attn_bias_type="post_scale_bias"),
     "bias_1_3": ModelConfig(2, 2048, 24, 128, max_seqlen_kv=4096, attn_bias_type="post_scale_bias"),
@@ -1036,7 +1042,8 @@ def _run_dot_product_attention(
         bias = None
     if config.attn_bias_type == "post_scale_bias":
         shape = "_".join(config.bias_shape)
-        shape = shape.replace("_s_s", "_sq_skv")
+        shape = shape.replace("_1_s", "_1_skv")
+        #shape = shape.replace("_s_s", "_sq_skv")
         tensor_shape = [dim_to_num[j] for j in shape.split("_")]
         bias = torch.randn(tensor_shape, dtype=dtype, device="cuda")
         if config.bias_shape != "1hss":

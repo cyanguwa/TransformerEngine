@@ -287,6 +287,7 @@ def fused_attn_fwd(
 
     # execute kernel
 
+    print(f'dev{torch.cuda.current_device()} {attn_bias.shape}')
     output_tensors = tex.fused_attn_fwd(
         max_seqlen_q,
         max_seqlen_kv,

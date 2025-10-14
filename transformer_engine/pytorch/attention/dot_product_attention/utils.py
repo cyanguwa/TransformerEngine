@@ -1072,6 +1072,13 @@ def get_attention_backend(
         selected_backend = "UnfusedDotProductAttention"
     logger.debug("Selected backend = %s", selected_backend)
 
+    print(use_flash_attention,
+        flash_attention_backend,
+        use_fused_attention,
+        fused_attention_backend,
+        use_unfused_attention,
+        available_backends,
+        )
     return (
         use_flash_attention,
         flash_attention_backend,

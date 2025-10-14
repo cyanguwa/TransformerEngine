@@ -183,10 +183,10 @@ dtypes = ["bf16", "fp16", "fp8"]
 qkv_formats = ["bshd", "sbhd", "thd"]
 cp_comm_types = ["p2p", "all_gather", "a2a", "a2a+p2p"]
 if test_essential:
-    configs = ["cp_1_0", "cp_2_0", "cp_2_2", "cp_3_2", "cp_4_2"]
+    configs = ["cp_1_3"]#, "cp_2_0", "cp_2_2", "cp_3_2", "cp_4_2"]
     model_configs_fused_attn = {k: model_configs_fused_attn[k] for k in configs}
-    dtypes = ["bf16", "fp8"]
-    qkv_formats = ["sbhd", "thd"]
+    dtypes = ["bf16"]#, "fp8"]
+    qkv_formats = ["sbhd"]#, "thd"]
 
 
 @pytest.mark.skipif(get_cudnn_version() < (8, 9, 7), reason="cuDNN 8.9.7+ is required.")

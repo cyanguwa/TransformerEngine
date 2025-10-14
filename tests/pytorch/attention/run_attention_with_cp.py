@@ -298,8 +298,9 @@ def run_dpa_with_cp(
         x.requires_grad = True
 
     if config.attn_bias_type not in ["no_bias", "alibi"]:
-        attn_bias_shape = (1, 1, config.max_seqlen_q, config.max_seqlen_kv)
-        bias = torch.randn(*attn_bias_shape, dtype=dtypes[dtype]).cuda()
+        attn_bias_shape = (1, config.num_heads, config.max_seqlen_q, config.max_seqlen_kv)
+        bias = torch.randn(*attn_bias_shape, dtype=torch.float32).cuda()#dtypes[dtype]).cuda()
+        bias.requires_grad = True
     else:
         bias = None
 
@@ -384,6 +385,8 @@ def run_dpa_with_cp(
         )
         bias_ = bias_.index_select(2, seq_idx)
         bias_ = bias_.view(*bias_.shape[:2], -1, bias_.shape[-1])
+        bias_.requires_grad = True
+        print(f'bias_ {bias_.shape}')
     # set up environment
     core_attn.set_context_parallel_group(
         cp_comm_sub_groups if cp_comm_type == "a2a+p2p" else cp_comm_group,
