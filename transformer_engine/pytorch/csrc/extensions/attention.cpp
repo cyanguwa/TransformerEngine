@@ -91,6 +91,22 @@ std::pair<TensorWrapper, py::object> quantizer_helper(py::handle quantizer,
           !data.has_value(),
           "Float8CurrentScalingQuantizer::create_tensor() does not take data tensor as input!");
     }
+  } else if (detail::IsMXFP8Quantizers(quantizer.ptr())) {
+    // MXFP8
+    auto *T_quantizer_fp8 = dynamic_cast<MXFP8Quantizer *>(T_quantizer.get());
+    if (create_hp_tensor_for_cs) {
+      if (data.has_value()) {
+        std::tie(te_T, py_T) =
+            T_quantizer_fp8->create_unquantized_tensor_with_amax(shape, dtype, data.value());
+      } else {
+        std::tie(te_T, py_T) = T_quantizer_fp8->create_unquantized_tensor_with_amax(shape, dtype);
+      }
+    } else {
+      std::tie(te_T, py_T) = T_quantizer_fp8->create_tensor(shape, dtype);
+      NVTE_CHECK(
+          !data.has_value(),
+          "Float8CurrentScalingQuantizer::create_tensor() does not take data tensor as input!");
+    }
   }
   return {std::move(te_T), std::move(py_T)};
 }
@@ -116,6 +132,7 @@ std::vector<py::object> fused_attn_fwd(
 
   auto none = py::none();
 
+  printf(">>>>>>> Creating QKV tensor wrappers <<<<<<<\n");
   // create QKV tensor wrappers
   TensorWrapper te_Q, te_K, te_V;
   te_Q = makeTransformerEngineTensor(Q, none);
@@ -123,11 +140,13 @@ std::vector<py::object> fused_attn_fwd(
   te_V = makeTransformerEngineTensor(V, none);
   const DType qkv_type = te_Q.dtype();
 
+  printf(">>>>>> Creating S tensor wrapper <<<<<<<");
   // create S tensor
   TensorWrapper te_S;
   py::object py_S;
   std::tie(te_S, py_S) = quantizer_helper(s_quantizer, {0}, DType::kFloat32, false, std::nullopt);
 
+  printf(">>>>>> Creating O tensor wrapper <<<<<<<\n");
   // create O tensor
   TensorWrapper te_O;
   py::object py_O;
@@ -139,6 +158,7 @@ std::vector<py::object> fused_attn_fwd(
   const DType fake_dtype_te = GetTransformerEngineDType(fake_dtype);
   std::tie(te_O, py_O) = quantizer_helper(o_quantizer, o_shape, fake_dtype_te, true, std::nullopt);
 
+  printf(">>>>>> Creating Bias tensor wrapper <<<<<<<");
   // construct NVTE tensors
   TensorWrapper te_Bias;
   TensorWrapper te_cu_seqlens_q, te_cu_seqlens_kv;

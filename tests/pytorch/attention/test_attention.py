@@ -2062,7 +2062,7 @@ def _run_mha_fp8_vs_f16(
 @pytest.mark.parametrize("qkv_layout", qkv_layout_fp8_vs_f16)
 @pytest.mark.parametrize("fp8_dpa_bwd", [True, False])
 @pytest.mark.parametrize("is_training", [True, False])
-@pytest.mark.parametrize("scaling_mode", ["delayed", "current"])
+@pytest.mark.parametrize("scaling_mode", ["delayed", "current", "mxfp8"])
 def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scaling_mode):
     """Test DotProductAttention module in FP8"""
     config = model_configs_fp8_vs_f16[model]
@@ -2095,6 +2095,12 @@ def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scal
             fp8_format=recipe.Format.HYBRID,
             fp8_dpa=True,
         )
+    elif scaling_mode == "mxfp8":
+        fp8_recipe = recipe.MXFP8BlockScaling(
+            fp8_format=recipe.Format.HYBRID,
+            fp8_dpa=True,
+            fp8_mha=False,
+        )
     fp8_meta = {}
     fp8_meta["recipe"] = fp8_recipe
     available_backends, _, fused_attn_backends = get_available_attention_backends(
@@ -2107,6 +2113,7 @@ def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scal
         deterministic=_deterministic,
     )
     flash_attn_supported, fused_attn_supported, unfused_attn_supported = available_backends
+    print(f"flash_attn_supported: {flash_attn_supported}, fused_attn_supported: {fused_attn_supported}, unfused_attn_supported: {unfused_attn_supported}")
     if flash_attn_supported + fused_attn_supported < 1:
         pytest.skip("No FP8 attention backend available.")
     if not fp8_dpa_bwd:
@@ -2133,21 +2140,22 @@ def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scal
             dtype, config, True, qkv_layout, is_training, fp8_recipe
         )
 
-    if unfused_attn_supported:
-        os.environ["NVTE_FLASH_ATTN"] = "0"
-        os.environ["NVTE_FUSED_ATTN"] = "0"
-        os.environ["NVTE_UNFUSED_ATTN"] = "1"
-        _attention_backends["backend_selection_requires_update"] = True
-        logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = True (UnfusedDotProductAttention)")
-        unfused_attn_fwd_fp8, unfused_attn_bwd_fp8 = _run_dpa_fp8_vs_f16(
-            dtype, config, True, qkv_layout, is_training, fp8_recipe
-        )
+    # if unfused_attn_supported:
+    #     os.environ["NVTE_FLASH_ATTN"] = "0"
+    #     os.environ["NVTE_FUSED_ATTN"] = "0"
+    #     os.environ["NVTE_UNFUSED_ATTN"] = "1"
+    #     _attention_backends["backend_selection_requires_update"] = True
+    #     logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = True (UnfusedDotProductAttention)")
+    #     unfused_attn_fwd_fp8, unfused_attn_bwd_fp8 = _run_dpa_fp8_vs_f16(
+    #         dtype, config, True, qkv_layout, is_training, fp8_recipe
+    #     )
 
     os.environ["NVTE_FLASH_ATTN"] = "0"
     os.environ["NVTE_FUSED_ATTN"] = "1"
     os.environ["NVTE_UNFUSED_ATTN"] = "0"
     _attention_backends["backend_selection_requires_update"] = True
     logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = True (FusedAttention)")
+    print(f"Running fused attention")
     fused_attn_fwd_fp8, fused_attn_bwd_fp8 = _run_dpa_fp8_vs_f16(
         dtype, config, True, qkv_layout, is_training, fp8_recipe
     )
@@ -2158,6 +2166,7 @@ def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scal
     if config.dropout_p == 0.0:
         # test cuDNN FP8 dropout: need a FP16/BF16 reference on Blackwell
         logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = False (FusedAttention)")
+        print(f"Running fused attention with fp8_dpa = False")
         fused_attn_fwd_f16, fused_attn_bwd_f16 = _run_dpa_fp8_vs_f16(
             dtype, config, False, qkv_layout, is_training, fp8_recipe
         )

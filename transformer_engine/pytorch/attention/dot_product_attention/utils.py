@@ -40,6 +40,7 @@ from transformer_engine.pytorch.tensor.float8_tensor import (
     Float8Quantizer,
     Float8CurrentScalingQuantizer,
 )
+from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
 from transformer_engine.pytorch.quantization import get_fp8_te_dtype
 from transformer_engine.pytorch.constants import TE_DType
 
@@ -2089,14 +2090,16 @@ def get_attention_quantizers(fp8, quantizers):
     """Get the list of quantizers used in attention from the quantizers list."""
     if not fp8:
         return [None] * 6
+    columnwise = True
     QKV_quantizer = quantizers["scaling_fwd"][META_QKV]
     QKV_quantizer.internal = True
-    QKV_quantizer.set_usage(rowwise=True, columnwise=False)
+    QKV_quantizer.set_usage(rowwise=True, columnwise=columnwise)
     O_quantizer = quantizers["scaling_fwd"][META_O]
-    O_quantizer.set_usage(rowwise=True, columnwise=False)
-    S_quantizer = quantizers["scaling_fwd"][META_S]
-    S_quantizer.internal = True
-    S_quantizer.set_usage(rowwise=True, columnwise=False)
+    O_quantizer.set_usage(rowwise=True, columnwise=columnwise)
+    S_quantizer = None
+    # quantizers["scaling_fwd"][META_S]
+    # S_quantizer.internal = True
+    # S_quantizer.set_usage(rowwise=True, columnwise=columnwise)
 
     dQKV_quantizer = quantizers["scaling_bwd"][META_DQKV]
     dQKV_quantizer.interal = True
@@ -2107,6 +2110,7 @@ def get_attention_quantizers(fp8, quantizers):
     dP_quantizer = quantizers["scaling_bwd"][META_DP]
     dP_quantizer.set_usage(rowwise=True, columnwise=False)
     dP_quantizer.interal = True
+    print(f"QKV_quantizer: {QKV_quantizer}, O_quantizer: {O_quantizer}, S_quantizer: {S_quantizer}, dQKV_quantizer: {dQKV_quantizer}, dO_quantizer: {dO_quantizer}, dP_quantizer: {dP_quantizer}")
 
     return QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer
 
@@ -2160,10 +2164,17 @@ def print_quantizers(
                 type_str = "DS"
             elif isinstance(q, Float8CurrentScalingQuantizer):
                 type_str = "CS"
-            print(
-                f"{label} >> {names[i]:14s}: {type_str}, {q.scale.item():.4e} x"
-                f" {q.amax.item():.4e} = {q.scale.item()*q.amax.item():.4e}"
-            )
+            elif isinstance(q, MXFP8Quantizer):
+                type_str = "MXFP8"
+            if type_str in ["DS", "CS"]:
+                print(
+                    f"{label} >> {names[i]:14s}: {type_str}, {q.scale.item():.4e} x"
+                    f" {q.amax.item():.4e} = {q.scale.item()*q.amax.item():.4e}"
+                )
+            else:
+                print(
+                    f"{label} >> {names[i]:14s}: {type_str}"
+                )
 
 
 def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
@@ -2172,6 +2183,22 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     qkv_layout = qkv_layout.replace("paged_kv_", "")
     qkv_group = len(qkv_layout.split("_"))
     src_nominal_dtype = q.dtype
+    print(f"Combining and quantizing q, k, v: {q.shape}, {k.shape}, {v.shape}")
+    if isinstance(qkv_quantizer, MXFP8Quantizer):
+        print(f"Using MXFP8Quantizer")
+        qkv_quantizer._internal = False
+        q_fp8, k_fp8, v_fp8 = [qkv_quantizer(x) for x in [q, k, v]]
+        v_permuted = v.permute(0, 2, 3, 1).contiguous()
+        v_fp8_permuted = qkv_quantizer(v_permuted)
+        print(f"v_fp8: {v_fp8._rowwise_scale_inv.shape}")
+        print(f"v_fp8_permuted: {v_fp8_permuted._rowwise_scale_inv.shape}")
+        # v_fp8_permuted_rowwise_shape = v_fp8._rowwise_scale_inv.permute(0, 2, 3, 1).shape
+        v_fp8._rowwise_scale_inv = v_fp8_permuted._rowwise_scale_inv.view(2,16,128,-1).permute(0, 3, 1, 2)#.view(-1,128)
+        print(f"q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}, v_fp8.stride(): {v_fp8._rowwise_data.stride()}")
+        print(f"q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}, v_fp8.stride(): {v_fp8._rowwise_scale_inv.stride()}")
+        print(f"q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
+        print(f"q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
+        return q_fp8, k_fp8, v_fp8
     match qkv_group:
         case 1:
             dim = qkv_layout.find("3")

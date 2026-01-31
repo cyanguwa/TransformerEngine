@@ -1180,6 +1180,8 @@ class FusedAttnFunc(torch.autograd.Function):
             if is_input_fp8:
                 q_fp8, k_fp8, v_fp8 = q, k, v
             else:
+                print(f">>>>>>> Combining and quantizing q, k, v <<<<<<<")
+                print(f"q: {q.shape}, k: {k.shape}, v: {v.shape}")
                 q_fp8, k_fp8, v_fp8 = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
 
             # print quantizers

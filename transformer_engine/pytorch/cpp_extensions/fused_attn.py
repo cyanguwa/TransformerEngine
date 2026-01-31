@@ -16,6 +16,7 @@ from transformer_engine_torch import (
     NVTE_Fused_Attn_Backend,
 )
 from ..quantized_tensor import Quantizer
+from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
 
 
 __all__ = [
@@ -293,9 +294,10 @@ def fused_attn_fwd(
             max_seqlen_q * max_seqlen_q + BACKEND_F16m512_FP8_THREADS_PER_CTA - 1
         ) // BACKEND_F16m512_FP8_THREADS_PER_CTA
 
-        assert (
-            s_quantizer is not None
-        ), "s_quantizer is required as an input for FP8 fused attention."
+        if not isinstance(o_quantizer, MXFP8Quantizer):
+            assert (
+                s_quantizer is not None
+            ), "s_quantizer is required as an input for FP8 fused attention."
         assert (
             o_quantizer is not None
         ), "o_quantizer is required as an input for FP8 fused attention."

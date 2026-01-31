@@ -940,6 +940,18 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::create_tensor(const std::ve
   return {std::move(out_cpp), std::move(out_py)};
 }
 
+std::pair<TensorWrapper, py::object> MXFP8Quantizer::create_unquantized_tensor_with_amax(const std::vector<size_t>& shape,
+                                                                   DType dtype,
+                                                                   std::optional<at::Tensor> data) {
+  at::Tensor amax_tensor = at::zeros({1}, at::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA));
+  auto out = data.has_value() ? NoneQuantizer(py::none()).create_tensor(shape, dtype, data.value())
+                              : NoneQuantizer(py::none()).create_tensor(shape, dtype);
+  TensorWrapper out_cpp = std::move(out.first);
+  py::object out_py = std::move(out.second);
+  out_cpp.set_amax(amax_tensor.data_ptr(), DType::kFloat32, std::vector<size_t>{1});
+  return {std::move(out_cpp), std::move(out_py)};
+}
+
 std::pair<TensorWrapper, py::object> MXFP8Quantizer::convert_and_update_tensor(
     py::object tensor) const {
   NVTE_CHECK(detail::IsMXFP8Tensor(tensor.ptr()), "MXFP8Quantizer must output to MXFP8Tensor.");
