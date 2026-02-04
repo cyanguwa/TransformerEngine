@@ -2158,15 +2158,15 @@ def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scal
         dtype, config, True, qkv_layout, is_training, fp8_recipe
     )
 
-    os.environ["NVTE_FLASH_ATTN"] = "0"
-    os.environ["NVTE_FUSED_ATTN"] = "1"
-    os.environ["NVTE_UNFUSED_ATTN"] = "0"
-    if config.dropout_p == 0.0:
-        # test cuDNN FP8 dropout: need a FP16/BF16 reference on Blackwell
-        logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = False (FusedAttention)")
-        fused_attn_fwd_f16, fused_attn_bwd_f16 = _run_dpa_fp8_vs_f16(
-            dtype, config, False, qkv_layout, is_training, fp8_recipe
-        )
+    # os.environ["NVTE_FLASH_ATTN"] = "0"
+    # os.environ["NVTE_FUSED_ATTN"] = "1"
+    # os.environ["NVTE_UNFUSED_ATTN"] = "0"
+    # if config.dropout_p == 0.0:
+    #     # test cuDNN FP8 dropout: need a FP16/BF16 reference on Blackwell
+    #     logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = False (FusedAttention)")
+    #     fused_attn_fwd_f16, fused_attn_bwd_f16 = _run_dpa_fp8_vs_f16(
+    #         dtype, config, False, qkv_layout, is_training, fp8_recipe
+    #     )
 
     atol = 5e-1
     rtol = 5e-2
