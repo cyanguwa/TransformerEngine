@@ -52,6 +52,7 @@ enum NVTE_QKV_Layout {
   NVTE_Paged_KV_SBHD_SBHD_SBHD = 22, /*!< Paged_KV_SBHD_SBHD_SBHD layout */
   NVTE_Paged_KV_THD_BSHD_BSHD = 23,  /*!< Paged_KV_THD_BSHD_BSHD layout */
   NVTE_Paged_KV_THD_SBHD_SBHD = 24,  /*!< Paged_KV_THD_SBHD_SBHD layout */
+  NVTE_BSHD_BSHD_BHSD = 25,          /*!< BSHD_BSHD_BHSD layout */
 };
 
 /*! \enum NVTE_QKV_Layout_Group
@@ -70,6 +71,8 @@ enum NVTE_QKV_Layout_Group {
   NVTE_HD_HD_HD = 4,
   /*! Paged_KV_HD_HD_HD QKV layouts, e.g. Paged_KV_BSHD_BSHD_BSHD, Paged_KV_THD_SBHD_SBHD */
   NVTE_Paged_KV_HD_HD_HD = 5,
+  /*! BSHD_BSHD_BHSD QKV layouts, e.g. BSHD_BSHD_BHSD */
+  NVTE_HD_HD_SD = 6,
 };
 
 /*! \enum NVTE_QKV_Format
@@ -90,6 +93,8 @@ enum NVTE_QKV_Format {
   NVTE_THD_2BSHD = 5,
   /*! THD format for Q and SBHD format for KV, i.e. THD_SBHD_SBHD, Paged_KV_THD_SBHD_SBHD */
   NVTE_THD_2SBHD = 6,
+  /*! BSHD_BSHD_BHSD QKV format, e.g. BSHD_BSHD_BHSD */
+  NVTE_BHSD = 7,
 };
 
 /*! \enum NVTE_Bias_Type

@@ -42,6 +42,7 @@ QKVFormat = {
     "bshd_2sbhd": NVTE_QKV_Format.NVTE_BSHD_2SBHD,
     "thd_2bshd": NVTE_QKV_Format.NVTE_THD_2BSHD,
     "thd_2sbhd": NVTE_QKV_Format.NVTE_THD_2SBHD,
+    "bshd_bshd_bhsd": NVTE_QKV_Format.NVTE_BHSD,
 }
 
 QKVLayout = {
@@ -70,6 +71,7 @@ QKVLayout = {
     "paged_kv_sbhd_sbhd_sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_SBHD_SBHD_SBHD,
     "paged_kv_thd_bshd_bshd": NVTE_QKV_Layout.NVTE_Paged_KV_THD_BSHD_BSHD,
     "paged_kv_thd_sbhd_sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_THD_SBHD_SBHD,
+    "bshd_bshd_bhsd": NVTE_QKV_Layout.NVTE_BSHD_BSHD_BHSD,
 }
 
 AttnBiasType = {

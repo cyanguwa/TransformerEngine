@@ -1659,8 +1659,8 @@ void fused_attn_fp8_fwd_impl_v1(
     void* devPtrDescaleV, void* devPtrDescaleS, void* devPtrScaleS, void* devPtrScaleO,
     void* devPtrAmaxO, void* devPtrAmaxS, void* devPtrcuSeqlensQ, void* devPtrcuSeqlensKV,
     void* devPtrDropoutSeed, void* devPtrDropoutOffset, cudnn_frontend::DataType_t qkv_tensor_type,
-    cudnn_frontend::DataType_t o_tensor_type, void* workspace, size_t* workspace_size,
-    cudaStream_t stream, cudnnHandle_t handle) {
+    cudnn_frontend::DataType_t o_tensor_type, NVTEScalingMode scaling_mode, void* workspace,
+    size_t* workspace_size, cudaStream_t stream, cudnnHandle_t handle) {
   using namespace transformer_engine;
   bool is_bias = (bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS);
   bool is_alibi = (bias_type == NVTE_Bias_Type::NVTE_ALIBI);
@@ -1673,16 +1673,15 @@ void fused_attn_fp8_fwd_impl_v1(
   auto bias_h = h;
   NVTE_CHECK(~is_bias, "FP8 fused attention does not support pre/post_scale_bias yet!");
   NVTE_CHECK(~is_alibi, "FP8 fused attention does not support ALiBi yet!");
-  bool is_current_scaling = (o_tensor_type == cudnn_frontend::DataType_t::HALF ||
-                             o_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
-  bool is_delayed_scaling = (o_tensor_type == cudnn_frontend::DataType_t::FP8_E4M3 ||
+  bool is_delayed_scaling = (scaling_mode == NVTE_DELAYED_TENSOR_SCALING) && (o_tensor_type == cudnn_frontend::DataType_t::FP8_E4M3 ||
                              o_tensor_type == cudnn_frontend::DataType_t::FP8_E5M2);
-  // NVTE_CHECK(is_current_scaling || is_delayed_scaling,
-  //            "FP8 fused attention only supports O tensor in kFloat16, kBFloat16, kFloat8E4M3 or "
-  //            "kFloat8E5M2!");
-  is_current_scaling = false;
-  is_delayed_scaling = false;
-  bool is_mxfp8 = true;
+  bool is_current_scaling = (scaling_mode == NVTE_DELAYED_TENSOR_SCALING) && (o_tensor_type == cudnn_frontend::DataType_t::HALF ||
+                             o_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
+  bool is_mxfp8 = (scaling_mode == NVTE_MXFP8_1D_SCALING) && (o_tensor_type == cudnn_frontend::DataType_t::HALF ||
+                  o_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
+  NVTE_CHECK(is_delayed_scaling || is_current_scaling || is_mxfp8,
+             "FP8 fused attention only supports FP8DelayedScaling or FP8CurrentScaling or MXFP8 recipes!");
+  printf(">>>>>> scaling_mode: %d\n", scaling_mode);
   printf(">>>>>> is_mxfp8: %d\n", is_mxfp8);
   printf(">>>>>> is_current_scaling: %d\n", is_current_scaling);
   printf(">>>>>> is_delayed_scaling: %d\n", is_delayed_scaling);
@@ -1697,6 +1696,7 @@ void fused_attn_fp8_fwd_impl_v1(
   printf(">>>>>> mask_type: %d\n", mask_type);
   printf(">>>>>> scaling_factor: %f\n", scaling_factor);
   printf(">>>>>> dropout_probability: %f\n", dropout_probability);
+  is_mxfp8 = true;
   // qkv_tensor_type = cudnn_frontend::DataType_t::FP8_E8M0;
   // o_tensor_type = cudnn_frontend::DataType_t::BFLOAT16;
   // printf(">>>>>> after setting qkv_tensor_type and o_tensor_type\n");
@@ -1783,6 +1783,7 @@ void fused_attn_fp8_fwd_impl_v1(
       std::shared_ptr<fe::graph::Tensor_attributes> bias, seq_q, seq_kv;
       std::shared_ptr<fe::graph::Tensor_attributes> dropout_seed, dropout_offset;
 
+      printf(">>>>>> layout: %d\n", layout);
       std::vector<int64_t> q_stride(4);
       std::vector<int64_t> k_stride(4);
       std::vector<int64_t> v_stride(4);
@@ -2030,16 +2031,18 @@ void fused_attn_fp8_fwd_impl_v1(
         {descale_q, devPtrDescaleQ},
         {descale_k, devPtrDescaleK},
         {descale_v, devPtrDescaleV},
-        {descale_s, devPtrDescaleS},
-        {scale_s, devPtrScaleS},
         {attn_scale, &scaling_factor},
         {O, devPtrO},
-        {amax_s, devPtrAmaxS},
         {amax_o, devPtrAmaxO},
         {Stats, devPtrM}};
 
     if (is_delayed_scaling) {
       variant_pack[scale_o] = devPtrScaleO;
+    }
+    if (!is_mxfp8) {
+      variant_pack[descale_s] = devPtrDescaleS;
+      variant_pack[scale_s] = devPtrScaleS;
+      variant_pack[amax_s] = devPtrAmaxS;
     }
 
     /* if (is_bias) {
@@ -2548,14 +2551,19 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
     devPtrDescaleK = input_K->scale_inv.dptr;
     devPtrV = input_V->data.dptr;
     devPtrDescaleV = input_V->scale_inv.dptr;
+    // devPtrV = input_V->columnwise_data.dptr;
+    // devPtrDescaleV = input_V->columnwise_scale_inv.dptr;
     devPtrO = output_O->data.dptr;
     devPtrAmaxO = output_O->amax.dptr;
-    devPtrScaleO = output_O->scale.dptr;
-    devPtrAmaxS = input_output_S->amax.dptr;
-    devPtrScaleS = input_output_S->scale.dptr;
-    devPtrDescaleS = input_output_S->scale_inv.dptr;  
+    // devPtrScaleO = output_O->scale.dptr;
+    // devPtrAmaxS = input_output_S->amax.dptr;
+    // devPtrScaleS = input_output_S->scale.dptr;
+    // devPtrDescaleS = input_output_S->scale_inv.dptr;  
   // }
-
+  printf(">>>>>> scaling_mode: %d\n", input_Q->scaling_mode);
+  printf(">>>>>> scaling_mode: %d\n", input_K->scaling_mode);
+  printf(">>>>>> scaling_mode: %d\n", input_V->scaling_mode);
+  printf(">>>>>> scaling_mode: %d\n", output_O->scaling_mode);
   void* devPtrM = nullptr;
   void* devPtrZInv = nullptr;
   if (Aux_CTX_Tensors->size == 0) {
@@ -2604,7 +2612,8 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
         devPtrZInv, devPtrO, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS,
         devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlensQ, devPtrcuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type),
-        get_cudnn_fe_dtype(O_type), workspace->data.dptr, &workspace_size, stream, handle);
+        get_cudnn_fe_dtype(O_type), input_Q->scaling_mode, workspace->data.dptr, &workspace_size,
+        stream, handle);
   } else if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
     fused_attn::fused_attn_fp8_fwd_impl(
         batch, num_attn_heads, max_seqlen_q, max_seqlen_kv, head_dim, is_training, attn_scale,
