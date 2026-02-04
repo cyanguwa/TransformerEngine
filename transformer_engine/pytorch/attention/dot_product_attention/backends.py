@@ -35,6 +35,7 @@ from transformer_engine.pytorch.quantized_tensor import (
     restore_from_saved,
 )
 from transformer_engine.pytorch.tensor.float8_tensor import Float8Tensor
+from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Tensor
 from transformer_engine.pytorch.constants import (
     TE_DType,
     QKVLayouts,
@@ -168,7 +169,7 @@ class FP8EmulationFunc(torch.autograd.Function):
             query_layer, key_layer, value_layer = [
                 x.contiguous() for x in [tensor1, tensor2, tensor3]
             ]
-            q_fp8, k_fp8, v_fp8 = combine_and_quantize(
+            q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(
                 qkv_layout, query_layer, key_layer, value_layer, quantizer
             )
             tensors = combine_and_dequantize(
@@ -192,7 +193,7 @@ class FP8EmulationFunc(torch.autograd.Function):
             tensors = dt_fp8.dequantize(dtype=grad1.dtype), grad2, grad3
         elif ctx.quantizer_name == "dQKV_quantizer":
             query_grad, key_grad, value_grad = [x.contiguous() for x in [grad1, grad2, grad3]]
-            dq_fp8, dk_fp8, dv_fp8 = combine_and_quantize(
+            dq_fp8, dk_fp8, dv_fp8, ctx.qkv_layout = combine_and_quantize(
                 ctx.qkv_layout, query_grad, key_grad, value_grad, ctx.quantizer
             )
             tensors = combine_and_dequantize(
@@ -1180,9 +1181,7 @@ class FusedAttnFunc(torch.autograd.Function):
             if is_input_fp8:
                 q_fp8, k_fp8, v_fp8 = q, k, v
             else:
-                print(f">>>>>>> Combining and quantizing q, k, v <<<<<<<")
-                print(f"q: {q.shape}, k: {k.shape}, v: {v.shape}")
-                q_fp8, k_fp8, v_fp8 = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
+                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
 
             # print quantizers
             print_quantizers(
@@ -1237,11 +1236,17 @@ class FusedAttnFunc(torch.autograd.Function):
             # out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
             out_fp8 = out_
             out = out_
-
-            if isinstance(out_, Float8Tensor):
+            print(f"out_: {type(out_)} {out_.shape}")
+            print(f"is_output_fp8: {is_output_fp8}")
+            print(f"is_bwd_fp8: {is_bwd_fp8}")
+            print(f"fp8_recipe.float8_current_scaling(): {fp8_recipe.float8_current_scaling()}")
+            print(f"_dpa_fp8_cs_o_in_f16: {_dpa_fp8_cs_o_in_f16}")
+            if isinstance(out_, Float8Tensor) or isinstance(out_, MXFP8Tensor):
+                print(f"dequantizing out_")
                 if not is_output_fp8 or not is_bwd_fp8:
                     out = out_.dequantize().view(out_.shape)
             else:
+                print(f"quantizing out_")
                 if is_output_fp8 or (
                     is_bwd_fp8
                     and not (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16)
@@ -1562,7 +1567,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         )
                     if not is_float8tensor and ctx.is_input_fp8:
                         # return in FP8
-                        dq, dk, dv = combine_and_quantize(
+                        dq, dk, dv, ctx.qkv_layout = combine_and_quantize(
                             ctx.qkv_layout, dq_, dk_, dv_, ctx.dQKV_quantizer
                         )
 

@@ -132,7 +132,6 @@ std::vector<py::object> fused_attn_fwd(
 
   auto none = py::none();
 
-  printf(">>>>>>> Creating QKV tensor wrappers <<<<<<<\n");
   // create QKV tensor wrappers
   TensorWrapper te_Q, te_K, te_V;
   te_Q = makeTransformerEngineTensor(Q, none);
@@ -140,13 +139,11 @@ std::vector<py::object> fused_attn_fwd(
   te_V = makeTransformerEngineTensor(V, none);
   const DType qkv_type = te_Q.dtype();
 
-  printf(">>>>>> Creating S tensor wrapper <<<<<<<");
   // create S tensor
   TensorWrapper te_S;
   py::object py_S;
   std::tie(te_S, py_S) = quantizer_helper(s_quantizer, {0}, DType::kFloat32, false, std::nullopt);
 
-  printf(">>>>>> Creating O tensor wrapper <<<<<<<\n");
   // create O tensor
   TensorWrapper te_O;
   py::object py_O;
@@ -158,7 +155,6 @@ std::vector<py::object> fused_attn_fwd(
   const DType fake_dtype_te = GetTransformerEngineDType(fake_dtype);
   std::tie(te_O, py_O) = quantizer_helper(o_quantizer, o_shape, fake_dtype_te, true, std::nullopt);
 
-  printf(">>>>>> Creating Bias tensor wrapper <<<<<<<");
   // construct NVTE tensors
   TensorWrapper te_Bias;
   TensorWrapper te_cu_seqlens_q, te_cu_seqlens_kv;

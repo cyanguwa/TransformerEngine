@@ -293,7 +293,7 @@ void generateMatrixStrides(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int6
         strideA[hidden_dim_idx] = 1;
       }
       break;
-    case NVTE_QKV_Layout::NVTE_BSHD_BSHD_BHSD:
+    case NVTE_QKV_Layout::NVTE_BSHD_BSHD_BHDS:
       if ((matrix == NVTE_QKV_Matrix::NVTE_Q_Matrix) ||
           (matrix == NVTE_QKV_Matrix::NVTE_O_Matrix)) {
         strideA[batch_dim_idx] = s_q * h * d;
@@ -310,10 +310,16 @@ void generateMatrixStrides(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int6
         strideA[head_dim_idx] = d * s_kv;
         strideA[seqlen_dim_idx] = 1;
         strideA[hidden_dim_idx] = s_kv;
-        // strideA[batch_dim_idx] = h * s_kv * d;
-        // strideA[head_dim_idx] = s_kv * d;
-        // strideA[seqlen_transpose_dim_idx] = d;
-        // strideA[hidden_transpose_dim_idx] = 1;
+      } else if (matrix == NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose) {
+        strideA[batch_dim_idx] = s_kv * h * d;
+        strideA[head_dim_idx] = d;
+        strideA[seqlen_transpose_dim_idx] = 1;
+        strideA[hidden_transpose_dim_idx] = h * d;
+      } else if (matrix == NVTE_QKV_Matrix::NVTE_V_Matrix_Transpose) {
+        strideA[batch_dim_idx] = s_kv * h * d;
+        strideA[head_dim_idx] = d * s_kv;
+        strideA[seqlen_transpose_dim_idx] = s_kv;
+        strideA[hidden_transpose_dim_idx] = 1;
       }
       break;
 }

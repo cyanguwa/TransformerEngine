@@ -42,7 +42,7 @@ QKVFormat = {
     "bshd_2sbhd": NVTE_QKV_Format.NVTE_BSHD_2SBHD,
     "thd_2bshd": NVTE_QKV_Format.NVTE_THD_2BSHD,
     "thd_2sbhd": NVTE_QKV_Format.NVTE_THD_2SBHD,
-    "bshd_bshd_bhsd": NVTE_QKV_Format.NVTE_BHSD,
+    "bshd_bshd_bhds": NVTE_QKV_Format.NVTE_BHDS,
 }
 
 QKVLayout = {
@@ -71,7 +71,7 @@ QKVLayout = {
     "paged_kv_sbhd_sbhd_sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_SBHD_SBHD_SBHD,
     "paged_kv_thd_bshd_bshd": NVTE_QKV_Layout.NVTE_Paged_KV_THD_BSHD_BSHD,
     "paged_kv_thd_sbhd_sbhd": NVTE_QKV_Layout.NVTE_Paged_KV_THD_SBHD_SBHD,
-    "bshd_bshd_bhsd": NVTE_QKV_Layout.NVTE_BSHD_BSHD_BHSD,
+    "bshd_bshd_bhds": NVTE_QKV_Layout.NVTE_BSHD_BSHD_BHDS,
 }
 
 AttnBiasType = {
@@ -295,14 +295,6 @@ def fused_attn_fwd(
         rng_elts_per_thread = (
             max_seqlen_q * max_seqlen_q + BACKEND_F16m512_FP8_THREADS_PER_CTA - 1
         ) // BACKEND_F16m512_FP8_THREADS_PER_CTA
-
-        if not isinstance(o_quantizer, MXFP8Quantizer):
-            assert (
-                s_quantizer is not None
-            ), "s_quantizer is required as an input for FP8 fused attention."
-        assert (
-            o_quantizer is not None
-        ), "o_quantizer is required as an input for FP8 fused attention."
     else:
         raise ValueError(f"Unsupported backend {fused_attention_backend}")
 
@@ -501,12 +493,6 @@ def fused_attn_bwd(
         ), "aux_ctx_tensors must contain rng_state as its last element."
 
     if fused_attention_backend == FusedAttnBackend["FP8"]:
-        assert (
-            s_quantizer is not None
-        ), "s_quantizer is required as an input for FP8 fused attention backward."
-        assert (
-            dp_quantizer is not None
-        ), "dp_quantizer is required as an input for FP8 fused attention backward."
         assert (
             dqkv_dtype is not None
         ), "dqkv_dtype is required as an input for FP8 fused attention backward."

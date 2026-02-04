@@ -2090,28 +2090,27 @@ def get_attention_quantizers(fp8, quantizers):
     """Get the list of quantizers used in attention from the quantizers list."""
     if not fp8:
         return [None] * 6
-    is_fwd = True
-    is_bwd = True
     QKV_quantizer = quantizers["scaling_fwd"][META_QKV]
     QKV_quantizer.internal = True
     QKV_quantizer.set_usage(rowwise=True, columnwise=True)
     O_quantizer = quantizers["scaling_fwd"][META_O]
-    O_quantizer.set_usage(rowwise=True, columnwise=True)
-    S_quantizer = None
-    # quantizers["scaling_fwd"][META_S]
-    # S_quantizer.internal = True
-    # S_quantizer.set_usage(rowwise=True, columnwise=columnwise)
+    O_quantizer.set_usage(rowwise=True, columnwise=False)
+    if isinstance(QKV_quantizer, MXFP8Quantizer):
+        S_quantizer = None
+    else:
+        S_quantizer = quantizers["scaling_fwd"][META_S]
+        S_quantizer.internal = True
+        S_quantizer.set_usage(rowwise=True, columnwise=False)
 
     dQKV_quantizer = quantizers["scaling_bwd"][META_DQKV]
     dQKV_quantizer.interal = True
-    dQKV_quantizer.set_usage(rowwise=True, columnwise=True)
+    dQKV_quantizer.set_usage(rowwise=True, columnwise=False)
     dO_quantizer = quantizers["scaling_bwd"][META_DO]
-    dO_quantizer.set_usage(rowwise=True, columnwise=True)
+    dO_quantizer.set_usage(rowwise=True, columnwise=False)
     dO_quantizer.internal = True
     dP_quantizer = quantizers["scaling_bwd"][META_DP]
     dP_quantizer.set_usage(rowwise=True, columnwise=False)
     dP_quantizer.interal = True
-    print(f"QKV_quantizer: {QKV_quantizer}, O_quantizer: {O_quantizer}, S_quantizer: {S_quantizer}, dQKV_quantizer: {dQKV_quantizer}, dO_quantizer: {dO_quantizer}, dP_quantizer: {dP_quantizer}")
 
     return QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer
 
@@ -2187,38 +2186,25 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     src_nominal_dtype = q.dtype
     print(f"Combining and quantizing q, k, v: {q.shape}, {k.shape}, {v.shape}")
     if isinstance(qkv_quantizer, MXFP8Quantizer):
-        print(f"Using MXFP8Quantizer")
         qkv_quantizer._internal = False
         dim_s = qkv_format.find("s") if 's' in qkv_format else qkv_format.find("t")
         dim_others = [i for i in range(len(v.shape)) if i != dim_s]
         perm = [*dim_others, dim_s]
         # perm = [*dim_others[:-1], dim_s, dim_others[-1]]
         v = v.permute(*perm).contiguous()
-        qkv_layout = "bshd_bshd_bhsd"
-        # inv = [0] * len(perm)
-        # for i, p in enumerate(perm):
-        #     inv[p] = i
+        qkv_layout = "bshd_bshd_bhds"
+        inv = [0] * len(perm)
+        for i, p in enumerate(perm):
+            inv[p] = i
         # v = v.permute(*inv)
         q_fp8, k_fp8, v_fp8 = [qkv_quantizer(x) for x in [q, k, v]]
+        v_fp8._rowwise_data = v_fp8._rowwise_data.permute(*inv).contiguous()
         print(f"q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
         print(f"q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
         print(f"q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
         print(f"q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
-        # v_fp8._rowwise_data = v_fp8._rowwise_data.permute(*inv)
-        return q_fp8, k_fp8, v_fp8
+        return q_fp8, k_fp8, v_fp8, qkv_layout
 
-        # q_fp8, k_fp8, v_fp8 = [qkv_quantizer(x) for x in [q, k, v]]
-        # v_permuted = v.permute(0, 2, 3, 1).contiguous()
-        # v_fp8_permuted = qkv_quantizer(v_permuted)
-        # print(f"v_fp8: {v_fp8._rowwise_scale_inv.shape}")
-        # print(f"v_fp8_permuted: {v_fp8_permuted._rowwise_scale_inv.shape}")
-        # # v_fp8_permuted_rowwise_shape = v_fp8._rowwise_scale_inv.permute(0, 2, 3, 1).shape
-        # v_fp8._rowwise_scale_inv = v_fp8_permuted._rowwise_scale_inv.view(2,16,128,-1).permute(0, 3, 1, 2)#.view(-1,128)
-        # print(f"q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}, v_fp8.stride(): {v_fp8._rowwise_data.stride()}")
-        # print(f"q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}, v_fp8.stride(): {v_fp8._rowwise_scale_inv.stride()}")
-        # print(f"q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
-        # print(f"q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
-        # return q_fp8, k_fp8, v_fp8
     match qkv_group:
         case 1:
             dim = qkv_layout.find("3")

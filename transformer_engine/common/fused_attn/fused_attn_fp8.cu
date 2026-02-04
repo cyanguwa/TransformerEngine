@@ -1696,12 +1696,6 @@ void fused_attn_fp8_fwd_impl_v1(
   printf(">>>>>> mask_type: %d\n", mask_type);
   printf(">>>>>> scaling_factor: %f\n", scaling_factor);
   printf(">>>>>> dropout_probability: %f\n", dropout_probability);
-  is_mxfp8 = true;
-  // qkv_tensor_type = cudnn_frontend::DataType_t::FP8_E8M0;
-  // o_tensor_type = cudnn_frontend::DataType_t::BFLOAT16;
-  // printf(">>>>>> after setting qkv_tensor_type and o_tensor_type\n");
-  // printf(">>>>>> qkv_tensor_type: %d\n", qkv_tensor_type);
-  // printf(">>>>>> o_tensor_type: %d\n", o_tensor_type);
 
   try {
     FADescriptor_v1 descriptor{b,
@@ -1792,7 +1786,7 @@ void fused_attn_fp8_fwd_impl_v1(
       generateMatrixStrides(b, hg, s_q, s_kv, d, k_stride.data(), layout,
                             NVTE_QKV_Matrix::NVTE_K_Matrix);
       generateMatrixStrides(b, hg, s_q, s_kv, d, v_stride.data(), layout,
-                            NVTE_QKV_Matrix::NVTE_V_Matrix);
+                            NVTE_QKV_Matrix::NVTE_K_Matrix); // need to double check 
       printf(">>>>>> q_stride: %d, %d, %d, %d\n", q_stride[0], q_stride[1], q_stride[2], q_stride[3]);
       printf(">>>>>> k_stride: %d, %d, %d, %d\n", k_stride[0], k_stride[1], k_stride[2], k_stride[3]);
       printf(">>>>>> v_stride: %d, %d, %d, %d\n", v_stride[0], v_stride[1], v_stride[2], v_stride[3]);
@@ -1804,7 +1798,7 @@ void fused_attn_fp8_fwd_impl_v1(
       int64_t s_kv_padded       = ((s_kv + 127) / 128) * 128;
       int64_t d_scale_padded = ((d_scale + 3) / 4) * 4;
       int64_t s_kv_scale_padded = ((s_kv_scale + 3) / 4) * 4;
-      int64_t d_padded       = ((d + 3) / 4) * 4;  // d dimension for SF_V (not scaled, but may need padding)
+      int64_t d_padded       = ((d + 3) / 4) * 4;
       printf(">>>>>> d_scale: %d, s_kv_scale: %d, s_q_padded: %d, s_kv_padded: %d, d_scale_padded: %d, s_kv_scale_padded: %d, d_padded: %d\n", d_scale, s_kv_scale, s_q_padded, s_kv_padded, d_scale_padded, s_kv_scale_padded, d_padded);
       std::vector<int64_t> q_scale_dims = {b, h, s_q_padded, d_scale_padded};
       std::vector<int64_t> k_scale_dims = {b, hg, s_kv_padded, d_scale_padded};
@@ -1816,13 +1810,8 @@ void fused_attn_fp8_fwd_impl_v1(
                             NVTE_QKV_Matrix::NVTE_Q_Matrix);
       generateMatrixStrides(b, hg, s_q_padded, s_kv_padded, d_scale_padded, k_scale_strides.data(), layout,
                             NVTE_QKV_Matrix::NVTE_K_Matrix);
-//      generateMatrixStrides(b, d_padded, s_q_padded, hg, s_kv_scale_padded, v_scale_strides.data(), layout,
-      // generateMatrixStrides(b, hg, s_q_padded, s_kv_scale_padded, d_padded, v_scale_strides.data(), layout,
-      // NVTE_QKV_Matrix::NVTE_V_Matrix);
-      v_scale_strides[0] = h*d_padded*s_kv_scale_padded;
-      v_scale_strides[1] = d_padded*s_kv_scale_padded;
-      v_scale_strides[2] = 1;
-      v_scale_strides[3] = s_kv_scale_padded;
+      generateMatrixStrides(b, hg, s_q_padded, s_kv_scale_padded, d_padded, v_scale_strides.data(), layout,
+                           NVTE_QKV_Matrix::NVTE_V_Matrix);
       printf(">>>>>> q_scale_strides: %d, %d, %d, %d\n", q_scale_strides[0], q_scale_strides[1], q_scale_strides[2], q_scale_strides[3]);
       printf(">>>>>> k_scale_strides: %d, %d, %d, %d\n", k_scale_strides[0], k_scale_strides[1], k_scale_strides[2], k_scale_strides[3]);
       printf(">>>>>> v_scale_strides: %d, %d, %d, %d\n", v_scale_strides[0], v_scale_strides[1], v_scale_strides[2], v_scale_strides[3]);
@@ -1977,8 +1966,8 @@ void fused_attn_fp8_fwd_impl_v1(
                  std::shared_ptr<fe::graph::Tensor_attributes>,  // O
                  std::shared_ptr<fe::graph::Tensor_attributes>,  // amax_s
                  std::shared_ptr<fe::graph::Tensor_attributes>>  // amax_o
-          key_tensors_tuple = 
-            is_mxfp8 ? std::make_tuple(Q, K, V, descale_q, descale_k, descale_v, nullptr, nullptr, nullptr, attn_scale, O, nullptr, amax_o) : 
+          key_tensors_tuple =
+            is_mxfp8 ? std::make_tuple(Q, K, V, descale_q, descale_k, descale_v, nullptr, nullptr, nullptr, attn_scale, O, nullptr, amax_o) :
             std::make_tuple(Q, K, V, descale_q, descale_k, descale_v, descale_s,
                                               scale_s, scale_o, attn_scale, O, amax_s, amax_o);
       auto Stats_tuple = std::make_tuple(Stats);
@@ -1997,7 +1986,7 @@ void fused_attn_fp8_fwd_impl_v1(
       NVTE_CHECK_CUDNN_FE(mha_graph->check_support(handle));
       printf(">>>>>> mha_graph->check_support(handle)\n");
       NVTE_CHECK_CUDNN_FE(mha_graph->build_plans(handle));
-      printf(">>>>>> mha_graph->build_plans(handle)\n");  
+      printf(">>>>>> mha_graph->build_plans(handle)\n");
       printf(">>>>>> mha_graph->get_workspace_size(): %zu\n", mha_graph->get_workspace_size());
       auto return_tuple = std::tuple_cat(std::make_tuple(mha_graph), key_tensors_tuple, Stats_tuple,
                                          bias_tuple, padding_tuple, dropout_tuple);
@@ -2532,19 +2521,8 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   void* devPtrAmaxS = nullptr;
   void* devPtrScaleS = nullptr;
   void* devPtrDescaleS = nullptr;
-  printf(">>>>>> fused_attn_fp8_fwd\n");
-  // if (input_Q->scaling_mode() == NVTE_MXFP8_1D_SCALING) {
-  //   printf(">>>>>> input_Q is MXFP8\n");
-  //   devPtrQ = input_Q->
-  //   devPtrQ = input_Q->get_rowwise_data_ptr();
-  //   devPtrDescaleQ = input_Q->get_rowwise_scale_inv_ptr();
-  //   devPtrK = input_K->get_rowwise_data_ptr();
-  //   devPtrDescaleK = input_K->get_rowwise_scale_inv_ptr();
-  //   devPtrV = input_V->get_rowwise_data_ptr();
-  //   devPtrDescaleV = input_V->get_rowwise_scale_inv_ptr();
-  //   devPtrO = output_O->get_rowwise_data_ptr();
-  //   devPtrAmaxO = output_O->amax.dptr;
-  // } else {
+  if (input_Q->scaling_mode == NVTE_MXFP8_1D_SCALING) {
+    printf(">>>>>> input_Q is MXFP8_1D_SCALING\n");
     devPtrQ = input_Q->data.dptr;
     devPtrDescaleQ = input_Q->scale_inv.dptr;
     devPtrK = input_K->data.dptr;
@@ -2555,15 +2533,21 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
     // devPtrDescaleV = input_V->columnwise_scale_inv.dptr;
     devPtrO = output_O->data.dptr;
     devPtrAmaxO = output_O->amax.dptr;
-    // devPtrScaleO = output_O->scale.dptr;
-    // devPtrAmaxS = input_output_S->amax.dptr;
-    // devPtrScaleS = input_output_S->scale.dptr;
-    // devPtrDescaleS = input_output_S->scale_inv.dptr;  
-  // }
-  printf(">>>>>> scaling_mode: %d\n", input_Q->scaling_mode);
-  printf(">>>>>> scaling_mode: %d\n", input_K->scaling_mode);
-  printf(">>>>>> scaling_mode: %d\n", input_V->scaling_mode);
-  printf(">>>>>> scaling_mode: %d\n", output_O->scaling_mode);
+  } else {
+    printf(">>>>>> input_Q is not MXFP8_1D_SCALING\n");
+    devPtrQ = input_Q->data.dptr;
+    devPtrDescaleQ = input_Q->scale_inv.dptr;
+    devPtrK = input_K->data.dptr;
+    devPtrDescaleK = input_K->scale_inv.dptr;
+    devPtrV = input_V->data.dptr;
+    devPtrDescaleV = input_V->scale_inv.dptr;
+    devPtrO = output_O->data.dptr;
+    devPtrAmaxO = output_O->amax.dptr;
+    devPtrScaleO = output_O->scale.dptr;
+    devPtrAmaxS = input_output_S->amax.dptr;
+    devPtrScaleS = input_output_S->scale.dptr;
+    devPtrDescaleS = input_output_S->scale_inv.dptr;    
+  }
   void* devPtrM = nullptr;
   void* devPtrZInv = nullptr;
   if (Aux_CTX_Tensors->size == 0) {
@@ -2605,7 +2589,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   size_t workspace_size = 0;
 
   NVTE_QKV_Format qkv_format = nvte_get_qkv_format(qkv_layout);
-  if ((qkv_format == NVTE_QKV_Format::NVTE_BSHD) || (qkv_format == NVTE_QKV_Format::NVTE_SBHD)) {
+  if ((qkv_format == NVTE_QKV_Format::NVTE_BSHD) || (qkv_format == NVTE_QKV_Format::NVTE_SBHD) || (qkv_format == NVTE_QKV_Format::NVTE_BHDS)) {
     fused_attn::fused_attn_fp8_fwd_impl_v1(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim, is_training,
         attn_scale, p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM,
