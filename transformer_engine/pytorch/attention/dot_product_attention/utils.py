@@ -40,7 +40,8 @@ from transformer_engine.pytorch.tensor.float8_tensor import (
     Float8Quantizer,
     Float8CurrentScalingQuantizer,
 )
-from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
+from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer, MXFP8Tensor
+from transformer_engine.pytorch.tensor.storage.grouped_tensor import GroupedTensor
 from transformer_engine.pytorch.quantization import get_fp8_te_dtype
 from transformer_engine.pytorch.constants import TE_DType
 
@@ -2192,24 +2193,131 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
         q,k,v = [x.contiguous() for x in [q, k, v]]
 
         # bshd_bshd_bhsd -> bhsd_bhsd_bhsd
+        # thd_thd_thd -> htd_htd_htd
         qkv_quantizer.optimize_for_gemm = True
         qkv_quantizer._internal = False
         dim_s = qkv_format.find("s") if 's' in qkv_format else qkv_format.find("t")
-        dim_others = [i for i in range(len(v.shape)) if i != dim_s]
-        perm = [*dim_others, dim_s]
-        # perm = [*dim_others[:-1], dim_s, dim_others[-1]]
-        v = v.permute(*perm).contiguous()
-        qkv_layout = "bshd_bshd_bhds"
-        inv = [0] * len(perm)
-        for i, p in enumerate(perm):
-            inv[p] = i
-        # v = v.permute(*inv)
-        q_fp8, k_fp8, v_fp8 = [qkv_quantizer(x) for x in [q, k, v]]
-        v_fp8._rowwise_data = v_fp8._rowwise_data.permute(*inv).contiguous()
+        def permute_x(x):
+            dim_others = [i for i in range(len(x.shape)) if i != dim_s]
+            perm = [*dim_others[:-1], dim_s, dim_others[-1]]
+            x = x.permute(*perm).contiguous()
+            return x
+        q, k, v = [permute_x(x) for x in [q, k, v]]
+        # consider bhsd for now
+        batch_size, num_heads = q.shape[0], q.shape[1]
+        seq_len, head_dim = q.shape[-2], q.shape[-1]
+        num_tensors = 3 * batch_size * num_heads
+        # qkv = torch.cat([q, k, v], dim=0).reshape(num_tensors, seq_len, head_dim)
+        # qkv_list = [qkv[i] for i in range(num_tensors)]
+        # print(f">>>>>>>>>>>> num_tensors: {num_tensors}")
+        shapes = [(seq_len, head_dim) for _ in range(num_tensors)]
+        quantizers = [qkv_quantizer] * num_tensors
+        grouped_input = GroupedTensor.make_grouped_tensor_with_shapes(
+            num_tensors=num_tensors,
+            shape=shapes,
+            quantizers=None,
+            device="cuda",
+            dtype=src_nominal_dtype,
+        )
+        offset = 0
+        for x in [q, k, v]:
+            numel = x.numel()
+            grouped_input.data[offset : offset + numel].copy_(x.reshape(-1))
+            offset += numel
+        grouped_output = GroupedTensor.make_grouped_tensor_with_shapes(
+            num_tensors=num_tensors,
+            shape=shapes,
+            quantizers=quantizers,
+            device="cuda",
+        )
+        _ = tex.quantize_grouped(grouped_input, grouped_output)
+        print(f">>>>>>>>>>>> grouped_output: {grouped_output.data.shape if grouped_output.data is not None else None}")
+        print(f">>>>>>>>>>>> grouped_output: {grouped_output.scale_inv.shape if grouped_output.scale_inv is not None else None}")
+        print(f">>>>>>>>>>>> grouped_output: {grouped_output.columnwise_data.shape if grouped_output.columnwise_data is not None else None}")
+        print(f">>>>>>>>>>>> grouped_output: {grouped_output.columnwise_scale_inv.shape if grouped_output.columnwise_scale_inv is not None else None}")
+        # grouped_output_list = [grouped_output[i] for i in range(num_tensors)]
+        # q_fp8, k_fp8, v_fp8 = grouped_output_list[0:32], grouped_output_list[32:64], grouped_output_list[64:]
+        # grouped_output.num_tensors = 3
+        # grouped_output.quantizers = [qkv_quantizer] * 3
+        # grouped_output.shape = [(batch_size * num_heads * seq_len, head_dim) for _ in range(3)]
+        # grouped_output.dtype = src_nominal_dtype
+        # grouped_output.data = torch.cat([x.reshape(-1) for x in [q, k, v]], dim=0)
+        # q_fp8, k_fp8, v_fp8 = grouped_output.split_into_quantized_tensors()
+
+        def split_qkv(grouped_tensor, num_tensors):
+            rowwise_shape = q.shape
+            rowwise_scale_inv_shape = (*q.shape[:-1], q.shape[-1]//32)
+            columnwise_shape = q.shape
+            columnwise_scale_inv_shape = (*q.shape[:-2], q.shape[-2]//32, q.shape[-1])
+            rowwise_data = grouped_tensor.data.view(num_tensors, *rowwise_shape).split([1] * num_tensors)
+            rowwise_scale_inv = grouped_tensor.scale_inv.view(num_tensors, *rowwise_scale_inv_shape).split([1] * num_tensors)
+            columnwise_data = grouped_tensor.columnwise_data.view(num_tensors, *columnwise_shape).split([1] * num_tensors)
+            columnwise_scale_inv = grouped_tensor.columnwise_scale_inv.view(num_tensors, *columnwise_scale_inv_shape).split([1] * num_tensors)
+            print(f">>>>>>>>>>>> rowwise_data: {len(rowwise_data)}, rowwise_scale_inv: {len(rowwise_scale_inv)}, columnwise_data: {len(columnwise_data)}, columnwise_scale_inv: {len(columnwise_scale_inv)}")
+            return [MXFP8Tensor(
+                    shape=q.shape,
+                    dtype=q.dtype,
+                    rowwise_data=rowwise_data[i].squeeze(0),
+                    rowwise_scale_inv=rowwise_scale_inv[i].squeeze(0),
+                    columnwise_data=columnwise_data[i].squeeze(0),
+                    columnwise_scale_inv=columnwise_scale_inv[i].squeeze(0),
+                    fp8_dtype=qkv_quantizer.dtype,
+                    quantizer=qkv_quantizer,
+                    with_gemm_swizzled_scales=qkv_quantizer.optimize_for_gemm,
+                ) for i in range(num_tensors)]
+        q_fp8, k_fp8, v_fp8 = split_qkv(grouped_output, 3)
+
+        print(f">>>>>>>>>>>> q_fp8: {q_fp8.shape}, k_fp8: {k_fp8.shape}, v_fp8: {v_fp8.shape}")
+        print(f">>>>>>>>>>>> rowwise_data: q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
+        print(f">>>>>>>>>>>> rowwise_scale_inv: q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
+        print(f">>>>>>>>>>>> columnwise_data: q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
+        print(f">>>>>>>>>>>> columnwise_scale_inv: q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
+
+        # print(f">>>>>>>>>>>> grouped_output: {len(grouped_output) if grouped_output is not None else None}")
+
+        # qkv_mxfp8 = grouped_tensor.quantize(qkv_list)
+        # print(f">>>>>>>>>>>> qkv_mxfp8: {type(qkv_mxfp8)}")
+        # qkv_mxfp8_list = [qkv_mxfp8[i] for i in range(num_tensors)]
+        # print(f">>>>>>>>>>>> qkv_mxfp8: {qkv_mxfp8}")
+        # print(f">>>>>>>>>>>> qkv_mxfp8: {len(qkv_mxfp8_list)}")
+        # print(f">>>>>>>>>>>> qkv_mxfp8.shape: {qkv_mxfp8.shape}")
+        # print(f">>>>>>>>>>>> qkv_mxfp8._rowwise_data.shape: {qkv_mxfp8._rowwise_data.shape}")
+        # print(f">>>>>>>>>>>> qkv_mxfp8._rowwise_scale_inv.shape: {qkv_mxfp8._rowwise_scale_inv.shape}")
+        # print(f">>>>>>>>>>>> qkv_mxfp8._columnwise_data.shape: {qkv_mxfp8._columnwise_data.shape}")
+        # print(f">>>>>>>>>>>> qkv_mxfp8._columnwise_scale_inv.shape: {qkv_mxfp8._columnwise_scale_inv.shape}")
+        # q_fp8, k_fp8, v_fp8 = qkv_mxfp8[0::batch_size * num_heads], qkv_mxfp8[batch_size:2*batch_size], qkv_mxfp8[2*batch_size:]
+
+        # q_fp8, k_fp8, v_fp8 = qkv_mxfp8.split_into_quantized_tensors()
+
+        print(f"q_fp8: {q_fp8.shape}, k_fp8: {k_fp8.shape}, v_fp8: {v_fp8.shape}")
         print(f"q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
         print(f"q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
         print(f"q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
         print(f"q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
+
+        # q_fp8_rowwise, k_fp8_rowwise, v_fp8_rowwise = [x._rowwise_data for x in qkv_mxfp8]
+        # q_fp8_columnwise, k_fp8_columnwise, v_fp8_columnwise = [x._columnwise_data for x in qkv_mxfp8]
+        # q_fp8, k_fp8, v_fp8 = q_fp8_rowwise, k_fp8_rowwise, v_fp8_columnwise
+
+        # dim_s = qkv_format.find("s") if 's' in qkv_format else qkv_format.find("t")
+        # dim_others = [i for i in range(len(v.shape)) if i != dim_s]
+        # perm = [*dim_others, dim_s]
+        # # perm = [*dim_others[:-1], dim_s, dim_others[-1]]
+        # v = v.permute(*perm).contiguous()
+
+        qkv_layout = "bhsd_bhsd_bhsd"
+
+        # inv = [0] * len(perm)
+        # for i, p in enumerate(perm):
+        #     inv[p] = i
+        # # v = v.permute(*inv)
+
+        # q_fp8, k_fp8, v_fp8 = [qkv_quantizer(x) for x in [q, k, v]]
+        # # v_fp8._rowwise_data = v_fp8._rowwise_data.permute(*inv).contiguous()
+        # print(f"q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
+        # print(f"q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
+        # print(f"q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
+        # print(f"q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
         return q_fp8, k_fp8, v_fp8, qkv_layout
 
     match qkv_group:

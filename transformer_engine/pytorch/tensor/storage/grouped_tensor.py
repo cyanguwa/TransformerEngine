@@ -90,23 +90,23 @@ class GroupedTensor:
             offsets: Vector of integer offsets for each tensor.
             logical_shape: 2D tuple representing conceptual shape
         """
-        print(f">>>>>>>>>>>> GroupedTensor init: {quantizers}")
-        print(f">>>>>>>>>>>> shape: {shape}")
-        print(f">>>>>>>>>>>> dtype: {dtype}")
-        print(f">>>>>>>>>>>> data: {data.shape}")
-        print(f">>>>>>>>>>>> columnwise_data: {columnwise_data.shape if columnwise_data is not None else None}")
-        print(f">>>>>>>>>>>> scale_inv: {scale_inv.shape if scale_inv is not None else None}")
-        print(f">>>>>>>>>>>> columnwise_scale_inv: {columnwise_scale_inv.shape if columnwise_scale_inv is not None else None}")
-        print(f">>>>>>>>>>>> amax: {amax.shape if amax is not None else None}")
-        print(f">>>>>>>>>>>> columnwise_amax: {columnwise_amax.shape if columnwise_amax is not None else None}")
-        print(f">>>>>>>>>>>> scale: {scale.shape if scale is not None else None}")
-        print(f">>>>>>>>>>>> first_dims: {first_dims}")
-        print(f">>>>>>>>>>>> last_dims: {last_dims}")
-        print(f">>>>>>>>>>>> tensor_offsets: {tensor_offsets}")
-        print(f">>>>>>>>>>>> offsets: {offsets}")
-        print(f">>>>>>>>>>>> scale_inv_offsets: {scale_inv_offsets}")
-        print(f">>>>>>>>>>>> columnwise_scale_inv_offsets: {columnwise_scale_inv_offsets}")
-        print(f">>>>>>>>>>>> logical_shape: {logical_shape}")
+        # print(f">>>>>>>>>>>> GroupedTensor init: {quantizers}")
+        # print(f">>>>>>>>>>>> shape: {shape}")
+        # print(f">>>>>>>>>>>> dtype: {dtype}")
+        # print(f">>>>>>>>>>>> data: {data.shape}")
+        # print(f">>>>>>>>>>>> columnwise_data: {columnwise_data.shape if columnwise_data is not None else None}")
+        # print(f">>>>>>>>>>>> scale_inv: {scale_inv.shape if scale_inv is not None else None}")
+        # print(f">>>>>>>>>>>> columnwise_scale_inv: {columnwise_scale_inv.shape if columnwise_scale_inv is not None else None}")
+        # print(f">>>>>>>>>>>> amax: {amax.shape if amax is not None else None}")
+        # print(f">>>>>>>>>>>> columnwise_amax: {columnwise_amax.shape if columnwise_amax is not None else None}")
+        # print(f">>>>>>>>>>>> scale: {scale.shape if scale is not None else None}")
+        # print(f">>>>>>>>>>>> first_dims: {first_dims.shape}")
+        # print(f">>>>>>>>>>>> last_dims: {last_dims.shape}")
+        # print(f">>>>>>>>>>>> tensor_offsets: {tensor_offsets.shape}")
+        # print(f">>>>>>>>>>>> offsets: {offsets.shape}")
+        # print(f">>>>>>>>>>>> scale_inv_offsets: {scale_inv_offsets.shape}")
+        # print(f">>>>>>>>>>>> columnwise_scale_inv_offsets: {columnwise_scale_inv_offsets.shape}")
+        # print(f">>>>>>>>>>>> logical_shape: {logical_shape.shape}")
         print(f">>>>>>>>>>>> num_tensors: {num_tensors}")
         
         self.num_tensors = num_tensors
@@ -434,7 +434,7 @@ class GroupedTensor:
         logical_shape = (logical_first_dim, logical_last_dim)
 
         quantizer = quantizers[0] if isinstance(quantizers, list) else quantizers
-        print(f">>>>>>>>>>>>> quantizers: {quantizers}")
+        # print(f">>>>>>>>>>>>> quantizers: {quantizers}")
         print(f">>>>>>>>>>>>> quantizer: {quantizer}")
         no_quantization = quantizer is None
 
