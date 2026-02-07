@@ -244,6 +244,7 @@ __global__ void __launch_bounds__(THREADS_PER_CHUNK) group_quantize_mxfp8_kernel
     const int64_t *const __restrict__ last_dims_ptr, e8m0_t *const __restrict__ scales_rowwise_ptr,
     e8m0_t *const __restrict__ scales_colwise_ptr, const float *__restrict__ noop,
     float *const __restrict__ dbias_workspace, float *const __restrict__ amax_ptr) {
+printf(">>>>>>>>>>>> WITH_GEMM_SWIZZLED_SCALES: %d\n", WITH_GEMM_SWIZZLED_SCALES);
 #if (defined __CUDA_ARCH__) && (__CUDA_ARCH__ >= 1000)
   constexpr bool COMPUTE_ACTIVATIONS = IS_DACT || IS_ACT;
   constexpr bool NO_ACTIVATIONS = !COMPUTE_ACTIVATIONS;
@@ -852,6 +853,7 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
   }
 
   const bool with_gemm_swizzled_scales = output->with_gemm_swizzled_scales;
+  printf(">>>>>>>>>>>> with_gemm_swizzled_scales: %d\n", with_gemm_swizzled_scales);
 
   const size_t scale_stride_rowwise = use_rowwise_scaling ? output->scale_inv.shape[1] : 1;
   const size_t scale_stride_colwise =

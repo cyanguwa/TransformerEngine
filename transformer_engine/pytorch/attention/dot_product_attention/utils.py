@@ -2188,6 +2188,11 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     src_nominal_dtype = q.dtype
     print(f"Combining and quantizing q, k, v: {q.shape}, {k.shape}, {v.shape}")
     if isinstance(qkv_quantizer, MXFP8Quantizer):
+        # bs3hd -> bshd_bshd_bhsd
+        q,k,v = [x.contiguous() for x in [q, k, v]]
+
+        # bshd_bshd_bhsd -> bhsd_bhsd_bhsd
+        qkv_quantizer.optimize_for_gemm = True
         qkv_quantizer._internal = False
         dim_s = qkv_format.find("s") if 's' in qkv_format else qkv_format.find("t")
         dim_others = [i for i in range(len(v.shape)) if i != dim_s]
