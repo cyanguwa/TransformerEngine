@@ -117,8 +117,8 @@ NVTE_QKV_Layout_Group nvte_get_qkv_layout_group(NVTE_QKV_Layout qkv_layout) {
     case NVTE_QKV_Layout::NVTE_Paged_KV_SBHD_SBHD_SBHD:
     case NVTE_QKV_Layout::NVTE_Paged_KV_THD_SBHD_SBHD:
       return NVTE_QKV_Layout_Group::NVTE_Paged_KV_HD_HD_HD;
-    case NVTE_QKV_Layout::NVTE_BSHD_BSHD_BHDS:
-      return NVTE_QKV_Layout_Group::NVTE_HD_HD_DS;
+    case NVTE_QKV_Layout::NVTE_BHSD_BHSD_BHSD:
+      return NVTE_QKV_Layout_Group::NVTE_SD_SD_SD;
     default:
       NVTE_ERROR("qkv_layout not supported!");
   }
@@ -159,8 +159,8 @@ NVTE_QKV_Format nvte_get_qkv_format(NVTE_QKV_Layout qkv_layout) {
     case NVTE_QKV_Layout::NVTE_THD_SBHD_SBHD:
     case NVTE_QKV_Layout::NVTE_Paged_KV_THD_SBHD_SBHD:
       return NVTE_QKV_Format::NVTE_THD_2SBHD;
-    case NVTE_QKV_Layout::NVTE_BSHD_BSHD_BHDS:
-      return NVTE_QKV_Format::NVTE_BHDS;
+    case NVTE_QKV_Layout::NVTE_BHSD_BHSD_BHSD:
+      return NVTE_QKV_Format::NVTE_BHSD;
     default:
       NVTE_ERROR("qkv_layout not supported!");
   }
@@ -180,8 +180,8 @@ NVTE_QKV_Format nvte_get_q_format(NVTE_QKV_Layout qkv_layout) {
     case NVTE_QKV_Format::NVTE_THD_2BSHD:
     case NVTE_QKV_Format::NVTE_THD_2SBHD:
       return NVTE_QKV_Format::NVTE_THD;
-    case NVTE_QKV_Format::NVTE_BHDS:
-      return NVTE_QKV_Format::NVTE_BHDS;
+    case NVTE_QKV_Format::NVTE_BHSD:
+      return NVTE_QKV_Format::NVTE_BHSD;
     default:
       NVTE_ERROR("qkv_layout not supported!");
   }
@@ -201,8 +201,8 @@ NVTE_QKV_Format nvte_get_kv_format(NVTE_QKV_Layout qkv_layout) {
       return NVTE_QKV_Format::NVTE_BSHD;
     case NVTE_QKV_Format::NVTE_THD:
       return NVTE_QKV_Format::NVTE_THD;
-    case NVTE_QKV_Format::NVTE_BHDS:
-      return NVTE_QKV_Format::NVTE_BHDS;
+    case NVTE_QKV_Format::NVTE_BHSD:
+      return NVTE_QKV_Format::NVTE_BHSD;
     default:
       NVTE_ERROR("qkv_layout not supported!");
   }
@@ -248,29 +248,29 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
   if ((q_dtype == NVTEDType::kNVTEFloat8E4M3 || q_dtype == NVTEDType::kNVTEFloat8E5M2) &&
       sm_arch_ >= 90 && bias_type == NVTE_Bias_Type::NVTE_NO_BIAS &&
       // 8.9: t3hd, max_s=512, d=64, padding
-      // ((cudnn_runtime_version >= 8900 && sm_arch_ < 100 &&
-      //   qkv_layout == NVTE_QKV_Layout::NVTE_T3HD && max_seqlen_q == max_seqlen_kv &&
-      //   max_seqlen_q <= 512 && head_dim_qk == 64 && head_dim_v == 64 &&
-      //   attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK) ||
-      //  // 9.2.1: {bshd, sbhd}, any seqlen, d=128, {no_mask, causal}
-      //  (cudnn_runtime_version >= 90201 && sm_arch_ < 100 && max_seqlen_q % 128 == 0 &&
-      //   max_seqlen_kv % 128 == 0 && head_dim_qk == 128 && head_dim_v == 128 &&
-      //   (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
-      //    attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK)) ||
-      //  // 9.7: {bshd, sbhd}, any seqlen, d<=256 for sm90 and d<=128 for sm100, {padding, padding_causal}
-      //  (cudnn_runtime_version >= 90700 &&
-      //   // TODO (cyang): add is_training to nvte_get_fused_attn_backend
-      //   // sm90: fwd d<=256, bwd d=128 only
-      //   // sm100: fwd d<=128, bwd d<=128
-      //   ((sm_arch_ < 100 && (!is_training) && head_dim_qk <= 256 && head_dim_v <= 256) ||
-      //    (sm_arch_ < 100 && is_training && head_dim_qk == 128 && head_dim_v == 128) ||
-      //    (sm_arch_ >= 100 && head_dim_qk <= 128 && head_dim_v <= 128)) &&
-      //   head_dim_qk % 16 == 0 && head_dim_v % 16 == 0 &&
-      //   (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK ||
-      //    attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
-      //    attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK ||
-      //    attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK))) &&
-      (qkv_format == NVTE_QKV_Format::NVTE_BSHD || qkv_format == NVTE_QKV_Format::NVTE_SBHD || qkv_format == NVTE_QKV_Format::NVTE_BHDS) &&
+      ((cudnn_runtime_version >= 8900 && sm_arch_ < 100 &&
+        qkv_layout == NVTE_QKV_Layout::NVTE_T3HD && max_seqlen_q == max_seqlen_kv &&
+        max_seqlen_q <= 512 && head_dim_qk == 64 && head_dim_v == 64 &&
+        attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK) ||
+       // 9.2.1: {bshd, sbhd}, any seqlen, d=128, {no_mask, causal}
+       (cudnn_runtime_version >= 90201 && sm_arch_ < 100 && max_seqlen_q % 128 == 0 &&
+        max_seqlen_kv % 128 == 0 && head_dim_qk == 128 && head_dim_v == 128 &&
+        (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
+         attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK)) ||
+       // 9.7: {bshd, sbhd}, any seqlen, d<=256 for sm90 and d<=128 for sm100, {padding, padding_causal}
+       (cudnn_runtime_version >= 90700 &&
+        // TODO (cyang): add is_training to nvte_get_fused_attn_backend
+        // sm90: fwd d<=256, bwd d=128 only
+        // sm100: fwd d<=128, bwd d<=128
+        ((sm_arch_ < 100 && (!is_training) && head_dim_qk <= 256 && head_dim_v <= 256) ||
+         (sm_arch_ < 100 && is_training && head_dim_qk == 128 && head_dim_v == 128) ||
+         (sm_arch_ >= 100 && head_dim_qk <= 128 && head_dim_v <= 128)) &&
+        head_dim_qk % 16 == 0 && head_dim_v % 16 == 0 &&
+        (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK ||
+         attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
+         attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK ||
+         attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK))) &&
+      (qkv_format == NVTE_QKV_Format::NVTE_BSHD || qkv_format == NVTE_QKV_Format::NVTE_SBHD || qkv_format == NVTE_QKV_Format::NVTE_BHSD) &&
       !requires_64bit_ragged_offset && (softmax_type == NVTE_Softmax_Type::NVTE_VANILLA_SOFTMAX) &&
       // 9.10.0: known bugs with SDPA FP8
       (cudnn_runtime_version != 91000) && !return_max_logit) {
@@ -1151,8 +1151,6 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   auto ndim = input_Q->data.shape.size();
   auto ndim_kv = input_K->data.shape.size();
   size_t b = input_cu_seqlens_q->data.shape[0] - 1;
-  size_t h_q = input_Q->data.shape[ndim - 2];
-  size_t h_kv = input_K->data.shape[ndim_kv - 2];
   size_t d_qk = input_Q->data.shape[ndim - 1];
   size_t d_v = input_V->data.shape[ndim_kv - 1];
   size_t t_q = 0;
@@ -1165,6 +1163,8 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   if (kv_format == NVTE_QKV_Format::NVTE_THD) {
     t_kv = input_K->data.shape[0];
   }
+  size_t h_q = (q_format == NVTE_QKV_Format::NVTE_BHSD) ? input_Q->data.shape[ndim-3] : input_Q->data.shape[ndim - 2];
+  size_t h_kv = (kv_format == NVTE_QKV_Format::NVTE_BHSD) ? input_K->data.shape[ndim_kv-3] : input_K->data.shape[ndim_kv - 2];
   int64_t num_pages_k = 0;
   int64_t num_pages_v = 0;
   int64_t page_size_k = 0;
@@ -1277,8 +1277,6 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   auto ndim = input_Q->data.shape.size();
   auto ndim_kv = input_K->data.shape.size();
   size_t b = input_cu_seqlens_q->data.shape[0] - 1;
-  size_t h_q = input_Q->data.shape[ndim - 2];
-  size_t h_kv = input_K->data.shape[ndim_kv - 2];
   size_t d_qk = input_Q->data.shape[ndim - 1];
   size_t d_v = input_V->data.shape[ndim_kv - 1];
   size_t t_q = 0;
@@ -1291,6 +1289,8 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   if (kv_format == NVTE_QKV_Format::NVTE_THD) {
     t_kv = input_K->data.shape[0];
   }
+  size_t h_q = (q_format == NVTE_QKV_Format::NVTE_BHSD) ? input_Q->data.shape[ndim-3] : input_Q->data.shape[ndim - 2];
+  size_t h_kv = (kv_format == NVTE_QKV_Format::NVTE_BHSD) ? input_K->data.shape[ndim_kv-3] : input_K->data.shape[ndim_kv - 2];
 
   auto handle = cudnnExecutionPlanManager::Instance().GetHandle();
   const NVTEDType Q_type = static_cast<NVTEDType>(input_Q->data.dtype);

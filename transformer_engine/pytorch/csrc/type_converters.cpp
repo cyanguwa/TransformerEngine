@@ -207,15 +207,12 @@ GroupedTensorWrapper GroupedTensorFromPyTorchGroupedTensor(py::handle tensor) {
   DType quantizer_dtype = DType::kNumTypes;
   NVTEScalingMode scaling_mode = NVTE_DELAYED_TENSOR_SCALING;
   bool with_gemm_swizzled_scales = false;
-  if (!tensor.attr("quantizers").is_none()) {
-    const auto quantizers = tensor.attr("quantizers").cast<py::list>();
-    quantizer = quantizers[0];
-    if (!quantizers.empty() && !quantizer.is_none()) {
-      scaling_mode = ScalingModeFromQuantizer(quantizer);
-      quantizer_dtype = quantizer.attr("dtype").cast<DType>();
-      with_gemm_swizzled_scales = quantizer.attr("optimize_for_gemm").cast<bool>();
-      printf(">>>>>>>>>>>> GroupedTensorFromPyTorchGroupedTensor with_gemm_swizzled_scales: %d\n", with_gemm_swizzled_scales);
-    }
+  if (!tensor.attr("quantizer").is_none()) {
+    quantizer = tensor.attr("quantizer").cast<py::handle>();
+    scaling_mode = ScalingModeFromQuantizer(quantizer);
+    quantizer_dtype = quantizer.attr("dtype").cast<DType>();
+    with_gemm_swizzled_scales = quantizer.attr("optimize_for_gemm").cast<bool>();
+    printf(">>>>>>>>>>>> GroupedTensorFromPyTorchGroupedTensor with_gemm_swizzled_scales: %d\n", with_gemm_swizzled_scales);
   }
   auto ret = GroupedTensorWrapper(num_tensors, logical_shape, scaling_mode);
 

@@ -75,6 +75,8 @@ class MXFP8Quantizer(Quantizer):
             src = src.contiguous()
 
         # Launch cast kernel
+        print(f">>>>>>>>>>>> src: {src.shape}")
+        print(f">>>>>>>>>>>> dst: {dst.shape}")
         tex.quantize(src, self, dst, noop_flag)
 
         # Update FP8 dtype

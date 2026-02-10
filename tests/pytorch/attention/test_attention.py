@@ -2157,16 +2157,19 @@ def test_dpa_fp8_vs_f16(dtype, model, qkv_layout, fp8_dpa_bwd, is_training, scal
     fused_attn_fwd_fp8, fused_attn_bwd_fp8 = _run_dpa_fp8_vs_f16(
         dtype, config, True, qkv_layout, is_training, fp8_recipe
     )
+    # print(f">>>>>> fused_attn_bwd_fp8: {fused_attn_bwd_fp8} {is_training}")
+    # torch.save(fused_attn_fwd_fp8, "fused_attn_fwd_fp8.pt")
 
-    # os.environ["NVTE_FLASH_ATTN"] = "0"
-    # os.environ["NVTE_FUSED_ATTN"] = "1"
-    # os.environ["NVTE_UNFUSED_ATTN"] = "0"
-    # if config.dropout_p == 0.0:
-    #     # test cuDNN FP8 dropout: need a FP16/BF16 reference on Blackwell
-    #     logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = False (FusedAttention)")
-    #     fused_attn_fwd_f16, fused_attn_bwd_f16 = _run_dpa_fp8_vs_f16(
-    #         dtype, config, False, qkv_layout, is_training, fp8_recipe
-    #     )
+    os.environ["NVTE_FLASH_ATTN"] = "0"
+    os.environ["NVTE_FUSED_ATTN"] = "1"
+    os.environ["NVTE_UNFUSED_ATTN"] = "0"
+    if config.dropout_p == 0.0:
+        # test cuDNN FP8 dropout: need a FP16/BF16 reference on Blackwell
+        logging.info("[test_dpa_fp8_vs_f16]: run with fp8_dpa = False (FusedAttention)")
+        fused_attn_fwd_f16, fused_attn_bwd_f16 = _run_dpa_fp8_vs_f16(
+            dtype, config, False, qkv_layout, is_training, fp8_recipe
+        )
+        # torch.save(fused_attn_fwd_f16, "fused_attn_fwd_f16.pt")
 
     atol = 5e-1
     rtol = 5e-2

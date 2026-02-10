@@ -1781,12 +1781,13 @@ void fused_attn_fp8_fwd_impl_v1(
       std::vector<int64_t> q_stride(4);
       std::vector<int64_t> k_stride(4);
       std::vector<int64_t> v_stride(4);
+      printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d: %d\n", b, h, hg, s_q, s_kv, d);
       generateMatrixStrides(b, h, s_q, s_kv, d, q_stride.data(), layout,
                             NVTE_QKV_Matrix::NVTE_Q_Matrix);
       generateMatrixStrides(b, hg, s_q, s_kv, d, k_stride.data(), layout,
                             NVTE_QKV_Matrix::NVTE_K_Matrix);
       generateMatrixStrides(b, hg, s_q, s_kv, d, v_stride.data(), layout,
-                            NVTE_QKV_Matrix::NVTE_K_Matrix); // need to double check 
+                            NVTE_QKV_Matrix::NVTE_V_Matrix); // need to double check 
       printf(">>>>>> q_stride: %d, %d, %d, %d\n", q_stride[0], q_stride[1], q_stride[2], q_stride[3]);
       printf(">>>>>> k_stride: %d, %d, %d, %d\n", k_stride[0], k_stride[1], k_stride[2], k_stride[3]);
       printf(">>>>>> v_stride: %d, %d, %d, %d\n", v_stride[0], v_stride[1], v_stride[2], v_stride[3]);
@@ -2527,10 +2528,10 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
     devPtrDescaleQ = input_Q->scale_inv.dptr;
     devPtrK = input_K->data.dptr;
     devPtrDescaleK = input_K->scale_inv.dptr;
-    devPtrV = input_V->data.dptr;
-    devPtrDescaleV = input_V->scale_inv.dptr;
-    // devPtrV = input_V->columnwise_data.dptr;
-    // devPtrDescaleV = input_V->columnwise_scale_inv.dptr;
+    // devPtrV = input_V->data.dptr;
+    // devPtrDescaleV = input_V->scale_inv.dptr;
+    devPtrV = input_V->columnwise_data.dptr;
+    devPtrDescaleV = input_V->columnwise_scale_inv.dptr;
     devPtrO = output_O->data.dptr;
     devPtrAmaxO = output_O->amax.dptr;
   } else {
@@ -2589,7 +2590,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   size_t workspace_size = 0;
 
   NVTE_QKV_Format qkv_format = nvte_get_qkv_format(qkv_layout);
-  if ((qkv_format == NVTE_QKV_Format::NVTE_BSHD) || (qkv_format == NVTE_QKV_Format::NVTE_SBHD) || (qkv_format == NVTE_QKV_Format::NVTE_BHDS)) {
+  if ((qkv_format == NVTE_QKV_Format::NVTE_BSHD) || (qkv_format == NVTE_QKV_Format::NVTE_SBHD) || (qkv_format == NVTE_QKV_Format::NVTE_BHSD)) {
     fused_attn::fused_attn_fp8_fwd_impl_v1(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim, is_training,
         attn_scale, p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM,

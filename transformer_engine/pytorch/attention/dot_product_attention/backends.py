@@ -1217,6 +1217,9 @@ class FusedAttnFunc(torch.autograd.Function):
         # FP8 attention:       torch.float16 or torch.bfloat16
         out_nominal_dtype = q.dtype
 
+        # save original qkv_layout
+        original_qkv_layout = qkv_layout
+
         max_logit = None
         if fp8:
             fused_attention_backend = FusedAttnBackend["FP8"]
@@ -1276,6 +1279,17 @@ class FusedAttnFunc(torch.autograd.Function):
                 softmax_offset,
                 cuda_graph=is_graph_capturing(),
             )
+            if original_qkv_layout != qkv_layout:
+                print(f">>>>>>>>>>>> original_qkv_layout: {original_qkv_layout}")
+                print(f">>>>>>>>>>>> qkv_layout: {qkv_layout}")
+                print(f">>>>>>>>>>>> out_.shape: {out_.shape}")
+                original_qkv_format = original_qkv_layout.split("_")[0]
+                new_qkv_format = qkv_layout.split("_")[0]
+                perm = []
+                for i in new_qkv_format:
+                    perm.append(original_qkv_format.find(i))
+                out_ = out_.permute(*perm).contiguous()
+                print(f">>>>>>>>>>>> out_.shape permuted: {out_.shape}")
 
             # out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16
             #                        fp8_dtype = tex.DType.kFloat8E4M3
