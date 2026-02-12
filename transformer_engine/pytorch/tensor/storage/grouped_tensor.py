@@ -91,24 +91,6 @@ class GroupedTensor:
             offsets: Vector of integer offsets for each tensor.
             logical_shape: 2D tuple representing conceptual shape
         """
-        # print(f">>>>>>>>>>>> GroupedTensor init: {quantizers}")
-        # print(f">>>>>>>>>>>> shape: {shape}")
-        # print(f">>>>>>>>>>>> dtype: {dtype}")
-        # print(f">>>>>>>>>>>> data: {data.shape}")
-        # print(f">>>>>>>>>>>> columnwise_data: {columnwise_data.shape if columnwise_data is not None else None}")
-        # print(f">>>>>>>>>>>> scale_inv: {scale_inv.shape if scale_inv is not None else None}")
-        # print(f">>>>>>>>>>>> columnwise_scale_inv: {columnwise_scale_inv.shape if columnwise_scale_inv is not None else None}")
-        # print(f">>>>>>>>>>>> amax: {amax.shape if amax is not None else None}")
-        # print(f">>>>>>>>>>>> columnwise_amax: {columnwise_amax.shape if columnwise_amax is not None else None}")
-        # print(f">>>>>>>>>>>> scale: {scale.shape if scale is not None else None}")
-        # print(f">>>>>>>>>>>> first_dims: {first_dims.shape}")
-        # print(f">>>>>>>>>>>> last_dims: {last_dims.shape}")
-        # print(f">>>>>>>>>>>> tensor_offsets: {tensor_offsets.shape}")
-        # print(f">>>>>>>>>>>> offsets: {offsets.shape}")
-        # print(f">>>>>>>>>>>> scale_inv_offsets: {scale_inv_offsets.shape}")
-        # print(f">>>>>>>>>>>> columnwise_scale_inv_offsets: {columnwise_scale_inv_offsets.shape}")
-        # print(f">>>>>>>>>>>> logical_shape: {logical_shape.shape}")
-        print(f">>>>>>>>>>>> num_tensors: {num_tensors}")
         
         self.num_tensors = num_tensors
         self.quantizer = quantizer
@@ -519,7 +501,7 @@ class GroupedTensor:
                 # For simplicity, calculate total scale elements needed
                 total_scale_elements = 0
                 scale_inv_offsets = [0]
-                for i, s in enumerate(shape):
+                for i, s in enumerate(shapes):
                     scale_inv_shape = quantizer.get_scale_shape(s, False)
                     total_scale_elements += math.prod(scale_inv_shape)
                     if i < num_tensors - 1:
@@ -554,7 +536,7 @@ class GroupedTensor:
                 # For simplicity, calculate total scale elements needed
                 total_scale_elements = 0
                 scale_inv_offsets = [0]
-                for i, s in enumerate(shape):
+                for i, s in enumerate(shapes):
                     scale_inv_shape = quantizer.get_scale_shape(s, False)
                     total_scale_elements += math.prod(scale_inv_shape)
                     if i < num_tensors - 1:
@@ -934,7 +916,7 @@ class GroupedTensor:
         Quantize given tensors into quantized tensors with underlying
         storage allocated in a GroupedTensor.
         """
-
+        print(f">>>>>>>>>>>> GroupedTensor create_and_quantize")
         grouped_input = GroupedTensor.make_grouped_tensor_with_shapes(
             num_tensors=len(tensors),
             shapes=[t.shape for t in tensors],
@@ -960,15 +942,6 @@ class GroupedTensor:
         _ = tex.quantize_grouped(grouped_input, grouped_output)
         grouped_output.quantized_tensors = grouped_output.split_into_quantized_tensors()
 
-        # grouped_tensor = GroupedTensor.make_grouped_tensor_with_shapes(
-        #     num_tensors=len(tensors),
-        #     shapes=[t.shape for t in tensors],
-        #     quantizer=None,
-        #     device=device,
-        #     dtype=tensors[0].dtype,
-        # )
-        # grouped_tensor.quantize(tensors, noop_flag=noop_flag)
-
         return grouped_output
 
     def quantize(
@@ -979,10 +952,8 @@ class GroupedTensor:
         """
         Quantize the GroupedTensor inplace.
         """
-
+        print(f">>>>>>>>>>>> GroupedTensor quantize")
         self.quantized_tensors = self.split_into_quantized_tensors()
-        print(f">>>>>>>>>>>> tensors[0]: {type(tensors[0])}")
-        print(f">>>>>>>>>>>> quantized_tensors[0]: {type(self.quantized_tensors[0])}")
         for i in range(self.num_tensors):
             self.quantizer.update_quantized(tensors[i], self.quantized_tensors[i], noop_flag=noop_flag)
         return self.quantized_tensors

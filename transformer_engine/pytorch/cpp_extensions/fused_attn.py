@@ -16,7 +16,6 @@ from transformer_engine_torch import (
     NVTE_Fused_Attn_Backend,
 )
 from ..quantized_tensor import Quantizer
-from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
 
 
 __all__ = [

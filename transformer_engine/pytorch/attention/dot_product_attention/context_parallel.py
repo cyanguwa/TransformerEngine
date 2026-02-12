@@ -1392,7 +1392,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                 # q_fp8, k_fp8, v_fp8: Float8Tensor, dtype=fwd_nominal_dtype
                 # q, k, v:             torch.Tensor, dtype=torch.uint8
                 q_f16 = q
-                q_fp8, k_fp8, v_fp8 = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
+                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
                 q, k, v = [q_fp8._data, k_fp8._data, v_fp8._data]
 
             # print quantizers

@@ -1681,21 +1681,13 @@ void fused_attn_fp8_fwd_impl_v1(
                   o_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
   NVTE_CHECK(is_delayed_scaling || is_current_scaling || is_mxfp8,
              "FP8 fused attention only supports FP8DelayedScaling or FP8CurrentScaling or MXFP8 recipes!");
+  printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d: %d\n", b, h, hg, s_q, s_kv, d);
   printf(">>>>>> scaling_mode: %d\n", scaling_mode);
   printf(">>>>>> is_mxfp8: %d\n", is_mxfp8);
   printf(">>>>>> is_current_scaling: %d\n", is_current_scaling);
   printf(">>>>>> is_delayed_scaling: %d\n", is_delayed_scaling);
   printf(">>>>>> qkv_tensor_type: %d, %d, %d, %d\n", qkv_tensor_type, cudnn_frontend::DataType_t::FP8_E8M0, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
   printf(">>>>>> o_tensor_type: %d, %d, %d\n", o_tensor_type, cudnn_frontend::DataType_t::FLOAT, cudnn_frontend::DataType_t::BFLOAT16);
-  printf(">>>>>> cudnn_frontend::DataType_t::UINT8: %d\n", cudnn_frontend::DataType_t::UINT8);
-  printf(">>>>>> cudnn_frontend::DataType_t::INT8: %d\n", cudnn_frontend::DataType_t::INT8);
-  printf(">>>>>> cudnn_frontend::DataType_t::HALF: %d\n", cudnn_frontend::DataType_t::HALF);
-  printf(">>>>>> cudnn_frontend::DataType_t::INT64: %d\n", cudnn_frontend::DataType_t::INT64);
-  printf(">>>>>> cudnn_frontend::DataType_t::DOUBLE: %d\n", cudnn_frontend::DataType_t::DOUBLE);
-  printf(">>>>>> bias_type: %d\n", bias_type);
-  printf(">>>>>> mask_type: %d\n", mask_type);
-  printf(">>>>>> scaling_factor: %f\n", scaling_factor);
-  printf(">>>>>> dropout_probability: %f\n", dropout_probability);
 
   try {
     FADescriptor_v1 descriptor{b,
@@ -1777,11 +1769,9 @@ void fused_attn_fp8_fwd_impl_v1(
       std::shared_ptr<fe::graph::Tensor_attributes> bias, seq_q, seq_kv;
       std::shared_ptr<fe::graph::Tensor_attributes> dropout_seed, dropout_offset;
 
-      printf(">>>>>> layout: %d\n", layout);
       std::vector<int64_t> q_stride(4);
       std::vector<int64_t> k_stride(4);
       std::vector<int64_t> v_stride(4);
-      printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d: %d\n", b, h, hg, s_q, s_kv, d);
       generateMatrixStrides(b, h, s_q, s_kv, d, q_stride.data(), layout,
                             NVTE_QKV_Matrix::NVTE_Q_Matrix);
       generateMatrixStrides(b, hg, s_q, s_kv, d, k_stride.data(), layout,
@@ -1979,16 +1969,10 @@ void fused_attn_fp8_fwd_impl_v1(
                                       : std::make_tuple(nullptr, nullptr);
 
       NVTE_CHECK_CUDNN_FE(mha_graph->validate());
-      printf(">>>>>> mha_graph->validate()\n");
       NVTE_CHECK_CUDNN_FE(mha_graph->build_operation_graph(handle));
-      printf(">>>>>> mha_graph->build_operation_graph(handle)\n");
       NVTE_CHECK_CUDNN_FE(mha_graph->create_execution_plans({fe::HeurMode_t::A}));
-      printf(">>>>>> mha_graph->create_execution_plans({fe::HeurMode_t::A})\n");
       NVTE_CHECK_CUDNN_FE(mha_graph->check_support(handle));
-      printf(">>>>>> mha_graph->check_support(handle)\n");
       NVTE_CHECK_CUDNN_FE(mha_graph->build_plans(handle));
-      printf(">>>>>> mha_graph->build_plans(handle)\n");
-      printf(">>>>>> mha_graph->get_workspace_size(): %zu\n", mha_graph->get_workspace_size());
       auto return_tuple = std::tuple_cat(std::make_tuple(mha_graph), key_tensors_tuple, Stats_tuple,
                                          bias_tuple, padding_tuple, dropout_tuple);
       cache.insert({descriptor, return_tuple});

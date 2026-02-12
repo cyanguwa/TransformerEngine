@@ -75,8 +75,7 @@ class MXFP8Quantizer(Quantizer):
             src = src.contiguous()
 
         # Launch cast kernel
-        print(f">>>>>>>>>>>> src: {src.shape}")
-        print(f">>>>>>>>>>>> dst: {dst.shape}")
+        print(f"MXFP8Quantizer.update_quantized: src: {src.shape}, dst: {dst.shape}")
         tex.quantize(src, self, dst, noop_flag)
 
         # Update FP8 dtype
@@ -86,7 +85,7 @@ class MXFP8Quantizer(Quantizer):
 
     def quantize_impl(self, tensor: torch.Tensor) -> QuantizedTensor:
         """Quantize tensor implementation"""
-        print(f"Quantizing tensor: {tensor.shape}")
+        print(f"MXFP8Quantizer.quantize_impl: tensor: {tensor.shape}")
         return tex.quantize(tensor, self)
 
     def is_quantizable(self, inp: torch.Tensor) -> bool:

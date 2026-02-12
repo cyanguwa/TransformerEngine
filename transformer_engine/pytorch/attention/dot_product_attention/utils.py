@@ -35,12 +35,14 @@ from transformer_engine.pytorch.cpp_extensions.fused_attn import (
     META_DP,
 )
 from transformer_engine.pytorch.attention.inference import InferenceParams
+from transformer_engine.pytorch.quantized_tensor import QuantizedTensor
 from transformer_engine.pytorch.tensor.float8_tensor import (
     Float8Tensor,
     Float8Quantizer,
     Float8CurrentScalingQuantizer,
 )
 from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer, MXFP8Tensor
+from transformer_engine.pytorch.tensor.storage.mxfp8_tensor_storage import MXFP8TensorStorage
 from transformer_engine.pytorch.tensor.storage.grouped_tensor import GroupedTensor
 from transformer_engine.pytorch.quantization import get_fp8_te_dtype
 from transformer_engine.pytorch.constants import TE_DType
@@ -2099,6 +2101,8 @@ def get_attention_quantizers(fp8, quantizers):
     O_quantizer = quantizers["scaling_fwd"][META_O]
     O_quantizer.set_usage(rowwise=True, columnwise=False)
     if isinstance(QKV_quantizer, MXFP8Quantizer):
+        QKV_quantizer.optimize_for_gemm = True
+        # QKV_quantizer.internal = False
         S_quantizer = None
     else:
         S_quantizer = quantizers["scaling_fwd"][META_S]
@@ -2184,67 +2188,49 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     """Combine q,k,v based on qkv_layout and quantize them together"""
     # 1: qkv packed, 2: kv packed, 3: qkv separate
     qkv_layout = qkv_layout.replace("paged_kv_", "")
-    qkv_format, _, _ = get_qkv_format(qkv_layout)
+    qkv_format, q_format, kv_format = get_qkv_format(qkv_layout)
     qkv_group = len(qkv_layout.split("_"))
     src_nominal_dtype = q.dtype
-    print(f"Combining and quantizing q, k, v: {q.shape}, {k.shape}, {v.shape}")
     if isinstance(qkv_quantizer, MXFP8Quantizer):
-        # bs3hd -> bshd_bshd_bhsd
-        q,k,v = [x.contiguous() for x in [q, k, v]]
-        print(f">>>>>>>>>>>> Contiguous shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
-
-        # bshd_bshd_bhsd -> bhsd_bhsd_bhsd
-        # thd_thd_thd -> htd_htd_htd
-        qkv_quantizer.optimize_for_gemm = True
-        qkv_quantizer.internal = False
-        print(f">>>>>>>>>>>> qkv_quantizer.internal: {qkv_quantizer.internal}")
-        dim_s = qkv_format.find("s") if 's' in qkv_format else qkv_format.find("t")
-        def permute_x(x):
-            dim_others = [i for i in range(len(x.shape)) if i != dim_s]
-            perm = [*dim_others[:-1], dim_s, dim_others[-1]]
+        print(f"Combining and quantizing q, k, v: {q.shape}, {k.shape}, {v.shape}")
+        
+        def permute_x(f, x):
+            x = x.contiguous() if not x.is_contiguous() else x
+            dim_s_dim_t = f.find("s") if 's' in f else f.find("t")
+            dim_others = [i for i in range(len(x.shape)) if i != dim_s_dim_t]
+            perm = [*dim_others[:-1], dim_s_dim_t, dim_others[-1]]
             x = x.permute(*perm).contiguous()
             return x
-        q, k, v = [permute_x(x) for x in [q, k, v]]
-        print(f">>>>>>>>>>>> Permuted shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
-        original_shapes = [q.shape, k.shape, v.shape]
-        b, h_q, s_q, d_qk = q.shape
-        _, h_kv, s_kv, d_kv = v.shape
-        assert k.shape == (b, h_kv, s_kv, d_qk)
+        # bs3hd, sb3hd, etc -> bshd_bshd_bhsd -> bhsd_bhsd_bhsd
+        # t3hd, etc -> thd_thd_thd -> htd_htd_htd
+        if q_format not in ["bhsd", "htd"]:
+            q = permute_x(q_format, q)
+        if kv_format not in ["bhsd", "htd"]:
+            k = permute_x(kv_format, k)
+            v = permute_x(kv_format, v)
+        print(f">>>>>>>>>>>> Permuted shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
+        qkv_layout = "bhsd_bhsd_bhsd" if qkv_format != "thd" else "htd_htd_htd"
+
+        original_shapes = [x.shape for x in [q, k, v]]
+        s_q, d_qk = q.shape[-2:]
+        s_kv, d_kv = v.shape[-2:]
         assert s_q % 128 == 0
         assert s_kv % 128 == 0
         assert d_qk % 32 == 0
         assert d_kv % 32 == 0
+        # need to check seqlens in THD % 128 == 0
         q, k, v = [x.view(-1, x.shape[-1]) for x in [q, k, v]]
         print(f">>>>>>>>>>>> Flattened shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # consider bhsd for now
         grouped_tensor = GroupedTensor.create_and_quantize(tensors=[q, k, v], quantizer=qkv_quantizer)
-        print(f">>>>>>>>>>>> grouped_tensor: {type(grouped_tensor)}")
-        print(f">>>>>>>>>>>> grouped_tensor.quantized_tensors: {type(grouped_tensor.quantized_tensors)}")
         q_fp8, k_fp8, v_fp8 = grouped_tensor.quantized_tensors
+        q_fp8, k_fp8, v_fp8 = [x.view(s) for x, s in zip([q_fp8, k_fp8, v_fp8], original_shapes)]
         print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
         print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
         print(f">>>>>>>>>>>> q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
         print(f">>>>>>>>>>>> q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
-        q_fp8, k_fp8, v_fp8 = [x.view(*original_shapes[i]) for i, x in enumerate([q_fp8, k_fp8, v_fp8])]
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8.shape}, k_fp8: {k_fp8.shape}, v_fp8: {v_fp8.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
-        # dim_s = qkv_format.find("s") if 's' in qkv_format else qkv_format.find("t")
-        # dim_others = [i for i in range(len(v.shape)) if i != dim_s]
-        # perm = [*dim_others, dim_s]
-        # # perm = [*dim_others[:-1], dim_s, dim_others[-1]]
-        # v = v.permute(*perm).contiguous()
-
-        qkv_layout = "bhsd_bhsd_bhsd"
-
-        # inv = [0] * len(perm)
-        # for i, p in enumerate(perm):
-        #     inv[p] = i
-        # # v = v.permute(*inv)
 
         return q_fp8, k_fp8, v_fp8, qkv_layout
 
@@ -2296,13 +2282,19 @@ def combine_and_dequantize(
     """Combine q,k,v based on qkv_layout and dequantize them together"""
     # 1: qkv packed, 2: kv packed, 3: qkv separate
     qkv_layout = qkv_layout.replace("paged_kv_", "")
+    qkv_format, q_format, kv_format = get_qkv_format(qkv_layout)
     qkv_group = len(qkv_layout.split("_"))
-    if all(isinstance(x, Float8Tensor) for x in [q_fp8, k_fp8, v_fp8]):
+    if all(isinstance(x, QuantizedTensor) for x in [q_fp8, k_fp8, v_fp8]):
         src_nominal_dtype = q_fp8.dtype
     else:
         assert src_nominal_dtype is not None, "The nominal dtype of input tensors is required!"
     if des_nominal_dtype is None:
         des_nominal_dtype = src_nominal_dtype
+
+    if all(isinstance(x, (MXFP8Tensor, MXFP8TensorStorage)) for x in [q_fp8, k_fp8, v_fp8]):
+        print(f"Combining and dequantizing q, k, v from MXFP8 to {des_nominal_dtype}")
+        q, k, v = [x.dequantize(dtype=des_nominal_dtype) for x in [q_fp8, k_fp8, v_fp8]]
+        return q, k, v
 
     q_data, k_data, v_data = [x._data for x in [q_fp8, k_fp8, v_fp8]]
     match qkv_group:

@@ -234,16 +234,16 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                                      max_seqlen_kv, head_dim_qk, head_dim_v) == DType::kInt64);
   const bool supported_ragged_offset_size =
       (!requires_64bit_ragged_offset || cudnn_runtime_version >= 90500);
-  printf(">>>>>> qkv_layout: %d\n", qkv_layout);
-  printf(">>>>>> q_dtype: %d\n", q_dtype);
-  printf(">>>>>> qkv_format: %d\n", qkv_format);
-  printf(">>>>>> q_format: %d\n", q_format);
-  printf(">>>>>> kv_format: %d\n", kv_format);
-  printf(">>>>>> layout_group: %d\n", layout_group);
-  printf(">>>>>> cudnn_runtime_version: %d\n", cudnn_runtime_version);
-  printf(">>>>>> is_training: %d\n", is_training);
-  printf(">>>>>> bias_type: %d\n", bias_type);
-  printf(">>>>>> attn_mask_type: %d\n", attn_mask_type);
+  printf(">>>>>> nvte_get_fused_attn_backend qkv_layout: %d, %d, %d\n", qkv_layout, NVTE_QKV_Layout::NVTE_BHSD_BHSD_BHSD, NVTE_QKV_Layout::NVTE_BSHD_BSHD_BSHD);
+  printf(">>>>>> nvte_get_fused_attn_backend q_dtype: %d, %d, %d\n", q_dtype, NVTEDType::kNVTEFloat8E4M3, NVTEDType::kNVTEFloat8E5M2);
+  printf(">>>>>> nvte_get_fused_attn_backend qkv_format: %d, %d, %d\n", qkv_format, NVTE_QKV_Format::NVTE_BHSD, NVTE_QKV_Format::NVTE_BSHD);
+  printf(">>>>>> nvte_get_fused_attn_backend q_format: %d, %d, %d\n", q_format, NVTE_QKV_Format::NVTE_BHSD, NVTE_QKV_Format::NVTE_BSHD);
+  printf(">>>>>> nvte_get_fused_attn_backend kv_format: %d, %d, %d\n", kv_format, NVTE_QKV_Format::NVTE_BHSD, NVTE_QKV_Format::NVTE_BSHD);
+  printf(">>>>>> nvte_get_fused_attn_backend layout_group: %d, %d, %d\n", layout_group, NVTE_QKV_Layout_Group::NVTE_SD_SD_SD, NVTE_QKV_Layout_Group::NVTE_HD_HD_HD);
+  printf(">>>>>> nvte_get_fused_attn_backend cudnn_runtime_version: %d\n", cudnn_runtime_version);
+  printf(">>>>>> nvte_get_fused_attn_backend is_training: %d\n", is_training);
+  printf(">>>>>> nvte_get_fused_attn_backend bias_type: %d\n", bias_type);
+  printf(">>>>>> nvte_get_fused_attn_backend attn_mask_type: %d, %d, %d\n", attn_mask_type, NVTE_Mask_Type::NVTE_NO_MASK, NVTE_Mask_Type::NVTE_CAUSAL_MASK);
 
   if ((q_dtype == NVTEDType::kNVTEFloat8E4M3 || q_dtype == NVTEDType::kNVTEFloat8E5M2) &&
       sm_arch_ >= 90 && bias_type == NVTE_Bias_Type::NVTE_NO_BIAS &&
@@ -270,7 +270,6 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
          attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
          attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK ||
          attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK))) &&
-      (qkv_format == NVTE_QKV_Format::NVTE_BSHD || qkv_format == NVTE_QKV_Format::NVTE_SBHD || qkv_format == NVTE_QKV_Format::NVTE_BHSD) &&
       !requires_64bit_ragged_offset && (softmax_type == NVTE_Softmax_Type::NVTE_VANILLA_SOFTMAX) &&
       // 9.10.0: known bugs with SDPA FP8
       (cudnn_runtime_version != 91000) && !return_max_logit) {
@@ -531,6 +530,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
   } else {
     backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
   }
+  printf(">>>>>> nvte_get_fused_attn_backend fused_attention_backend: %d\n", backend);
   return backend;
 }
 
@@ -1202,7 +1202,6 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
       h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, window_size_left, window_size_right,
       return_max_logit, cuda_graph, false);
 
-  printf(">>>>>> fused_attention_backend: %d\n", fused_attention_backend);
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
     fused_attn_max_512_fwd(b, h_q, max_seqlen_q, max_seqlen_kv, d_qk, is_training, attn_scale,

@@ -120,7 +120,7 @@ class Recipe:
     @classmethod
     def custom(cls):
         """Whether the given recipe is custom."""
-        return isinstance(self, CustomRecipe)
+        return isinstance(cls, CustomRecipe)
 
 
 @dataclass()
