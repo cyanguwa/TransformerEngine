@@ -8,8 +8,12 @@ from typing import Optional, Tuple, List, Union
 import math
 
 import torch
+<<<<<<< HEAD
 import transformer_engine
 import transformer_engine_torch as tex
+=======
+
+>>>>>>> main
 from ...quantized_tensor import QuantizedTensorStorage, Quantizer
 
 from ..mxfp8_tensor import MXFP8Tensor
@@ -91,7 +95,6 @@ class GroupedTensor:
             offsets: Vector of integer offsets for each tensor.
             logical_shape: 2D tuple representing conceptual shape
         """
-        
         self.num_tensors = num_tensors
         self.quantizer = quantizer
         self.shapes = shapes
@@ -343,7 +346,7 @@ class GroupedTensor:
     def make_grouped_tensor(
         num_tensors: int,
         first_dims: Optional[torch.Tensor],
-        last_dims: Optional[torch.tensor],
+        last_dims: Optional[torch.Tensor],
         logical_first_dim: int,
         logical_last_dim: int,
         quantizer: Optional[Quantizer] = None,
@@ -602,7 +605,7 @@ class GroupedTensor:
             logical_shape=logical_shape,
         )
 
-        # grouped_tensor.quantized_tensors = grouped_tensor.split_into_quantized_tensors()
+        grouped_tensor.quantized_tensors = grouped_tensor.split_into_quantized_tensors()
         return grouped_tensor
 
     def split_into_quantized_tensors(
@@ -916,7 +919,6 @@ class GroupedTensor:
         Quantize given tensors into quantized tensors with underlying
         storage allocated in a GroupedTensor.
         """
-        print(f">>>>>>>>>>>> GroupedTensor create_and_quantize")
         grouped_input = GroupedTensor.make_grouped_tensor_with_shapes(
             num_tensors=len(tensors),
             shapes=[t.shape for t in tensors],
@@ -952,7 +954,6 @@ class GroupedTensor:
         """
         Quantize the GroupedTensor inplace.
         """
-        print(f">>>>>>>>>>>> GroupedTensor quantize")
         self.quantized_tensors = self.split_into_quantized_tensors()
         for i in range(self.num_tensors):
             self.quantizer.update_quantized(tensors[i], self.quantized_tensors[i], noop_flag=noop_flag)

@@ -478,9 +478,8 @@ __global__ void __launch_bounds__(THREADS_PER_CHUNK) group_quantize_mxfp8_kernel
 
       const size_t global_scales_offset_Y = scales_offset_Y_colwise + stage;
       const size_t global_scales_offset_X = scales_offset_X_colwise;
-      // const size_t scale_idx =
-      //     global_scales_offset_Y * scale_stride_colwise + global_scales_offset_X;
-      size_t scale_idx;
+
+      size_t scale_idx = 0;
       if constexpr (WITH_GEMM_SWIZZLED_SCALES) {
         scale_idx = gemm_swizzled_scale_idx(global_scales_offset_X, global_scales_offset_Y,
                                             DIVUP(rows, static_cast<size_t>(128)));
@@ -612,8 +611,8 @@ __global__ void __launch_bounds__(THREADS_PER_CHUNK) group_quantize_mxfp8_kernel
           ptx::float_to_e8m0(thread_amax * Quantized_Limits<OType>::max_norm_rcp);
       const int stage_scales_offset_Y = scales_offset_Y_rowwise + stage_offset_Y;
       const int stage_scales_offset_X = scales_offset_X_rowwise;
-      // const int scale_idx = stage_scales_offset_Y * scale_stride_rowwise + stage_scales_offset_X;
-      size_t scale_idx;
+
+      size_t scale_idx = 0;
       if constexpr (WITH_GEMM_SWIZZLED_SCALES) {
         scale_idx = gemm_swizzled_scale_idx(stage_scales_offset_Y, stage_scales_offset_X,
                                             DIVUP(cols, static_cast<size_t>(128)));
@@ -827,6 +826,8 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
   const dim3 grid(blocks);
   const size_t block_size = THREADS_PER_CHUNK;
 
+  const bool with_gemm_swizzled_scales = output->with_gemm_swizzled_scales;
+
   // Logical shape of a tensor with varying all dims is [1, M*K]
   if (shape_rep != ShapeRepresentation::VARYING_BOTH_DIMS) {
     NVTE_CHECK(first_logical_dim % 128 == 0,
@@ -890,25 +891,26 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
               constexpr size_t input_type_bit_size = TypeInfo<IType>::size;
               constexpr size_t output_type_bit_size = TypeInfo<OType>::size;
 
-              create_2D_tensor_map(tensor_map_input, input->data, first_logical_dim, last_logical_dim,
-                                  BUFF_DIM_Y, BUFF_DIM_X, last_logical_dim, 0, input_type_bit_size);
+              create_2D_tensor_map(tensor_map_input, input->data, first_logical_dim,
+                                   last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X, last_logical_dim, 0,
+                                   input_type_bit_size);
 
               if constexpr (IS_DACT) {
                 create_2D_tensor_map(tensor_map_act_input, activations->data, first_logical_dim,
-                                    last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X, last_logical_dim, 0,
-                                    input_type_bit_size);
+                                     last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X, last_logical_dim, 0,
+                                     input_type_bit_size);
               }
 
               if (use_rowwise_scaling) {
                 create_2D_tensor_map(tensor_map_output_rowwise, output->data, first_logical_dim,
-                                    last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X, last_logical_dim, 0,
-                                    output_type_bit_size);
+                                     last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X, last_logical_dim, 0,
+                                     output_type_bit_size);
               }
 
               if (use_colwise_scaling) {
                 create_2D_tensor_map(tensor_map_output_colwise, output->columnwise_data,
-                                    first_logical_dim, last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X,
-                                    last_logical_dim, 0, output_type_bit_size);
+                                     first_logical_dim, last_logical_dim, BUFF_DIM_Y, BUFF_DIM_X,
+                                     last_logical_dim, 0, output_type_bit_size);
               }
 
               constexpr size_t buff_elems = BUFF_DIM_Y * BUFF_DIM_X;
@@ -930,25 +932,26 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
 
               const size_t dshmem_size = in_mem + out_mem + TMA_SHMEM_ALIGNMENT;
 
-              auto kernel = group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
-                                                        OType, true, true, WITH_GEMM_SWIZZLED_SCALES>;
+              auto kernel =
+                  group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType, OType,
+                                              true, true, WITH_GEMM_SWIZZLED_SCALES>;
               switch (scaling_type) {
                 case ScalingType::ROWWISE: {
-                  printf(">>>>>>>>>>>> group_quantize_mxfp8 ScalingType::ROWWISE\n");
-                  kernel = group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
-                                                      OType, true, false, WITH_GEMM_SWIZZLED_SCALES>;
+                  kernel =
+                      group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
+                                                  OType, true, false, WITH_GEMM_SWIZZLED_SCALES>;
                   break;
                 }
                 case ScalingType::COLWISE: {
-                  printf(">>>>>>>>>>>> group_quantize_mxfp8 ScalingType::COLWISE\n");
-                  kernel = group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
-                                                      OType, false, true, WITH_GEMM_SWIZZLED_SCALES>;
+                  kernel =
+                      group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
+                                                  OType, false, true, WITH_GEMM_SWIZZLED_SCALES>;
                   break;
                 }
                 case ScalingType::BIDIMENSIONAL: {
-                  printf(">>>>>>>>>>>> group_quantize_mxfp8 ScalingType::BIDIMENSIONAL\n");
-                  kernel = group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
-                                                      OType, true, true, WITH_GEMM_SWIZZLED_SCALES>;
+                  kernel =
+                      group_quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
+                                                  OType, true, true, WITH_GEMM_SWIZZLED_SCALES>;
                   break;
                 }
               }
@@ -969,13 +972,13 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
                 update_tma_descriptors<IType, OType><<<num_tensors, 32, 0, stream>>>(
                     tensor_map_input, tensor_map_act_input, tensor_map_output_rowwise,
                     tensor_map_output_colwise, input_dptr, act_input_dptr, output_rowwise_dptr,
-                    output_colwise_dptr, shape_rep, num_tensors, first_logical_dim, last_logical_dim,
-                    offsets_ptr, first_dims_ptr, last_dims_ptr, use_rowwise_scaling,
-                    use_colwise_scaling, IS_DACT);
+                    output_colwise_dptr, shape_rep, num_tensors, first_logical_dim,
+                    last_logical_dim, offsets_ptr, first_dims_ptr, last_dims_ptr,
+                    use_rowwise_scaling, use_colwise_scaling, IS_DACT);
               }
 
-              NVTE_CHECK_CUDA(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                                  dshmem_size));
+              NVTE_CHECK_CUDA(cudaFuncSetAttribute(
+                  kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, dshmem_size));
 
               kernel<<<grid, block_size, dshmem_size, stream>>>(
                   tensor_map_input, tensor_map_act_input, tensor_map_output_rowwise,
@@ -987,10 +990,9 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
                 common::reduce_dbias<IType>(workspace_ptr, dbias, dbias_rows, dbias_cols, stream);
               }
 
-              NVTE_CHECK_CUDA(cudaGetLastError());
-          );  // NOLINT(*)
-      );  // NOLINT(*)
-  );  // NOLINT(*)
+              NVTE_CHECK_CUDA(cudaGetLastError()););  // NOLINT(*)
+      );                                              // NOLINT(*)
+  );                                                  // NOLINT(*)
 }
 
 }  // namespace mxfp8

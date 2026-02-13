@@ -361,12 +361,9 @@ class TestGroupedTensor:
             expected_offset = _rowwise_offset_bytes(i * numel, quantization)
             assert rowwise_data.data_ptr() == original_data_ptr + expected_offset
 
-    @pytest.mark.parametrize(
-        "shape",
-        [[(256, 512), (512, 512), (768, 512)], [(512, 512), (512, 512), (512, 512)]],
-    )
+
     @pytest.mark.skipif(not mxfp8_available, reason=reason_for_no_mxfp8)
-    def test_quantize_grouped_mxfp8(self, shape: List[Tuple[int, int]]) -> None:
+    def test_quantize_grouped_mxfp8(self) -> None:
         """Test grouped quantization for MXFP8 against per-tensor quantization."""
         # Test wont pass until the grouped quantization PR from Oleg is merged.
         num_tensors = 2
