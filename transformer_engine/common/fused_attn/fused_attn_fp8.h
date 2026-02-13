@@ -15,7 +15,7 @@ namespace transformer_engine {
 #if (CUDNN_VERSION >= 8900)
 // fused attention FWD FP8 with separate Q, K, V
 void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_groups,
-                        size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim,
+                        size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v,
                         bool is_training, float attn_scale, float p_dropout,
                         NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
                         NVTE_Mask_Type mask_type, const Tensor *input_Q, const Tensor *input_K,
@@ -26,11 +26,11 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
 
 // fused attention BWD FP8 with separate Q, K, V
 void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_groups,
-                        size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim,
+                        size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v,
                         float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
                         NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, const Tensor *input_Q,
                         const Tensor *input_K, const Tensor *input_V, const Tensor *input_O,
-                        const Tensor *input_dO, const Tensor *input_M, const Tensor *input_ZInv,
+                        const Tensor *input_dO, const Tensor *input_dO_f16, const Tensor *input_M, const Tensor *input_ZInv,
                         const Tensor *input_S, Tensor *input_output_dP, const Tensor *output_dQ,
                         const Tensor *output_dK, const Tensor *output_dV,
                         const Tensor *cu_seqlens_q, const Tensor *cu_seqlens_kv,

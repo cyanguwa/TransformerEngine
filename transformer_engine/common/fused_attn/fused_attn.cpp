@@ -639,7 +639,7 @@ void nvte_fused_attn_fwd_qkvpacked(
     Tensor K_view = make_tensor_view(input_QKV, unpacked_shape, stride);
     Tensor V_view = make_tensor_view(input_QKV, unpacked_shape, 2 * stride);
 
-    fused_attn_fp8_fwd(b, h, h, max_seqlen, max_seqlen, d, is_training, attn_scale, dropout,
+    fused_attn_fp8_fwd(b, h, h, max_seqlen, max_seqlen, d, d, is_training, attn_scale, dropout,
                        qkv_layout, bias_type, attn_mask_type, &Q_view, &K_view, &V_view,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens,
                        input_cu_seqlens, input_rng_state, wkspace, stream, handle);
@@ -772,6 +772,10 @@ void nvte_fused_attn_bwd_qkvpacked(
     const Tensor *input_M = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[0]);
     const Tensor *input_ZInv = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[1]);
     const Tensor *input_rng_state = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[2]);
+    const Tensor *input_dO_f16;
+    if (input_dO->scaling_mode == NVTE_MXFP8_1D_SCALING) {
+    input_dO_f16 = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[3]);
+    }
 
     // Unpack QKV and dQKV and call the non-packed function
     const auto QKV_type = input_QKV->data.dtype;
@@ -787,8 +791,8 @@ void nvte_fused_attn_bwd_qkvpacked(
     Tensor dK_view = make_tensor_view(output_dQKV, unpacked_shape, stride);
     Tensor dV_view = make_tensor_view(output_dQKV, unpacked_shape, 2 * stride);
 
-    fused_attn_fp8_bwd(b, h, h, max_seqlen, max_seqlen, d, attn_scale, dropout, qkv_layout,
-                       bias_type, attn_mask_type, &Q_view, &K_view, &V_view, input_O, input_dO,
+    fused_attn_fp8_bwd(b, h, h, max_seqlen, max_seqlen, d, d, attn_scale, dropout, qkv_layout,
+                       bias_type, attn_mask_type, &Q_view, &K_view, &V_view, input_O, input_dO, input_dO_f16,
                        input_M, input_ZInv, input_S, input_output_dP, &dQ_view, &dK_view, &dV_view,
                        input_cu_seqlens, input_cu_seqlens, input_rng_state, wkspace, stream,
                        handle);
@@ -945,7 +949,7 @@ void nvte_fused_attn_fwd_kvpacked(
     Tensor K_view = make_tensor_view(input_KV, unpacked_kv_shape);
     Tensor V_view = make_tensor_view(input_KV, unpacked_kv_shape, stride);
 
-    fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, is_training, attn_scale,
+    fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, is_training, attn_scale,
                        dropout, qkv_layout, bias_type, attn_mask_type, input_Q, &K_view, &V_view,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
@@ -1090,6 +1094,10 @@ void nvte_fused_attn_bwd_kvpacked(
     const Tensor *input_M = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[0]);
     const Tensor *input_ZInv = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[1]);
     const Tensor *input_rng_state = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[2]);
+    const Tensor *input_dO_f16;
+    if (input_dO->scaling_mode == NVTE_MXFP8_1D_SCALING) {
+    input_dO_f16 = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[3]);
+    }
 
     // Unpack KV and dKV and call the non-packed function
     const auto Q_type = input_Q->data.dtype;
@@ -1104,9 +1112,9 @@ void nvte_fused_attn_bwd_kvpacked(
     Tensor dK_view = make_tensor_view(output_dKV, unpacked_kv_shape);
     Tensor dV_view = make_tensor_view(output_dKV, unpacked_kv_shape, stride);
 
-    fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, attn_scale, dropout,
+    fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, attn_scale, dropout,
                        qkv_layout, bias_type, attn_mask_type, input_Q, &K_view, &V_view, input_O,
-                       input_dO, input_M, input_ZInv, input_S, input_output_dP, output_dQ, &dK_view,
+                       input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ, &dK_view,
                        &dV_view, input_cu_seqlens_q, input_cu_seqlens_kv, input_rng_state, wkspace,
                        stream, handle);
 #else
@@ -1228,7 +1236,7 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
 #endif
   } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8) {
 #if (CUDNN_VERSION >= 8900)
-    fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, is_training, attn_scale,
+    fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, is_training, attn_scale,
                        dropout, qkv_layout, bias_type, attn_mask_type, input_Q, input_K, input_V,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
@@ -1340,9 +1348,13 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
     const Tensor *input_M = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[0]);
     const Tensor *input_ZInv = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[1]);
     const Tensor *input_rng_state = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[2]);
-    fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, attn_scale, dropout,
+    const Tensor *input_dO_f16;
+    if (input_dO->scaling_mode == NVTE_MXFP8_1D_SCALING) {
+    input_dO_f16 = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[3]);
+    }
+    fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, attn_scale, dropout,
                        qkv_layout, bias_type, attn_mask_type, input_Q, input_K, input_V, input_O,
-                       input_dO, input_M, input_ZInv, input_S, input_output_dP, output_dQ,
+                       input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ,
                        output_dK, output_dV, input_cu_seqlens_q, input_cu_seqlens_kv,
                        input_rng_state, wkspace, stream, handle);
 #else
