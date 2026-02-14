@@ -8,12 +8,8 @@ from typing import Optional, Tuple, List, Union
 import math
 
 import torch
-<<<<<<< HEAD
 import transformer_engine
 import transformer_engine_torch as tex
-=======
-
->>>>>>> main
 from ...quantized_tensor import QuantizedTensorStorage, Quantizer
 
 from ..mxfp8_tensor import MXFP8Tensor

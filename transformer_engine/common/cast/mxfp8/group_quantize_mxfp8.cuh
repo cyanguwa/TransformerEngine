@@ -852,9 +852,6 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
     NVTE_CHECK(scales_colwise_ptr != nullptr, "Columnwise scaling tensor must be allocated");
   }
 
-  const bool with_gemm_swizzled_scales = output->with_gemm_swizzled_scales;
-  printf(">>>>>>>>>>>> group_quantize_mxfp8 with_gemm_swizzled_scales: %d\n", with_gemm_swizzled_scales);
-
   const size_t scale_stride_rowwise = use_rowwise_scaling ? output->scale_inv.shape[1] : 1;
   const size_t scale_stride_colwise =
       use_colwise_scaling ? output->columnwise_scale_inv.shape[1] : 1;
