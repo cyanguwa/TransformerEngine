@@ -1654,7 +1654,7 @@ void fused_attn_fp8_bwd_impl(
 void fused_attn_fp8_fwd_impl_v1(
     int64_t b, int64_t h, int64_t hg, int64_t s_q, int64_t s_kv, int64_t d_qk, int64_t d_v, bool is_training,
     float scaling_factor, float dropout_probability, NVTE_QKV_Layout layout,
-    NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, void* devPtrQ, void* devPtrK, void* devPtrV,
+    NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, int64_t window_size_left, int64_t window_size_right, void* devPtrQ, void* devPtrK, void* devPtrV,
     void* devPtrM, void* devPtrZInv, void* devPtrO, void* devPtrDescaleQ, void* devPtrDescaleK,
     void* devPtrDescaleV, void* devPtrDescaleS, void* devPtrScaleS, void* devPtrScaleO,
     void* devPtrAmaxO, void* devPtrAmaxS, void* devPtrcuSeqlensQ, void* devPtrcuSeqlensKV,
@@ -1682,6 +1682,7 @@ void fused_attn_fp8_fwd_impl_v1(
   NVTE_CHECK(is_delayed_scaling || is_current_scaling || is_mxfp8,
              "FP8 fused attention only supports FP8DelayedScaling or FP8CurrentScaling or MXFP8 recipes!");
   printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d_qk: %d, d_v: %d\n", b, h, hg, s_q, s_kv, d_qk, d_v);
+  printf(">>>>>> window_size_left: %d, window_size_right: %d\n", window_size_left, window_size_right);
   printf(">>>>>> scaling_mode: %d\n", scaling_mode);
   printf(">>>>>> is_mxfp8: %d\n", is_mxfp8);
   printf(">>>>>> is_current_scaling: %d\n", is_current_scaling);
@@ -1712,8 +1713,8 @@ void fused_attn_fp8_fwd_impl_v1(
                                bias_type,
                                mask_type,
                                NVTE_Softmax_Type::NVTE_VANILLA_SOFTMAX,
-                               0,
-                               0,
+                               window_size_left,
+                               window_size_right,
                                true,
                                true,
                                qkv_tensor_type,
@@ -1786,10 +1787,12 @@ void fused_attn_fp8_fwd_impl_v1(
       int64_t d_qk_scale = (d_qk + block_size - 1) / block_size;
       int64_t d_v_scale = (d_v + block_size - 1) / block_size;
       int64_t s_kv_scale = (s_kv + block_size - 1) / block_size;
-      int64_t s_q_padded = ((s_q + 127) / 128) * 128;
-      int64_t s_kv_padded       = ((s_kv + 127) / 128) * 128;
+      int64_t s_q_scale = (s_q + block_size - 1) / block_size;
+      int64_t s_q_padded = ((s_q + 3) / 4) * 4;
+      int64_t s_kv_padded       = ((s_kv + 3) / 4) * 4;
       int64_t d_qk_scale_padded = ((d_qk_scale + 3) / 4) * 4;
       int64_t d_v_scale_padded = ((d_v_scale + 3) / 4) * 4;
+      int64_t s_q_scale_padded = ((s_q_scale + 3) / 4) * 4;
       int64_t s_kv_scale_padded = ((s_kv_scale + 3) / 4) * 4;
       int64_t d_qk_padded       = ((d_qk + 3) / 4) * 4;
       int64_t d_v_padded       = ((d_v + 3) / 4) * 4;
@@ -1804,7 +1807,7 @@ void fused_attn_fp8_fwd_impl_v1(
                             NVTE_QKV_Matrix::NVTE_Q_Matrix);
       generateMatrixStrides(b, hg, s_q_padded, s_kv_padded, d_qk_scale_padded, k_scale_strides.data(), layout,
                             NVTE_QKV_Matrix::NVTE_K_Matrix);
-      generateMatrixStrides(b, hg, s_q_padded, s_kv_scale_padded, d_v_padded, v_scale_strides.data(), layout,
+      generateMatrixStrides(b, hg, s_q_scale_padded, s_kv_scale_padded, d_v_padded, v_scale_strides.data(), layout,
                            NVTE_QKV_Matrix::NVTE_V_Matrix);
       printf(">>>>>> q_scale_strides: %d, %d, %d, %d\n", q_scale_strides[0], q_scale_strides[1], q_scale_strides[2], q_scale_strides[3]);
       printf(">>>>>> k_scale_strides: %d, %d, %d, %d\n", k_scale_strides[0], k_scale_strides[1], k_scale_strides[2], k_scale_strides[3]);
@@ -1876,6 +1879,8 @@ void fused_attn_fp8_fwd_impl_v1(
                          .set_generate_stats(true)
                          .set_causal_mask(is_causal)
                          .set_attn_scale(attn_scale);
+      sdpa_options.set_diagonal_band_left_bound(window_size_left + 1);
+      sdpa_options.set_diagonal_band_right_bound(window_size_right);
 
       // sdpa_options.set_alibi_mask(is_alibi);
       // if (is_bias) {
@@ -2055,7 +2060,7 @@ void fused_attn_fp8_fwd_impl_v1(
 void fused_attn_fp8_bwd_impl_v1(
     int64_t b, int64_t h, int64_t hg, int64_t s_q, int64_t s_kv, int64_t d_qk, int64_t d_v, float scaling_factor,
     float dropout_probability, NVTE_QKV_Layout layout, NVTE_Bias_Type bias_type,
-    NVTE_Mask_Type mask_type, void* devPtrQ, void* devPtrK, void* devPtrV, void* devPtrM,
+    NVTE_Mask_Type mask_type, int64_t window_size_left, int64_t window_size_right, void* devPtrQ, void* devPtrK, void* devPtrV, void* devPtrM,
     void* devPtrZInv, void* devPtrO, void* devPtrdO, void* devPtrdQ, void* devPtrdK, void* devPtrdV,
     void* devPtrDescaleQ, void* devPtrDescaleK, void* devPtrDescaleV, void* devPtrDescaleO,
     void* devPtrDescaledO, void* devPtrDescaleS, void* devPtrDescaledP, void* devPtrScaleS,
@@ -2088,6 +2093,7 @@ void fused_attn_fp8_bwd_impl_v1(
   NVTE_CHECK(is_delayed_scaling || is_current_scaling || is_mxfp8,
     "FP8 fused attention only supports FP8DelayedScaling or FP8CurrentScaling or MXFP8 recipes!");
   printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d_qk: %d, d_v: %d\n", b, h, hg, s_q, s_kv, d_qk, d_v);
+  printf(">>>>>> window_size_left: %d, window_size_right: %d\n", window_size_left, window_size_right);
   printf(">>>>>> scaling_mode: %d\n", scaling_mode);
   printf(">>>>>> is_mxfp8: %d\n", is_mxfp8);
   printf(">>>>>> is_current_scaling: %d\n", is_current_scaling);
@@ -2123,8 +2129,8 @@ void fused_attn_fp8_bwd_impl_v1(
                                bias_type,
                                mask_type,
                                NVTE_Softmax_Type::NVTE_VANILLA_SOFTMAX,
-                               0,
-                               0,
+                               window_size_left,
+                               window_size_right,
                                true,
                                false,
                                qkv_tensor_type,
@@ -2299,8 +2305,8 @@ void fused_attn_fp8_bwd_impl_v1(
         int64_t d_v_scale = (d_v + block_size - 1) / block_size;
         int64_t s_q_scale = (s_q + block_size - 1) / block_size;
         int64_t s_kv_scale = (s_kv + block_size - 1) / block_size;
-        int64_t s_q_padded = ((s_q + 127) / 128) * 128;
-        int64_t s_kv_padded = ((s_kv + 127) / 128) * 128;
+        int64_t s_q_padded = ((s_q + 3) / 4) * 4;
+        int64_t s_kv_padded = ((s_kv + 3) / 4) * 4;
         int64_t d_qk_padded       = ((d_qk + 3) / 4) * 4;
         int64_t d_v_padded       = ((d_v + 3) / 4) * 4;
         int64_t d_qk_scale_padded = ((d_qk_scale + 3) / 4) * 4;
@@ -2407,6 +2413,9 @@ void fused_attn_fp8_bwd_impl_v1(
                                   .set_name("sdpa_fp8_backward")
                                   .set_causal_mask(is_causal)
                                   .set_attn_scale(attn_scale);
+
+      // sdpa_backward_options.set_diagonal_band_left_bound(window_size_left + 1);
+      // sdpa_backward_options.set_diagonal_band_right_bound(window_size_right);
 
       // sdpa_backward_options.set_alibi_mask(is_alibi);
 
@@ -2705,7 +2714,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
                         size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v,
                         bool is_training, float attn_scale, float p_dropout,
                         NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
-                        NVTE_Mask_Type mask_type, const Tensor* input_Q, const Tensor* input_K,
+                        NVTE_Mask_Type mask_type, size_t window_size_left, size_t window_size_right, const Tensor* input_Q, const Tensor* input_K,
                         const Tensor* input_V, Tensor* input_output_S, Tensor* output_O,
                         NVTETensorPack* Aux_CTX_Tensors, const Tensor* cu_seqlens_q,
                         const Tensor* cu_seqlens_kv, const Tensor* rng_state, Tensor* workspace,
@@ -2794,7 +2803,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   if ((qkv_format == NVTE_QKV_Format::NVTE_BSHD) || (qkv_format == NVTE_QKV_Format::NVTE_SBHD) || (qkv_format == NVTE_QKV_Format::NVTE_BHSD)) {
     fused_attn::fused_attn_fp8_fwd_impl_v1(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim_qk, head_dim_v, is_training,
-        attn_scale, p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM,
+        attn_scale, p_dropout, qkv_layout, bias_type, mask_type, window_size_left, window_size_right, devPtrQ, devPtrK, devPtrV, devPtrM,
         devPtrZInv, devPtrO, devPtrDescaleQ, devPtrDescaleK, devPtrDescaleV, devPtrDescaleS,
         devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS, devPtrcuSeqlensQ, devPtrcuSeqlensKV,
         devPtrDropoutSeed, devPtrDropoutOffset, get_cudnn_fe_dtype(QKV_type),
@@ -2828,7 +2837,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
 void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_groups,
                         size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v,
                         float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout,
-                        NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, const Tensor* input_Q,
+                        NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, size_t window_size_left, size_t window_size_right, const Tensor* input_Q,
                         const Tensor* input_K, const Tensor* input_V, const Tensor* input_O,
                         const Tensor* input_dO, const Tensor* input_dO_f16, const Tensor* input_M, const Tensor* input_ZInv,
                         const Tensor* input_S, Tensor* input_output_dP, const Tensor* output_dQ,
@@ -2897,7 +2906,7 @@ void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   if ((qkv_format == NVTE_QKV_Format::NVTE_BSHD) || (qkv_format == NVTE_QKV_Format::NVTE_SBHD)) {
     fused_attn::fused_attn_fp8_bwd_impl_v1(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim_qk, head_dim_v, attn_scale,
-        p_dropout, qkv_layout, bias_type, mask_type, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv,
+        p_dropout, qkv_layout, bias_type, mask_type, window_size_left, window_size_right, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv,
         devPtrO, devPtrdO, devPtrdQ, devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleO, devPtrDescaledO, devPtrDescaleS, devPtrDescaledP,
         devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP,

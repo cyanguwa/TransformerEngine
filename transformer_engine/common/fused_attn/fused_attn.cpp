@@ -269,7 +269,9 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
         (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK ||
          attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
          attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_MASK ||
-         attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK))) &&
+         attn_mask_type == NVTE_Mask_Type::NVTE_PADDING_CAUSAL_MASK)) ||
+        // 9.21: mxfp8, d_qk=128, d_v=192
+        (cudnn_runtime_version >= 92100 && head_dim_qk <= 192 && head_dim_v <= 128)) &&
       !requires_64bit_ragged_offset && (softmax_type == NVTE_Softmax_Type::NVTE_VANILLA_SOFTMAX) &&
       // 9.10.0: known bugs with SDPA FP8
       (cudnn_runtime_version != 91000) && !return_max_logit) {
@@ -425,7 +427,7 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
          (cudnn_runtime_version >= 90200 &&
           ((window_size_left == -1 && window_size_right == -1 &&
             attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK) ||
-           ((window_size_left == -1 || window_size_left >= 0) && window_size_right == 0 &&
+           ((window_size_left == -1 || window_size_left >= 0) && (window_size_right == -1 || window_size_right >= 0) &&
             (attn_mask_type == NVTE_Mask_Type::NVTE_NO_MASK ||
              attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_MASK ||
              (attn_mask_type == NVTE_Mask_Type::NVTE_CAUSAL_BOTTOM_RIGHT_MASK &&
@@ -640,7 +642,7 @@ void nvte_fused_attn_fwd_qkvpacked(
     Tensor V_view = make_tensor_view(input_QKV, unpacked_shape, 2 * stride);
 
     fused_attn_fp8_fwd(b, h, h, max_seqlen, max_seqlen, d, d, is_training, attn_scale, dropout,
-                       qkv_layout, bias_type, attn_mask_type, &Q_view, &K_view, &V_view,
+                       qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, &Q_view, &K_view, &V_view,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens,
                        input_cu_seqlens, input_rng_state, wkspace, stream, handle);
 #else
@@ -792,7 +794,7 @@ void nvte_fused_attn_bwd_qkvpacked(
     Tensor dV_view = make_tensor_view(output_dQKV, unpacked_shape, 2 * stride);
 
     fused_attn_fp8_bwd(b, h, h, max_seqlen, max_seqlen, d, d, attn_scale, dropout, qkv_layout,
-                       bias_type, attn_mask_type, &Q_view, &K_view, &V_view, input_O, input_dO, input_dO_f16,
+                       bias_type, attn_mask_type, window_size_left, window_size_right, &Q_view, &K_view, &V_view, input_O, input_dO, input_dO_f16,
                        input_M, input_ZInv, input_S, input_output_dP, &dQ_view, &dK_view, &dV_view,
                        input_cu_seqlens, input_cu_seqlens, input_rng_state, wkspace, stream,
                        handle);
@@ -950,7 +952,7 @@ void nvte_fused_attn_fwd_kvpacked(
     Tensor V_view = make_tensor_view(input_KV, unpacked_kv_shape, stride);
 
     fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, is_training, attn_scale,
-                       dropout, qkv_layout, bias_type, attn_mask_type, input_Q, &K_view, &V_view,
+                       dropout, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, input_Q, &K_view, &V_view,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
 #else
@@ -1113,7 +1115,7 @@ void nvte_fused_attn_bwd_kvpacked(
     Tensor dV_view = make_tensor_view(output_dKV, unpacked_kv_shape, stride);
 
     fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, attn_scale, dropout,
-                       qkv_layout, bias_type, attn_mask_type, input_Q, &K_view, &V_view, input_O,
+                       qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, input_Q, &K_view, &V_view, input_O,
                        input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ, &dK_view,
                        &dV_view, input_cu_seqlens_q, input_cu_seqlens_kv, input_rng_state, wkspace,
                        stream, handle);
@@ -1237,7 +1239,7 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8) {
 #if (CUDNN_VERSION >= 8900)
     fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, is_training, attn_scale,
-                       dropout, qkv_layout, bias_type, attn_mask_type, input_Q, input_K, input_V,
+                       dropout, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, input_Q, input_K, input_V,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
 #else
@@ -1353,7 +1355,7 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
     input_dO_f16 = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[3]);
     }
     fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, attn_scale, dropout,
-                       qkv_layout, bias_type, attn_mask_type, input_Q, input_K, input_V, input_O,
+                       qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, input_Q, input_K, input_V, input_O,
                        input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ,
                        output_dK, output_dV, input_cu_seqlens_q, input_cu_seqlens_kv,
                        input_rng_state, wkspace, stream, handle);

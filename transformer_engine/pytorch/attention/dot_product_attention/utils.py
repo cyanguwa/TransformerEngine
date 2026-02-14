@@ -876,12 +876,7 @@ def get_attention_backend(
     if window_size is None:
         window_size = check_set_window_size(attn_mask_type, window_size)
     if use_fused_attention and (window_size[0] != -1 or window_size[1] not in [-1, 0]):
-        if fp8 and (fp8_meta["recipe"].fp8_dpa or fp8_meta["recipe"].fp8_mha):
-            logger.debug(
-                "Disabling FusedAttention as it does not support sliding window attention for FP8"
-            )
-            use_fused_attention = False
-        elif attention_dropout != 0.0:
+        if attention_dropout != 0.0:
             logger.debug(
                 "Disabling FusedAttention as it only supports sliding window attention "
                 "without dropout"
@@ -1016,7 +1011,7 @@ def get_attention_backend(
             use_fused_attention
             and window_size is not None
             and window_size[0] != -1
-            and fused_attention_backend != FusedAttnBackend["F16_arbitrary_seqlen"]
+            and fused_attention_backend == FusedAttnBackend["F16_max512_seqlen"]
         ):
             logger.debug(
                 "Disabling FusedAttention as only sub-backend %s does not support "
@@ -2214,18 +2209,23 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
 
         original_shapes = [x.shape for x in [q, k, v]]
         s_q, d_qk = q.shape[-2:]
-        s_kv, d_kv = v.shape[-2:]
+        s_kv, d_v = v.shape[-2:]
         assert s_q % 128 == 0
         assert s_kv % 128 == 0
         assert d_qk % 32 == 0
-        assert d_kv % 32 == 0
+        assert d_v % 32 == 0
         # need to check seqlens in THD % 128 == 0
         q, k, v = [x.view(-1, x.shape[-1]) for x in [q, k, v]]
         print(f">>>>>>>>>>>> Flattened shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # consider bhsd for now
-        grouped_tensor = GroupedTensor.create_and_quantize(tensors=[q, k, v], quantizer=qkv_quantizer)
-        q_fp8, k_fp8, v_fp8 = grouped_tensor.quantized_tensors
+        if d_qk == d_v:
+            grouped_tensor = GroupedTensor.create_and_quantize(tensors=[q, k, v], quantizer=qkv_quantizer)
+            q_fp8, k_fp8, v_fp8 = grouped_tensor.quantized_tensors
+        else:
+            q_fp8 = qkv_quantizer(q)
+            k_fp8 = qkv_quantizer(k)
+            v_fp8 = qkv_quantizer(v)
         q_fp8, k_fp8, v_fp8 = [x.view(s) for x, s in zip([q_fp8, k_fp8, v_fp8], original_shapes)]
         print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
         print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
