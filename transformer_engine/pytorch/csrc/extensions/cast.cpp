@@ -83,7 +83,6 @@ py::object quantize(const at::Tensor &tensor, py::handle quantizer, const py::ob
 py::object quantize_grouped(const py::handle &input, py::handle &output) {
   using namespace transformer_engine::pytorch::detail;
   init_extension();
-  printf(">>>>>>>>>>>> quantize_grouped\n");
   const auto &grouped_input_tensor = GroupedTensorFromPyTorchGroupedTensor(input);
   const auto &grouped_output_tensor = GroupedTensorFromPyTorchGroupedTensor(output);
   NVTE_SCOPED_GIL_RELEASE({

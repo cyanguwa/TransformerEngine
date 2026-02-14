@@ -1304,14 +1304,10 @@ class FusedAttnFunc(torch.autograd.Function):
             # out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
             out_fp8 = out_
             out = out_
-            print(f"out_: {type(out_)} {out_.shape}")
-            print(f"is_output_fp8: {is_output_fp8}, is_bwd_fp8: {is_bwd_fp8}, fp8_recipe.float8_current_scaling(): {fp8_recipe.float8_current_scaling()}, _dpa_fp8_cs_o_in_f16: {_dpa_fp8_cs_o_in_f16}")
             if isinstance(out_, Float8Tensor) or isinstance(out_, MXFP8Tensor):
-                print(f"dequantizing out_")
                 if not is_output_fp8 or not is_bwd_fp8:
                     out = out_.dequantize().view(out_.shape)
             else:
-                print(f"quantizing out_")
                 if is_output_fp8 or (
                     is_bwd_fp8
                     and not (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16)

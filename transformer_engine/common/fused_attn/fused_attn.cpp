@@ -234,16 +234,6 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
                                      max_seqlen_kv, head_dim_qk, head_dim_v) == DType::kInt64);
   const bool supported_ragged_offset_size =
       (!requires_64bit_ragged_offset || cudnn_runtime_version >= 90500);
-  printf(">>>>>> nvte_get_fused_attn_backend qkv_layout: %d, %d, %d\n", qkv_layout, NVTE_QKV_Layout::NVTE_BHSD_BHSD_BHSD, NVTE_QKV_Layout::NVTE_BSHD_BSHD_BSHD);
-  printf(">>>>>> nvte_get_fused_attn_backend q_dtype: %d, %d, %d\n", q_dtype, NVTEDType::kNVTEFloat8E4M3, NVTEDType::kNVTEFloat8E5M2);
-  printf(">>>>>> nvte_get_fused_attn_backend qkv_format: %d, %d, %d\n", qkv_format, NVTE_QKV_Format::NVTE_BHSD, NVTE_QKV_Format::NVTE_BSHD);
-  printf(">>>>>> nvte_get_fused_attn_backend q_format: %d, %d, %d\n", q_format, NVTE_QKV_Format::NVTE_BHSD, NVTE_QKV_Format::NVTE_BSHD);
-  printf(">>>>>> nvte_get_fused_attn_backend kv_format: %d, %d, %d\n", kv_format, NVTE_QKV_Format::NVTE_BHSD, NVTE_QKV_Format::NVTE_BSHD);
-  printf(">>>>>> nvte_get_fused_attn_backend layout_group: %d, %d, %d\n", layout_group, NVTE_QKV_Layout_Group::NVTE_SD_SD_SD, NVTE_QKV_Layout_Group::NVTE_HD_HD_HD);
-  printf(">>>>>> nvte_get_fused_attn_backend cudnn_runtime_version: %d\n", cudnn_runtime_version);
-  printf(">>>>>> nvte_get_fused_attn_backend is_training: %d\n", is_training);
-  printf(">>>>>> nvte_get_fused_attn_backend bias_type: %d\n", bias_type);
-  printf(">>>>>> nvte_get_fused_attn_backend attn_mask_type: %d, %d, %d\n", attn_mask_type, NVTE_Mask_Type::NVTE_NO_MASK, NVTE_Mask_Type::NVTE_CAUSAL_MASK);
 
   if ((q_dtype == NVTEDType::kNVTEFloat8E4M3 || q_dtype == NVTEDType::kNVTEFloat8E5M2) &&
       sm_arch_ >= 90 && bias_type == NVTE_Bias_Type::NVTE_NO_BIAS &&
@@ -532,7 +522,6 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
   } else {
     backend = NVTE_Fused_Attn_Backend::NVTE_No_Backend;
   }
-  printf(">>>>>> nvte_get_fused_attn_backend fused_attention_backend: %d\n", backend);
   return backend;
 }
 

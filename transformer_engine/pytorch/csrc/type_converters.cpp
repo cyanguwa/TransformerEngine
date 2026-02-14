@@ -212,7 +212,6 @@ GroupedTensorWrapper GroupedTensorFromPyTorchGroupedTensor(py::handle tensor) {
     scaling_mode = ScalingModeFromQuantizer(quantizer);
     quantizer_dtype = quantizer.attr("dtype").cast<DType>();
     with_gemm_swizzled_scales = quantizer.attr("optimize_for_gemm").cast<bool>();
-    printf(">>>>>>>>>>>> GroupedTensorFromPyTorchGroupedTensor with_gemm_swizzled_scales: %d\n", with_gemm_swizzled_scales);
   }
   auto ret = GroupedTensorWrapper(num_tensors, logical_shape, scaling_mode);
 

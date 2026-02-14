@@ -1681,14 +1681,6 @@ void fused_attn_fp8_fwd_impl_v1(
                   o_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
   NVTE_CHECK(is_delayed_scaling || is_current_scaling || is_mxfp8,
              "FP8 fused attention only supports FP8DelayedScaling or FP8CurrentScaling or MXFP8 recipes!");
-  printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d_qk: %d, d_v: %d\n", b, h, hg, s_q, s_kv, d_qk, d_v);
-  printf(">>>>>> window_size_left: %d, window_size_right: %d\n", window_size_left, window_size_right);
-  printf(">>>>>> scaling_mode: %d\n", scaling_mode);
-  printf(">>>>>> is_mxfp8: %d\n", is_mxfp8);
-  printf(">>>>>> is_current_scaling: %d\n", is_current_scaling);
-  printf(">>>>>> is_delayed_scaling: %d\n", is_delayed_scaling);
-  printf(">>>>>> qkv_tensor_type: %d, %d, %d, %d\n", qkv_tensor_type, cudnn_frontend::DataType_t::FP8_E8M0, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
-  printf(">>>>>> o_tensor_type: %d, %d, %d\n", o_tensor_type, cudnn_frontend::DataType_t::FLOAT, cudnn_frontend::DataType_t::BFLOAT16);
 
   try {
     FADescriptor_v1 descriptor{b,
@@ -1779,9 +1771,6 @@ void fused_attn_fp8_fwd_impl_v1(
                             NVTE_QKV_Matrix::NVTE_K_Matrix);
       generateMatrixStrides(b, hg, s_q, s_kv, d_v, v_stride.data(), layout,
                             NVTE_QKV_Matrix::NVTE_V_Matrix); // need to double check 
-      printf(">>>>>> q_stride: %d, %d, %d, %d\n", q_stride[0], q_stride[1], q_stride[2], q_stride[3]);
-      printf(">>>>>> k_stride: %d, %d, %d, %d\n", k_stride[0], k_stride[1], k_stride[2], k_stride[3]);
-      printf(">>>>>> v_stride: %d, %d, %d, %d\n", v_stride[0], v_stride[1], v_stride[2], v_stride[3]);
 
       int32_t block_size = 32;
       int64_t d_qk_scale = (d_qk + block_size - 1) / block_size;
@@ -1796,7 +1785,6 @@ void fused_attn_fp8_fwd_impl_v1(
       int64_t s_kv_scale_padded = ((s_kv_scale + 3) / 4) * 4;
       int64_t d_qk_padded       = ((d_qk + 3) / 4) * 4;
       int64_t d_v_padded       = ((d_v + 3) / 4) * 4;
-      printf(">>>>>> d_qk_scale: %d, d_v_scale: %d, s_kv_scale: %d, s_q_padded: %d, s_kv_padded: %d, d_qk_scale_padded: %d, d_v_scale_padded: %d, s_kv_scale_padded: %d, d_qk_padded: %d, d_v_padded: %d\n", d_qk_scale, d_v_scale, s_kv_scale, s_q_padded, s_kv_padded, d_qk_scale_padded, d_v_scale_padded, s_kv_scale_padded, d_qk_padded, d_v_padded);
       std::vector<int64_t> q_scale_dims = {b, h, s_q_padded, d_qk_scale_padded};
       std::vector<int64_t> k_scale_dims = {b, hg, s_kv_padded, d_qk_scale_padded};
       std::vector<int64_t> v_scale_dims = {b, hg, s_kv_scale_padded, d_v_padded};
@@ -1809,9 +1797,6 @@ void fused_attn_fp8_fwd_impl_v1(
                             NVTE_QKV_Matrix::NVTE_K_Matrix);
       generateMatrixStrides(b, hg, s_q_scale_padded, s_kv_scale_padded, d_v_padded, v_scale_strides.data(), layout,
                            NVTE_QKV_Matrix::NVTE_V_Matrix);
-      printf(">>>>>> q_scale_strides: %d, %d, %d, %d\n", q_scale_strides[0], q_scale_strides[1], q_scale_strides[2], q_scale_strides[3]);
-      printf(">>>>>> k_scale_strides: %d, %d, %d, %d\n", k_scale_strides[0], k_scale_strides[1], k_scale_strides[2], k_scale_strides[3]);
-      printf(">>>>>> v_scale_strides: %d, %d, %d, %d\n", v_scale_strides[0], v_scale_strides[1], v_scale_strides[2], v_scale_strides[3]);
 
       Q = mha_graph->tensor(fe::graph::Tensor_attributes()
                                 .set_name("Q")
@@ -2049,7 +2034,6 @@ void fused_attn_fp8_fwd_impl_v1(
       variant_pack[dropout_seed] = devPtrDropoutSeed;
       variant_pack[dropout_offset] = devPtrDropoutOffset;
     }
-    printf(">>>>>> mha_graph->execute(handle, variant_pack, workspace)\n");
     NVTE_CHECK_CUDNN_FE(mha_graph->execute(handle, variant_pack, workspace));
   } catch (cudnn_frontend::cudnnException& e) {
     NVTE_ERROR(e.what());
@@ -2092,16 +2076,6 @@ void fused_attn_fp8_bwd_impl_v1(
     dqkv_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
   NVTE_CHECK(is_delayed_scaling || is_current_scaling || is_mxfp8,
     "FP8 fused attention only supports FP8DelayedScaling or FP8CurrentScaling or MXFP8 recipes!");
-  printf(">>>>>> b: %d, h: %d, h_g: %d, s_q: %d, s_kv: %d, d_qk: %d, d_v: %d\n", b, h, hg, s_q, s_kv, d_qk, d_v);
-  printf(">>>>>> window_size_left: %d, window_size_right: %d\n", window_size_left, window_size_right);
-  printf(">>>>>> scaling_mode: %d\n", scaling_mode);
-  printf(">>>>>> is_mxfp8: %d\n", is_mxfp8);
-  printf(">>>>>> is_current_scaling: %d\n", is_current_scaling);
-  printf(">>>>>> is_delayed_scaling: %d\n", is_delayed_scaling);
-  printf(">>>>>> qkv_tensor_type: %d, %d, %d, %d\n", qkv_tensor_type, cudnn_frontend::DataType_t::FP8_E8M0, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
-  printf(">>>>>> o_tensor_type: %d, %d, %d, %d\n", o_tensor_type, cudnn_frontend::DataType_t::FLOAT, cudnn_frontend::DataType_t::BFLOAT16);
-  printf(">>>>>> do_tensor_type: %d, %d, %d\n", do_tensor_type, cudnn_frontend::DataType_t::FLOAT, cudnn_frontend::DataType_t::BFLOAT16);
-  printf(">>>>>> dqkv_tensor_type: %d, %d, %d, %d\n", dqkv_tensor_type, cudnn_frontend::DataType_t::FP8_E8M0, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
 
   bool is_O_in_F16 = (o_tensor_type == cudnn_frontend::DataType_t::HALF ||
                       o_tensor_type == cudnn_frontend::DataType_t::BFLOAT16);
@@ -2313,7 +2287,6 @@ void fused_attn_fp8_bwd_impl_v1(
         int64_t d_v_scale_padded = ((d_v_scale + 3) / 4) * 4;
         int64_t s_q_scale_padded = ((s_q_scale + 3) / 4) * 4;
         int64_t s_kv_scale_padded = ((s_kv_scale + 3) / 4) * 4;
-        printf(">>>>>> d_qk_scale: %d, d_v_scale: %d, s_q_scale: %d, s_kv_scale: %d, s_q_padded: %d, s_kv_padded: %d, d_qk_scale_padded: %d, d_v_scale_padded: %d, s_q_scale_padded: %d, s_kv_scale_padded: %d, d_qk_padded: %d, d_v_padded: %d\n", d_qk_scale, d_v_scale, s_q_scale, s_kv_scale, s_q_padded, s_kv_padded, d_qk_scale_padded, d_v_scale_padded, s_q_scale_padded, s_kv_scale_padded, d_qk_padded, d_v_padded);
         // std::vector<int64_t> q_scale_dims = {b, h, s_q_padded, d_qk_scale_padded};
         // std::vector<int64_t> k_scale_dims = {b, hg, s_kv_padded, d_qk_scale_padded};
         // std::vector<int64_t> v_scale_dims = {b, hg, s_kv_padded, d_v_scale_padded};
@@ -2338,11 +2311,6 @@ void fused_attn_fp8_bwd_impl_v1(
                               NVTE_QKV_Matrix::NVTE_K_Matrix_Transpose);
         generateMatrixStrides(b, hg, s_q_padded, s_kv_padded, d_v_scale_padded, v_scale_strides.data(), layout,
                               NVTE_QKV_Matrix::NVTE_V_Matrix);
-        printf(">>>>>> q_scale_strides: %d, %d, %d, %d\n", q_scale_strides[0], q_scale_strides[1], q_scale_strides[2], q_scale_strides[3]);
-        printf(">>>>>> k_scale_strides: %d, %d, %d, %d\n", k_scale_strides[0], k_scale_strides[1], k_scale_strides[2], k_scale_strides[3]);
-        printf(">>>>>> v_scale_strides: %d, %d, %d, %d\n", v_scale_strides[0], v_scale_strides[1], v_scale_strides[2], v_scale_strides[3]);
-        printf(">>>>>> q_t_scale_strides: %d, %d, %d, %d\n", q_t_scale_strides[0], q_t_scale_strides[1], q_t_scale_strides[2], q_t_scale_strides[3]);
-        printf(">>>>>> k_t_scale_strides: %d, %d, %d, %d\n", k_t_scale_strides[0], k_t_scale_strides[1], k_t_scale_strides[2], k_t_scale_strides[3]);
 
         q_t = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Q_t")
@@ -2733,7 +2701,6 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   void* devPtrScaleS = nullptr;
   void* devPtrDescaleS = nullptr;
   if (input_Q->scaling_mode == NVTE_MXFP8_1D_SCALING) {
-    printf(">>>>>> input_Q is MXFP8_1D_SCALING\n");
     devPtrQ = input_Q->data.dptr;
     devPtrDescaleQ = input_Q->scale_inv.dptr;
     devPtrK = input_K->data.dptr;
@@ -2745,7 +2712,6 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
     devPtrO = output_O->data.dptr;
     devPtrAmaxO = output_O->amax.dptr;
   } else {
-    printf(">>>>>> input_Q is not MXFP8_1D_SCALING\n");
     devPtrQ = input_Q->data.dptr;
     devPtrDescaleQ = input_Q->scale_inv.dptr;
     devPtrK = input_K->data.dptr;

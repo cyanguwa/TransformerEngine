@@ -375,7 +375,6 @@ void group_quantize_fwd_helper(const NVTETensor input, NVTETensor *outputs,
 template <bool IS_ACT, typename ParamOP, float (*OP)(float, const ParamOP &)>
 void group_quantize_fwd_helper(const NVTEGroupedTensor input, NVTEGroupedTensor output,
                                const NVTEQuantizationConfig quant_config, cudaStream_t stream) {
-  printf(">>>>>>>>>>>> group_quantize_fwd_helper\n");
   using namespace detail;
 
   NVTEScalingMode scaling_mode = nvte_grouped_tensor_scaling_mode(output);

@@ -2187,7 +2187,6 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     qkv_group = len(qkv_layout.split("_"))
     src_nominal_dtype = q.dtype
     if isinstance(qkv_quantizer, MXFP8Quantizer):
-        print(f"Combining and quantizing q, k, v: {q.shape}, {k.shape}, {v.shape}")
         
         def permute_x(f, x):
             x = x.contiguous() if not x.is_contiguous() else x
@@ -2204,7 +2203,6 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
         if kv_format not in ["bhsd", "htd"]:
             k = permute_x(kv_format, k)
             v = permute_x(kv_format, v)
-        print(f">>>>>>>>>>>> Permuted shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
         qkv_layout = "bhsd_bhsd_bhsd" if qkv_format != "thd" else "htd_htd_htd"
 
         original_shapes = [x.shape for x in [q, k, v]]
@@ -2216,7 +2214,6 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
         assert d_v % 32 == 0
         # need to check seqlens in THD % 128 == 0
         q, k, v = [x.view(-1, x.shape[-1]) for x in [q, k, v]]
-        print(f">>>>>>>>>>>> Flattened shapes: q: {q.shape}, k: {k.shape}, v: {v.shape}")
 
         # consider bhsd for now
         if d_qk == d_v:
@@ -2227,10 +2224,6 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
             k_fp8 = qkv_quantizer(k)
             v_fp8 = qkv_quantizer(v)
         q_fp8, k_fp8, v_fp8 = [x.view(s) for x, s in zip([q_fp8, k_fp8, v_fp8], original_shapes)]
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_data.shape}, k_fp8: {k_fp8._rowwise_data.shape}, v_fp8: {v_fp8._rowwise_data.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._rowwise_scale_inv.shape}, k_fp8: {k_fp8._rowwise_scale_inv.shape}, v_fp8: {v_fp8._rowwise_scale_inv.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._columnwise_data.shape}, k_fp8: {k_fp8._columnwise_data.shape}, v_fp8: {v_fp8._columnwise_data.shape}")
-        print(f">>>>>>>>>>>> q_fp8: {q_fp8._columnwise_scale_inv.shape}, k_fp8: {k_fp8._columnwise_scale_inv.shape}, v_fp8: {v_fp8._columnwise_scale_inv.shape}")
 
         return q_fp8, k_fp8, v_fp8, qkv_layout
 
@@ -2292,7 +2285,6 @@ def combine_and_dequantize(
         des_nominal_dtype = src_nominal_dtype
 
     if all(isinstance(x, (MXFP8Tensor, MXFP8TensorStorage)) for x in [q_fp8, k_fp8, v_fp8]):
-        print(f"Combining and dequantizing q, k, v from MXFP8 to {des_nominal_dtype}")
         q, k, v = [x.dequantize(dtype=des_nominal_dtype) for x in [q_fp8, k_fp8, v_fp8]]
         return q, k, v
 
