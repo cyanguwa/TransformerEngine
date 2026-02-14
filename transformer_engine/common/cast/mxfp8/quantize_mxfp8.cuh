@@ -776,7 +776,6 @@ void quantize(const Tensor &input, const Tensor *act_input, const Tensor *noop, 
 
               switch (scaling_type) {
                 case ScalingType::ROWWISE: {
-                  printf(">>>>>>>>>>>> quantize_mxfp8 ScalingType::ROWWISE\n");
                   auto kernel = quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
                                                       OType, true, false, WITH_GEMM_SWIZZLED_SCALES,
                                                       CHUNK_DIM_Y, CHUNK_DIM_X, THREADS_PER_CHUNK>;
@@ -792,7 +791,6 @@ void quantize(const Tensor &input, const Tensor *act_input, const Tensor *noop, 
                   break;
                 }
                 case ScalingType::COLWISE: {
-                  printf(">>>>>>>>>>>> quantize_mxfp8 ScalingType::COLWISE\n");
                   auto kernel = quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
                                                       OType, false, true, WITH_GEMM_SWIZZLED_SCALES,
                                                       CHUNK_DIM_Y, CHUNK_DIM_X, THREADS_PER_CHUNK>;
@@ -808,7 +806,6 @@ void quantize(const Tensor &input, const Tensor *act_input, const Tensor *noop, 
                   break;
                 }
                 case ScalingType::BIDIMENSIONAL: {
-                  printf(">>>>>>>>>>>> quantize_mxfp8 ScalingType::BIDIMENSIONAL\n");
                   auto kernel = quantize_mxfp8_kernel<IS_DBIAS, IS_DACT, IS_ACT, ParamOP, OP, IType,
                                                       OType, true, true, WITH_GEMM_SWIZZLED_SCALES,
                                                       CHUNK_DIM_Y, CHUNK_DIM_X, THREADS_PER_CHUNK>;
