@@ -1255,6 +1255,14 @@ class FusedAttnFunc(torch.autograd.Function):
                 dP_quantizer,
             )
 
+            print(f"q_fp8._rowwise_data.shape: {q_fp8._rowwise_data.shape}, k_fp8._rowwise_data.shape: {k_fp8._rowwise_data.shape}, v_fp8._rowwise_data.shape: {v_fp8._rowwise_data.shape}")
+            print(f"q_fp8._rowwise_data.stride: {q_fp8._rowwise_data.stride()}, k_fp8._rowwise_data.stride: {k_fp8._rowwise_data.stride()}, v_fp8._rowwise_data.stride: {v_fp8._rowwise_data.stride()}")
+            print(f"q_fp8._rowwise_scale_inv.shape: {q_fp8._rowwise_scale_inv.shape}, k_fp8._rowwise_scale_inv.shape: {k_fp8._rowwise_scale_inv.shape}, v_fp8._rowwise_scale_inv.shape: {v_fp8._rowwise_scale_inv.shape}")
+            print(f"q_fp8._rowwise_scale_inv.stride: {q_fp8._rowwise_scale_inv.stride()}, k_fp8._rowwise_scale_inv.stride: {k_fp8._rowwise_scale_inv.stride()}, v_fp8._rowwise_scale_inv.stride: {v_fp8._rowwise_scale_inv.stride()}")
+            print(f"q_fp8._columnwise_data.shape: {q_fp8._columnwise_data.shape}, k_fp8._columnwise_data.shape: {k_fp8._columnwise_data.shape}, v_fp8._columnwise_data.shape: {v_fp8._columnwise_data.shape}")
+            print(f"q_fp8._columnwise_data.stride: {q_fp8._columnwise_data.stride()}, k_fp8._columnwise_data.stride: {k_fp8._columnwise_data.stride()}, v_fp8._columnwise_data.stride: {v_fp8._columnwise_data.stride()}")
+            print(f"q_fp8._columnwise_scale_inv.shape: {q_fp8._columnwise_scale_inv.shape}, k_fp8._columnwise_scale_inv.shape: {k_fp8._columnwise_scale_inv.shape}, v_fp8._columnwise_scale_inv.shape: {v_fp8._columnwise_scale_inv.shape}")
+            print(f"q_fp8._columnwise_scale_inv.stride: {q_fp8._columnwise_scale_inv.stride()}, k_fp8._columnwise_scale_inv.stride: {k_fp8._columnwise_scale_inv.stride()}, v_fp8._columnwise_scale_inv.stride: {v_fp8._columnwise_scale_inv.stride()}")
             # out_:
             # DelayedScaling:       Float8Tensor; dtype = torch.float16 or torch.bfloat16
             #                                     fp8_dtype = tex.DType.kFloat8E4M3

@@ -24,12 +24,14 @@ using namespace transformer_engine;
 
 enum NVTE_QKV_Matrix {
   NVTE_Q_Matrix = 0,            // queries
-  NVTE_K_Matrix = 1,            // keys
-  NVTE_K_Matrix_Transpose = 2,  // keys transposed
-  NVTE_V_Matrix = 3,            // values
-  NVTE_V_Matrix_Transpose = 4,  // value matrix transposed
+  NVTE_Q_Matrix_Transpose = 1,  // queries transposed
+  NVTE_K_Matrix = 2,            // keys
+  NVTE_K_Matrix_Transpose = 3,  // keys transposed
+  NVTE_V_Matrix = 4,            // values
+  NVTE_V_Matrix_Transpose = 5,  // values transposed
   NVTE_S_Matrix = 5,            // output of GEMM1
   NVTE_O_Matrix = 6,            // final output
+  NVTE_O_Matrix_Transpose = 7,  // final output transposed
 };
 
 void generateMatrixStrides(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
