@@ -496,7 +496,7 @@ def fused_attn_bwd(
             dqkv_dtype is not None
         ), "dqkv_dtype is required as an input for FP8 fused attention backward."
         assert (
-            len(aux_ctx_tensors) == 3
+            len(aux_ctx_tensors) >= 3
         ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for FP8 fused attention."
 
     output_tensors = tex.fused_attn_bwd(

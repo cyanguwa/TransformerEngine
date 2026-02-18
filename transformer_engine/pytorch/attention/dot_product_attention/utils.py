@@ -2091,10 +2091,11 @@ def get_attention_quantizers(fp8, quantizers):
     if not fp8:
         return [None] * 6
     QKV_quantizer = quantizers["scaling_fwd"][META_QKV]
-    QKV_quantizer.internal = True
+    # QKV_quantizer.internal = True
     QKV_quantizer.set_usage(rowwise=True, columnwise=True)
     O_quantizer = quantizers["scaling_fwd"][META_O]
     O_quantizer.set_usage(rowwise=True, columnwise=False)
+    # O_quantizer.optimize_for_gemm = True
     if isinstance(QKV_quantizer, MXFP8Quantizer):
         QKV_quantizer.optimize_for_gemm = True
         # QKV_quantizer.internal = False
@@ -2105,14 +2106,18 @@ def get_attention_quantizers(fp8, quantizers):
         S_quantizer.set_usage(rowwise=True, columnwise=False)
 
     dQKV_quantizer = quantizers["scaling_bwd"][META_DQKV]
-    dQKV_quantizer.interal = True
-    dQKV_quantizer.set_usage(rowwise=True, columnwise=False)
+    dQKV_quantizer.interal = False
+    dQKV_quantizer.set_usage(rowwise=True, columnwise=True)
     dO_quantizer = quantizers["scaling_bwd"][META_DO]
-    dO_quantizer.set_usage(rowwise=True, columnwise=False)
-    dO_quantizer.internal = True
-    dP_quantizer = quantizers["scaling_bwd"][META_DP]
-    dP_quantizer.set_usage(rowwise=True, columnwise=False)
-    dP_quantizer.interal = True
+    dO_quantizer.set_usage(rowwise=True, columnwise=True)
+    dO_quantizer.internal = False
+    # dO_quantizer.optimize_for_gemm = True
+    if isinstance(dO_quantizer, MXFP8Quantizer):
+        dP_quantizer = None
+    else:
+        dP_quantizer = quantizers["scaling_bwd"][META_DP]
+        dP_quantizer.set_usage(rowwise=True, columnwise=False)
+        dP_quantizer.interal = True
 
     return QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer
 

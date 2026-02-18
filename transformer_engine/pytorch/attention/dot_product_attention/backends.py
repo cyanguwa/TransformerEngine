@@ -203,8 +203,11 @@ class FP8EmulationFunc(torch.autograd.Function):
     def backward(ctx, grad1, grad2, grad3):
         # pylint: disable=missing-function-docstring
         if ctx.quantizer_name in ["dO_quantizer", "dP_quantizer"]:
-            dt_fp8 = ctx.quantizer(grad1)
-            tensors = dt_fp8.dequantize(dtype=grad1.dtype), grad2, grad3
+            if ctx.quantizer is not None:
+                dt_fp8 = ctx.quantizer(grad1)
+                tensors = dt_fp8.dequantize(dtype=grad1.dtype), grad2, grad3
+            else:
+                tensors = grad1, grad2, grad3
         elif ctx.quantizer_name == "dQKV_quantizer":
             query_grad, key_grad, value_grad = [x.contiguous() for x in [grad1, grad2, grad3]]
             dq_fp8, dk_fp8, dv_fp8, ctx.qkv_layout = combine_and_quantize(
@@ -213,6 +216,10 @@ class FP8EmulationFunc(torch.autograd.Function):
             tensors = combine_and_dequantize(
                 ctx.qkv_layout, dq_fp8, dk_fp8, dv_fp8, src_nominal_dtype=query_grad.dtype
             )
+            if isinstance(ctx.quantizer, MXFP8Quantizer):
+                assert ctx.qkv_layout == "bhsd_bhsd_bhsd", "bhsd_bhsd_bhsd is assumed to be the shape always at this point in UnfusedDotProductAttention."
+                # permute back to sbhd_sbhd_sbhd
+                tensors = [x.permute(2, 0, 1, 3).contiguous() for x in tensors]
         else:
             tensors = grad1, grad2, grad3
         return tensors[0], tensors[1], tensors[2], None, None, None
@@ -1341,7 +1348,7 @@ class FusedAttnFunc(torch.autograd.Function):
             fp8_tensors = (None, None, None, None)
             qkvo_tensors = (None, None, None, None)
             if is_bwd_fp8:
-                if fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16:
+                if (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16) or isinstance(QKV_quantizer, MXFP8Quantizer):
                     fp8_tensors = (q_fp8, k_fp8, v_fp8, None)
                     qkvo_tensors = (None, None, None, out)
                 else:
@@ -1481,13 +1488,30 @@ class FusedAttnFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, d_out, *_args):
         # pylint: disable=missing-function-docstring
-
+        print(f"ctx.fp8: {ctx.fp8}, ctx.is_output_fp8: {ctx.is_output_fp8}, isinstance(d_out, QuantizedTensorStorage): {isinstance(d_out, QuantizedTensorStorage)}")
+        print(f"ctx.original_qkv_layout: {ctx.original_qkv_layout}, ctx.qkv_layout: {ctx.qkv_layout}")
+        if ctx.original_qkv_layout != ctx.qkv_layout:
+            original_qkv_format = ctx.original_qkv_layout.split("_")[0]
+            new_qkv_format = ctx.qkv_layout.split("_")[0]
+            perm = []
+            for i in original_qkv_format:
+                perm.append(new_qkv_format.find(i))
+            d_out = d_out.permute(*perm).contiguous()
+            print(f"d_out: {d_out.shape}, {type(d_out)}")
         # d_out is expected to be in FP8 if is_output_fp8=True,
         # but in the case it's not, convert it to FP8 before any operation
         if ctx.fp8 and ctx.is_output_fp8 and not isinstance(d_out, QuantizedTensorStorage):
+            print(f"before dO_quantizer: {type(d_out)}, {d_out.shape}")
+            d_out_f16 = d_out
+            ctx.dO_quantizer.optimize_for_gemm = True
             d_out = ctx.dO_quantizer(d_out)
+            print(f"after dO_quantizer: {type(d_out)}, {d_out.shape}")
             if not ctx.use_FAv2_bwd:
-                d_out._data = d_out._data.contiguous()
+                if isinstance(ctx.dO_quantizer, MXFP8Quantizer):
+                    d_out._rowwise_data = d_out._rowwise_data.contiguous()
+                    d_out._columnwise_data = d_out._columnwise_data.contiguous()
+                else:
+                    d_out._data = d_out._data.contiguous()
         elif not ctx.use_FAv2_bwd:
             d_out = d_out.contiguous()
         (
@@ -1549,14 +1573,6 @@ class FusedAttnFunc(torch.autograd.Function):
                 # FP8 attention:       torch.float16 or torch.bfloat16
                 dqkv_nominal_dtype = ctx.nominal_dtype
 
-                if ctx.original_qkv_layout != ctx.qkv_layout:
-                    original_qkv_format = ctx.original_qkv_layout.split("_")[0]
-                    new_qkv_format = ctx.qkv_layout.split("_")[0]
-                    perm = []
-                    for i in original_qkv_format:
-                        perm.append(new_qkv_format.find(i))
-                    d_out = d_out.permute(*perm).contiguous()
-
                 if ctx.fp8:
                     # d_out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
                     # d_out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16
@@ -1595,10 +1611,16 @@ class FusedAttnFunc(torch.autograd.Function):
                     out_ = out_fp8
                     if ctx.fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16:
                         out_ = out
-                    if ctx.fp8_recipe.mxfp8_block_scaling():
+                    if ctx.fp8_recipe.mxfp8():
                         out_ = out
-                        aux_ctx_tensors.append(d_out)
-
+                        aux_ctx_tensors.append(d_out_f16)
+                    print(f"types: {type(q_fp8)}, {type(k_fp8)}, {type(v_fp8)}, {type(out_)}, {type(d_out_fp8)}, {[type(x) for x in aux_ctx_tensors]}")
+                    print(f"shapes: {q_fp8.shape}, {k_fp8.shape}, {v_fp8.shape}, {out_.shape}, {d_out_fp8.shape}, {[x.shape for x in aux_ctx_tensors]}")
+                    for i in [q_fp8, k_fp8, v_fp8, out_, d_out_fp8, *aux_ctx_tensors]:
+                        if isinstance(i, MXFP8Tensor):
+                            print(f"xxxx: {i._with_gemm_swizzled_scales}")
+                        else:
+                            print(f"xxxx: {i.shape}")
                     dq_, dk_, dv_, *rest = fused_attn_bwd(
                         ctx.max_seqlen_q,
                         ctx.max_seqlen_kv,
@@ -1621,7 +1643,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.attn_scale,
                         ctx.dropout_p,
                         ctx.fast_zero_fill,
-                        ctx.qkv_layout,
+                        ctx.original_qkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
                         ctx.softmax_type,
