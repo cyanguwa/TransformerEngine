@@ -452,19 +452,15 @@ class UnfusedDotProductAttention(torch.nn.Module):
             scale /= self.layer_number
 
         if fp8:
-            # get quantizers from DPA; all Nones if not fp8
-            QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer = (
-                dpa_utils.get_attention_quantizers(fp8, quantizers)
-            )
-            # disable swizzle for MXFP8Quantizer
-            for q in [QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer]:
-                if isinstance(q, MXFP8Quantizer):
-                    q.optimize_for_gemm = False
-                    q.internal = False
-            # S/dP are forced to use DS quantizers in DPA.init_fp8_metadata; revert them here for true CS emulation
+            # get fp8 recipe for DPA
             fp8_recipe = FP8GlobalStateManager.get_fp8_recipe()
             if fp8_meta is not None and fp8_meta.get("local_recipes", None) is not None:
                 fp8_recipe = fp8_meta["local_recipes"][0]
+            # get quantizers from DPA; all Nones if not fp8
+            QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer = (
+                dpa_utils.get_attention_quantizers(fp8, fp8_recipe, quantizers)
+            )
+            # S/dP are forced to use DS quantizers in DPA.init_fp8_metadata; revert them here for true CS emulation
             if fp8_recipe.float8_current_scaling():
                 S_quantizer = Float8CurrentScalingQuantizer(
                     fp8_dtype=S_quantizer.dtype, device="cuda"
@@ -472,6 +468,11 @@ class UnfusedDotProductAttention(torch.nn.Module):
                 dP_quantizer = Float8CurrentScalingQuantizer(
                     fp8_dtype=dP_quantizer.dtype, device="cuda"
                 )
+            # disable swizzle for MXFP8Quantizer
+            for q in [QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer]:
+                if isinstance(q, MXFP8Quantizer):
+                    q.optimize_for_gemm = False
+                    q.internal = False
 
             # q, k, v are in sbhd after previous reshaping
             # quantize and dequantize QKV to emulate FP8
@@ -1229,7 +1230,7 @@ class FusedAttnFunc(torch.autograd.Function):
 
         # get quantizers from DPA; all Nones if not fp8
         QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer = (
-            dpa_utils.get_attention_quantizers(fp8, quantizers)
+            dpa_utils.get_attention_quantizers(fp8, fp8_recipe, quantizers)
         )
 
         # get nominal data type for out
@@ -1488,31 +1489,32 @@ class FusedAttnFunc(torch.autograd.Function):
     @staticmethod
     def backward(ctx, d_out, *_args):
         # pylint: disable=missing-function-docstring
+
         print(f"ctx.fp8: {ctx.fp8}, ctx.is_output_fp8: {ctx.is_output_fp8}, isinstance(d_out, QuantizedTensorStorage): {isinstance(d_out, QuantizedTensorStorage)}")
-        print(f"ctx.original_qkv_layout: {ctx.original_qkv_layout}, ctx.qkv_layout: {ctx.qkv_layout}")
+        # reshape d_out to ctx.qkv_layout; only happens with MXFP8BlockScaling
         if ctx.original_qkv_layout != ctx.qkv_layout:
+            print(f"ctx.original_qkv_layout: {ctx.original_qkv_layout}, ctx.qkv_layout: {ctx.qkv_layout}")
+            print(f"d_out before reshape: {d_out.shape}, {type(d_out)}")
             original_qkv_format = ctx.original_qkv_layout.split("_")[0]
             new_qkv_format = ctx.qkv_layout.split("_")[0]
             perm = []
             for i in original_qkv_format:
                 perm.append(new_qkv_format.find(i))
             d_out = d_out.permute(*perm).contiguous()
-            print(f"d_out: {d_out.shape}, {type(d_out)}")
-        # d_out is expected to be in FP8 if is_output_fp8=True,
-        # but in the case it's not, convert it to FP8 before any operation
-        if ctx.fp8 and ctx.is_output_fp8 and not isinstance(d_out, QuantizedTensorStorage):
-            print(f"before dO_quantizer: {type(d_out)}, {d_out.shape}")
-            d_out_f16 = d_out
-            ctx.dO_quantizer.optimize_for_gemm = True
-            d_out = ctx.dO_quantizer(d_out)
-            print(f"after dO_quantizer: {type(d_out)}, {d_out.shape}")
-            if not ctx.use_FAv2_bwd:
-                if isinstance(ctx.dO_quantizer, MXFP8Quantizer):
-                    d_out._rowwise_data = d_out._rowwise_data.contiguous()
-                    d_out._columnwise_data = d_out._columnwise_data.contiguous()
-                else:
-                    d_out._data = d_out._data.contiguous()
-        elif not ctx.use_FAv2_bwd:
+            print(f"d_out after reshape: {d_out.shape}, {type(d_out)}")
+
+        # d_out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
+        # d_out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16
+        #                          fp8_dtype = tex.DType.kFloat8E5M2
+        d_out_fp8 = None
+        if ctx.fp8:
+            print(f"d_out before quantizer: {d_out.shape}, {type(d_out)}")
+            if isinstance(d_out, QuantizedTensorStorage):
+                d_out_fp8 = d_out
+            else:
+                d_out_fp8 = ctx.dO_quantizer(d_out)
+            print(f"d_out after quantizer: {d_out_fp8.shape}, {type(d_out_fp8)}")
+        if not isinstance(d_out, QuantizedTensorStorage) and not ctx.use_FAv2_bwd:
             d_out = d_out.contiguous()
         (
             q_fp8,
@@ -1574,14 +1576,6 @@ class FusedAttnFunc(torch.autograd.Function):
                 dqkv_nominal_dtype = ctx.nominal_dtype
 
                 if ctx.fp8:
-                    # d_out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
-                    # d_out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16
-                    #                          fp8_dtype = tex.DType.kFloat8E5M2
-                    if ctx.is_output_fp8:
-                        d_out_fp8 = d_out
-                    else:
-                        d_out_fp8 = ctx.dO_quantizer(d_out)
-
                     # print quantizers
                     print_quantizers(
                         "FusedAttnFunc.backward >> before: ",
@@ -1613,14 +1607,9 @@ class FusedAttnFunc(torch.autograd.Function):
                         out_ = out
                     if ctx.fp8_recipe.mxfp8():
                         out_ = out
-                        aux_ctx_tensors.append(d_out_f16)
+                        aux_ctx_tensors.append(d_out)
                     print(f"types: {type(q_fp8)}, {type(k_fp8)}, {type(v_fp8)}, {type(out_)}, {type(d_out_fp8)}, {[type(x) for x in aux_ctx_tensors]}")
                     print(f"shapes: {q_fp8.shape}, {k_fp8.shape}, {v_fp8.shape}, {out_.shape}, {d_out_fp8.shape}, {[x.shape for x in aux_ctx_tensors]}")
-                    for i in [q_fp8, k_fp8, v_fp8, out_, d_out_fp8, *aux_ctx_tensors]:
-                        if isinstance(i, MXFP8Tensor):
-                            print(f"xxxx: {i._with_gemm_swizzled_scales}")
-                        else:
-                            print(f"xxxx: {i.shape}")
                     dq_, dk_, dv_, *rest = fused_attn_bwd(
                         ctx.max_seqlen_q,
                         ctx.max_seqlen_kv,
@@ -1632,7 +1621,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         out_,
                         d_out_fp8,
                         dqkv_nominal_dtype,
-                        dqkv_te_dtype,
+                        dqkv_te_dtype, # could we remove this?
                         aux_ctx_tensors,
                         ctx.fused_attention_backend,
                         cu_seqlens_q_padded,
@@ -1643,7 +1632,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.attn_scale,
                         ctx.dropout_p,
                         ctx.fast_zero_fill,
-                        ctx.original_qkv_layout,
+                        ctx.qkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
                         ctx.softmax_type,
@@ -1652,10 +1641,17 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.deterministic,
                         is_graph_capturing(),
                     )
+                    if ctx.original_qkv_layout != ctx.qkv_layout:
+                        original_qkv_format = ctx.original_qkv_layout.split("_")[0]
+                        new_qkv_format = ctx.qkv_layout.split("_")[0]
+                        perm = []
+                        for i in new_qkv_format:
+                            perm.append(original_qkv_format.find(i))
+                        dq_, dk_, dv_ = [x.permute(*perm).contiguous() for x in (dq_, dk_, dv_)]
 
                     # dq, dk, dv:             torch.Tensor; dtype = torch.float16 or torch.bfloat16
                     dq, dk, dv = dq_, dk_, dv_
-                    is_quantized_tensor = isinstance(dq_, QuantizedTensor)
+                    is_quantized_tensor = isinstance(dq_, QuantizedTensorStorage)
                     if is_quantized_tensor and not ctx.is_input_fp8:
                         # return in F16
                         dq, dk, dv = combine_and_dequantize(
@@ -1665,7 +1661,7 @@ class FusedAttnFunc(torch.autograd.Function):
                             dv_,
                             src_nominal_dtype=dq_.dtype,
                         )
-                    if not is_float8tensor and ctx.is_input_fp8:
+                    if not is_quantized_tensor and ctx.is_input_fp8:
                         # return in FP8
                         dq, dk, dv, _ = combine_and_quantize(
                             ctx.qkv_layout, dq_, dk_, dv_, ctx.dQKV_quantizer
@@ -1982,7 +1978,7 @@ class FusedAttention(torch.nn.Module):
                     " with FP8!"
                 )
             if fp8_recipe.float8_current_scaling() and context_parallel:
-                all_quantizers = dpa_utils.get_attention_quantizers(fp8, quantizers)
+                all_quantizers = dpa_utils.get_attention_quantizers(fp8, fp8_recipe, quantizers)
                 for q in all_quantizers:
                     if isinstance(q, Float8CurrentScalingQuantizer):
                         q.with_amax_reduction = True

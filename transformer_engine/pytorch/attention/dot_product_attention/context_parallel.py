@@ -1356,7 +1356,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
             dQKV_quantizer,
             dO_quantizer,
             dP_quantizer,
-        ) = dpa_utils.get_attention_quantizers(fp8, quantizers)
+        ) = dpa_utils.get_attention_quantizers(fp8, fp8_recipe, quantizers)
 
         q_f16 = None
         q_fp8, k_fp8, v_fp8 = (None, None, None)
@@ -3394,7 +3394,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         max_logit = None
 
         QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer = (
-            dpa_utils.get_attention_quantizers(fp8, quantizers)
+            dpa_utils.get_attention_quantizers(fp8, fp8_recipe, quantizers)
         )
 
         q_fp8, k_fp8, v_fp8 = (None, None, None)
