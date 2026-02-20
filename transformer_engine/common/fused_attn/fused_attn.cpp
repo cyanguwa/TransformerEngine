@@ -208,6 +208,52 @@ NVTE_QKV_Format nvte_get_kv_format(NVTE_QKV_Layout qkv_layout) {
   }
 }
 
+// map one NVTE_QKV_Format to another
+std::vector<size_t> nvte_convert_qkv_format(std::vector<size_t> src_shape, NVTE_QKV_Format src_format, NVTE_QKV_Format dst_format) {
+  std::vector<size_t> dst_shape(src_shape.size());
+  size_t b=0, h=0, s=0, d=0, t=0;
+  switch (src_format) {
+    case NVTE_QKV_Format::NVTE_BSHD:
+      b = src_shape[0];
+      s = src_shape[1];
+      h = src_shape[2];
+      d = src_shape[3];
+      break;
+    case NVTE_QKV_Format::NVTE_SBHD:
+      s = src_shape[0];
+      b = src_shape[1];
+      h = src_shape[2];
+      d = src_shape[3];
+      break;
+    case NVTE_QKV_Format::NVTE_BHSD:
+      b = src_shape[0];
+      h = src_shape[1];
+      s = src_shape[2];
+      d = src_shape[3];
+      break;
+    case NVTE_QKV_Format::NVTE_THD:
+      t = src_shape[0];
+      h = src_shape[1];
+      d = src_shape[2];
+      break;
+  }
+  switch (dst_format) {
+    case NVTE_QKV_Format::NVTE_BSHD:
+      dst_shape = {b, s, h, d};
+      break;
+    case NVTE_QKV_Format::NVTE_SBHD:
+      dst_shape = {s, b, h, d};
+      break;
+    case NVTE_QKV_Format::NVTE_BHSD:
+      dst_shape = {b, h, s, d};
+      break;
+    case NVTE_QKV_Format::NVTE_THD:
+      dst_shape = {t, h, d};
+      break;
+  }
+  return dst_shape;
+}
+
 // select a backend for fused attention
 NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
     bool is_training, NVTEDType q_dtype, NVTEDType kv_dtype, NVTE_QKV_Layout qkv_layout,
@@ -631,7 +677,7 @@ void nvte_fused_attn_fwd_qkvpacked(
     Tensor V_view = make_tensor_view(input_QKV, unpacked_shape, 2 * stride);
 
     fused_attn_fp8_fwd(b, h, h, max_seqlen, max_seqlen, d, d, is_training, attn_scale, dropout,
-                       qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, &Q_view, &K_view, &V_view,
+                       qkv_layout, qkv_format, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, &Q_view, &K_view, &V_view,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens,
                        input_cu_seqlens, input_rng_state, wkspace, stream, handle);
 #else
@@ -941,7 +987,7 @@ void nvte_fused_attn_fwd_kvpacked(
     Tensor V_view = make_tensor_view(input_KV, unpacked_kv_shape, stride);
 
     fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, is_training, attn_scale,
-                       dropout, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, &K_view, &V_view,
+                       dropout, qkv_layout, q_format, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, &K_view, &V_view,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
 #else
@@ -1125,7 +1171,7 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
                          const NVTETensor page_table_v, const NVTETensor rng_state,
                          size_t max_seqlen_q, size_t max_seqlen_kv, bool is_training,
                          bool return_max_logit, bool cuda_graph, float attn_scale, float dropout,
-                         NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+                         NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_Bias_Type bias_type,
                          NVTE_Mask_Type attn_mask_type, NVTE_Softmax_Type softmax_type,
                          int64_t window_size_left, int64_t window_size_right,
                          bool bottom_right_diagonal, NVTETensor workspace, cudaStream_t stream) {
@@ -1228,7 +1274,7 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8) {
 #if (CUDNN_VERSION >= 8900)
     fused_attn_fp8_fwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, is_training, attn_scale,
-                       dropout, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, input_K, input_V,
+                       dropout, qkv_layout, o_format, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, input_K, input_V,
                        input_output_S, output_O, Aux_CTX_Tensors, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
 #else

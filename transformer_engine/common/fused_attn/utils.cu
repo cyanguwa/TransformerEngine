@@ -18,6 +18,37 @@ namespace fused_attn {
 using namespace transformer_engine;
 
 // get matrix strides based on matrix type
+void generateMatrixStridesWithFormat(int64_t b, int64_t h, int64_t s, int64_t d,
+  int64_t *strideA, NVTE_QKV_Format format) {
+constexpr int batch_dim_idx = 0;
+constexpr int head_dim_idx = 1;
+constexpr int seqlen_dim_idx = 2;
+constexpr int hidden_dim_idx = 3;
+
+  switch (format) {
+    case NVTE_QKV_Format::NVTE_BSHD:
+    case NVTE_QKV_Format::NVTE_THD:
+      strideA[batch_dim_idx] = s * h * d;
+      strideA[head_dim_idx] = d;
+      strideA[seqlen_dim_idx] = h * d;
+      strideA[hidden_dim_idx] = 1;
+      break;
+    case NVTE_QKV_Format::NVTE_SBHD:
+      strideA[batch_dim_idx] = h * d;
+      strideA[head_dim_idx] = d;
+      strideA[seqlen_dim_idx] = b * h * d;
+      strideA[hidden_dim_idx] = 1;
+      break;
+    case NVTE_QKV_Format::NVTE_BHSD:
+      strideA[batch_dim_idx] = h * s * d;
+      strideA[head_dim_idx] = s * d;
+      strideA[seqlen_dim_idx] = d;
+      strideA[hidden_dim_idx] = 1;
+      break;
+  }
+}
+
+// get matrix strides based on matrix type
 void generateMatrixStrides(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                            int64_t *strideA, NVTE_QKV_Layout layout, NVTE_QKV_Matrix matrix) {
   constexpr int batch_dim_idx = 0;

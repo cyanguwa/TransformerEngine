@@ -135,6 +135,7 @@ def fused_attn_fwd(
     dropout: float = 0.0,
     fast_zero_fill: bool = True,
     qkv_layout: str = "sbh3d",
+    o_format: str = "sbhd",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
     softmax_type: str = "vanilla",
@@ -204,6 +205,8 @@ def fused_attn_fwd(
                 {"sb3hd", "sbh3d", "sbhd_sb2hd", "sbhd_sbh2d", "sbhd_sbhd_sbhd",
                 "bs3hd", "bsh3d", "bshd_bs2hd", "bshd_bsh2d", "bshd_bshd_bshd",
                 "t3hd", "th3d", "thd_t2hd", "thd_th2d", "thd_thd_thd"}
+    o_format : str, default = "sbhd"
+                format of O; {"sbhd", "bshd", "thd"}
     attn_bias_type : str, default = "no_bias"
                 type of the bias; {"no_bias", "pre_scale_bias", "post_scale_bias", "alibi"}
     attn_mask_type : str, default = "padding"
@@ -307,6 +310,7 @@ def fused_attn_fwd(
         dropout,
         fast_zero_fill,
         QKVLayout[qkv_layout],
+        QKVFormat[o_format],
         AttnBiasType[attn_bias_type],
         AttnMaskType[attn_mask_type],
         SoftmaxType[softmax_type],

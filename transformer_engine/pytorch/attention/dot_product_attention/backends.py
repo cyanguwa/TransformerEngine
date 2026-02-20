@@ -1213,20 +1213,20 @@ class FusedAttnFunc(torch.autograd.Function):
         if fp8_meta is not None and fp8_meta.get("local_recipes", None) is not None:
             fp8_recipe = fp8_meta["local_recipes"][0]
 
+        original_qkv_layout = qkv_layout
+        _, o_format, _ = dpa_utils.get_qkv_format(qkv_layout)
+
         # input types are inferred from the real data while output types are controlled by fp8_output
         # fp8_output should be set upstream as (DPA.fp8 and DPA.fp8_meta["recipe"].fp8_mha)
         assert isinstance(k, q.__class__) and isinstance(
             v, q.__class__
-        ), "q, k, v must be of the same class, e.g. torch.Tensor or Float8Tensor."
-        is_input_fp8 = isinstance(q, Float8Tensor)
+        ), "q, k, v must be of the same class, e.g. torch.Tensor or QuantizedTensorStorage."
+        is_input_fp8 = isinstance(q, QuantizedTensorStorage)
         is_output_fp8 = fp8_output
 
-        # whether fwd kernel in FP8: fp8 = (DPA.fp8 and DPA.fp8_meta["recipe"].fp8_dpa)
-        # whether bwd kernel in FP8:
+        # whether fwd kernel will be run in FP8: fp8 = (DPA.fp8 and DPA.fp8_meta["recipe"].fp8_dpa)
+        # whether bwd kernel will be run in FP8:
         is_bwd_fp8 = fp8 and int(os.getenv("NVTE_FP8_DPA_BWD", "1"))
-
-        # save original qkv_layout
-        original_qkv_layout = qkv_layout
 
         # get quantizers from DPA; all Nones if not fp8
         QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer = (
@@ -1249,7 +1249,7 @@ class FusedAttnFunc(torch.autograd.Function):
             if is_input_fp8:
                 q_fp8, k_fp8, v_fp8 = q, k, v
             else:
-                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(original_qkv_layout, q, k, v, QKV_quantizer)
+                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
 
             # print quantizers
             print_quantizers(
@@ -1263,14 +1263,6 @@ class FusedAttnFunc(torch.autograd.Function):
                 dP_quantizer,
             )
 
-            print(f"q_fp8._rowwise_data.shape: {q_fp8._rowwise_data.shape}, k_fp8._rowwise_data.shape: {k_fp8._rowwise_data.shape}, v_fp8._rowwise_data.shape: {v_fp8._rowwise_data.shape}")
-            print(f"q_fp8._rowwise_data.stride: {q_fp8._rowwise_data.stride()}, k_fp8._rowwise_data.stride: {k_fp8._rowwise_data.stride()}, v_fp8._rowwise_data.stride: {v_fp8._rowwise_data.stride()}")
-            print(f"q_fp8._rowwise_scale_inv.shape: {q_fp8._rowwise_scale_inv.shape}, k_fp8._rowwise_scale_inv.shape: {k_fp8._rowwise_scale_inv.shape}, v_fp8._rowwise_scale_inv.shape: {v_fp8._rowwise_scale_inv.shape}")
-            print(f"q_fp8._rowwise_scale_inv.stride: {q_fp8._rowwise_scale_inv.stride()}, k_fp8._rowwise_scale_inv.stride: {k_fp8._rowwise_scale_inv.stride()}, v_fp8._rowwise_scale_inv.stride: {v_fp8._rowwise_scale_inv.stride()}")
-            print(f"q_fp8._columnwise_data.shape: {q_fp8._columnwise_data.shape}, k_fp8._columnwise_data.shape: {k_fp8._columnwise_data.shape}, v_fp8._columnwise_data.shape: {v_fp8._columnwise_data.shape}")
-            print(f"q_fp8._columnwise_data.stride: {q_fp8._columnwise_data.stride()}, k_fp8._columnwise_data.stride: {k_fp8._columnwise_data.stride()}, v_fp8._columnwise_data.stride: {v_fp8._columnwise_data.stride()}")
-            print(f"q_fp8._columnwise_scale_inv.shape: {q_fp8._columnwise_scale_inv.shape}, k_fp8._columnwise_scale_inv.shape: {k_fp8._columnwise_scale_inv.shape}, v_fp8._columnwise_scale_inv.shape: {v_fp8._columnwise_scale_inv.shape}")
-            print(f"q_fp8._columnwise_scale_inv.stride: {q_fp8._columnwise_scale_inv.stride()}, k_fp8._columnwise_scale_inv.stride: {k_fp8._columnwise_scale_inv.stride()}, v_fp8._columnwise_scale_inv.stride: {v_fp8._columnwise_scale_inv.stride()}")
             # out_:
             # DelayedScaling:       Float8Tensor; dtype = torch.float16 or torch.bfloat16
             #                                     fp8_dtype = tex.DType.kFloat8E4M3
@@ -1298,6 +1290,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 dropout_p,
                 fast_zero_fill,
                 qkv_layout,
+                o_format,
                 attn_bias_type,
                 attn_mask_type,
                 softmax_type,
@@ -1307,20 +1300,21 @@ class FusedAttnFunc(torch.autograd.Function):
                 softmax_offset,
                 cuda_graph=is_graph_capturing(),
             )
-            if original_qkv_layout != qkv_layout:
-                original_qkv_format = original_qkv_layout.split("_")[0]
-                new_qkv_format = qkv_layout.split("_")[0]
-                perm = []
-                for i in new_qkv_format:
-                    perm.append(original_qkv_format.find(i))
-                out_ = out_.permute(*perm).contiguous()
+            print(f"out_.shape: {out_.shape}, type(out_): {type(out_)}")
+            # if original_qkv_layout != qkv_layout:
+            #     original_qkv_format = original_qkv_layout.split("_")[0]
+            #     new_qkv_format = qkv_layout.split("_")[0]
+            #     perm = []
+            #     for i in new_qkv_format:
+            #         perm.append(original_qkv_format.find(i))
+            #     out_ = out_.permute(*perm).contiguous()
 
             # out_fp8: Float8Tensor/MXFP8Tensor; dtype = torch.float16 or torch.bfloat16
             #                        fp8_dtype = tex.DType.kFloat8E4M3
             # out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
             out_fp8 = out_
             out = out_
-            if isinstance(out_, Float8Tensor) or isinstance(out_, MXFP8Tensor):
+            if isinstance(out_, QuantizedTensorStorage):
                 if not is_output_fp8 or not is_bwd_fp8:
                     out = out_.dequantize().view(out_.shape)
             else:
@@ -1382,6 +1376,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 dropout_p,
                 fast_zero_fill,
                 qkv_layout,
+                o_format,
                 attn_bias_type,
                 attn_mask_type,
                 softmax_type,

@@ -114,7 +114,7 @@ std::pair<TensorWrapper, py::object> quantizer_helper(py::handle quantizer,
 // fused attention FWD with separate Q, K and V tensors
 std::vector<py::object> fused_attn_fwd(
     size_t max_seqlen_q, size_t max_seqlen_kv, bool is_training, float attn_scale, float p_dropout,
-    bool set_zero, NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+    bool set_zero, NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_Bias_Type bias_type,
     NVTE_Mask_Type attn_mask_type, NVTE_Softmax_Type softmax_type,
     const std::vector<int64_t> window_size, bool bottom_right_diagonal,
     const at::Tensor cu_seqlens_q, const at::Tensor cu_seqlens_kv, const py::handle Q,
@@ -150,8 +150,9 @@ std::vector<py::object> fused_attn_fwd(
   std::unique_ptr<Quantizer> O_quantizer = convert_quantizer(o_quantizer);
   std::vector<size_t> q_shape = convertShape(te_Q.shape());
   std::vector<size_t> v_shape = convertShape(te_V.shape());
-  auto o_shape = std::vector<size_t>{q_shape.begin(), q_shape.end()};
-  o_shape[o_shape.size() - 1] = v_shape[v_shape.size() - 1];
+  auto o_shape_tmp = std::vector<size_t>{q_shape.begin(), q_shape.end()};
+  o_shape_tmp[o_shape_tmp.size() - 1] = v_shape[v_shape.size() - 1];
+  auto o_shape = nvte_convert_qkv_format(o_shape_tmp, nvte_get_q_format(qkv_layout), o_format);
   const DType fake_dtype_te = GetTransformerEngineDType(fake_dtype);
   std::tie(te_O, py_O) = quantizer_helper(o_quantizer, o_shape, fake_dtype_te, true, std::nullopt);
 
@@ -164,7 +165,7 @@ std::vector<py::object> fused_attn_fwd(
     // FP8
     auto h = q_shape[q_shape.size() - 2];
     auto d = q_shape[q_shape.size() - 1];
-    if (set_zero && (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD)) {
+    if (set_zero && (o_format == NVTE_QKV_Format::NVTE_THD)) {
       if ((h * d) % block_size == 0) {
         mha_fill(te_O, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
       } else {
@@ -172,7 +173,7 @@ std::vector<py::object> fused_attn_fwd(
       }
     }
   } else if (qkv_type == DType::kBFloat16 || qkv_type == DType::kFloat16) {
-    if (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD) {
+    if (o_format == NVTE_QKV_Format::NVTE_THD) {
       te_O.zero_(at::cuda::getCurrentCUDAStream());
     }
   } else {
@@ -251,7 +252,7 @@ std::vector<py::object> fused_attn_fwd(
         te_O.data(), &nvte_aux_tensor_pack, te_cu_seqlens_q.data(), te_cu_seqlens_kv.data(),
         te_cu_seqlens_q_padded.data(), te_cu_seqlens_kv_padded.data(), te_page_table_k.data(),
         te_page_table_v.data(), te_rng_state.data(), max_seqlen_q, max_seqlen_kv, is_training,
-        return_max_logit, cuda_graph, attn_scale, p_dropout, qkv_layout, bias_type, attn_mask_type,
+        return_max_logit, cuda_graph, attn_scale, p_dropout, qkv_layout, o_format, bias_type, attn_mask_type,
         softmax_type, window_size[0], window_size[1], bottom_right_diagonal, workspace.data(),
         at::cuda::getCurrentCUDAStream());
   });
@@ -311,7 +312,7 @@ std::vector<py::object> fused_attn_fwd(
         te_O.data(), &nvte_aux_tensor_pack, te_cu_seqlens_q.data(), te_cu_seqlens_kv.data(),
         te_cu_seqlens_q_padded.data(), te_cu_seqlens_kv_padded.data(), te_page_table_k.data(),
         te_page_table_v.data(), te_rng_state.data(), max_seqlen_q, max_seqlen_kv, is_training,
-        return_max_logit, cuda_graph, attn_scale, p_dropout, qkv_layout, bias_type, attn_mask_type,
+        return_max_logit, cuda_graph, attn_scale, p_dropout, qkv_layout, o_format, bias_type, attn_mask_type,
         softmax_type, window_size[0], window_size[1], bottom_right_diagonal, workspace.data(),
         at::cuda::getCurrentCUDAStream());
   });
@@ -367,6 +368,11 @@ std::vector<py::object> fused_attn_bwd(
   at::Tensor dQ, dK, dV, dQKV, dKV;
   NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
   std::vector<int64_t> tmp_shape;
+  // DType dqkv_type = DType::kNumTypes;
+  // if (!dqkv_quantizer.is_none()) {
+  //   dqkv_type = dqkv_quantizer.attr("fp8_dtype").cast<DType>();
+  // }
+  // printf(">>>>>> dQKV_type: %d\n", dqkv_type);
   auto options = torch::TensorOptions().dtype(GetATenDType(dqkv_type)).device(torch::kCUDA);
   if (dqkv_type == DType::kFloat8E4M3 || dqkv_type == DType::kFloat8E5M2) {
     options = options.dtype(torch::kUInt8);

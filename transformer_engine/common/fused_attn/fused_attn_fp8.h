@@ -17,7 +17,7 @@ namespace transformer_engine {
 void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_groups,
                         size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v,
                         bool is_training, float attn_scale, float p_dropout,
-                        NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+                        NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_Bias_Type bias_type,
                         NVTE_Mask_Type mask_type, size_t window_size_left, size_t window_size_right, bool bottom_right_diagonal, const Tensor *input_Q, const Tensor *input_K,
                         const Tensor *input_V, Tensor *input_output_S, Tensor *output_O,
                         NVTETensorPack *Aux_CTX_Tensors, const Tensor *cu_seqlens_q,

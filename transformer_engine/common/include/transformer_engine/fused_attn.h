@@ -193,6 +193,16 @@ NVTE_QKV_Format nvte_get_q_format(NVTE_QKV_Layout qkv_layout);
  */
 NVTE_QKV_Format nvte_get_kv_format(NVTE_QKV_Layout qkv_layout);
 
+/*! \brief Convert one NVTE_QKV_Format to another.
+ *
+ *  \param[in]     src_shape           The source shape.
+ *  \param[in]     src_format          The source format.
+ *  \param[in]     dst_format          The destination format.
+ *
+ *  \return        The destination shape.
+ */
+ std::vector<size_t> nvte_convert_qkv_format(std::vector<size_t> src_shape, NVTE_QKV_Format src_format, NVTE_QKV_Format dst_format);
+
 /*! \brief Get fused attention backend based on input parameters.
  *
  *  \param[in]     is_training         Whether the model is in training mode.
@@ -563,6 +573,7 @@ void nvte_fused_attn_bwd_kvpacked(
  *  \param[in]     attn_scale                Scaling factor for Q * K.T.
  *  \param[in]     dropout                   Dropout probability.
  *  \param[in]     qkv_layout                QKV tensors' layout.
+ *  \param[in]     o_format                  Output format.
  *  \param[in]     bias_type                 Bias type.
  *  \param[in]     attn_mask_type            Attention mask type.
  *  \param[in]     softmax_type              Attention softmax type.
@@ -581,7 +592,7 @@ void nvte_fused_attn_fwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
                          const NVTETensor page_table_v, const NVTETensor rng_state,
                          size_t max_seqlen_q, size_t max_seqlen_kv, bool is_training,
                          bool return_max_logit, bool cuda_graph, float attn_scale, float dropout,
-                         NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+                         NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_Bias_Type bias_type,
                          NVTE_Mask_Type attn_mask_type, NVTE_Softmax_Type softmax_type,
                          int64_t window_size_left, int64_t window_size_right,
                          bool bottom_right_diagonal, NVTETensor workspace, cudaStream_t stream);

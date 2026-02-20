@@ -34,6 +34,9 @@ enum NVTE_QKV_Matrix {
   NVTE_O_Matrix_Transpose = 7,  // final output transposed
 };
 
+void generateMatrixStridesWithFormat(int64_t b, int64_t h, int64_t s, int64_t d,
+  int64_t *strideA, NVTE_QKV_Format format);
+
 void generateMatrixStrides(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int64_t d,
                            int64_t *strideA, NVTE_QKV_Layout layout, NVTE_QKV_Matrix matrix);
 

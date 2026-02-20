@@ -2094,33 +2094,37 @@ def get_attention_quantizers(fp8, fp8_recipe, quantizers):
     QKV_quantizer = quantizers["scaling_fwd"][META_QKV]
     QKV_quantizer.internal = True
     QKV_quantizer.set_usage(rowwise=True, columnwise=False)
-    O_quantizer = quantizers["scaling_fwd"][META_O]
-    O_quantizer.set_usage(rowwise=True, columnwise=False)
+
     S_quantizer = quantizers["scaling_fwd"][META_S]
     S_quantizer.internal = True
     S_quantizer.set_usage(rowwise=True, columnwise=False)
 
-    dQKV_quantizer = quantizers["scaling_bwd"][META_DQKV]
-    dQKV_quantizer.interal = True
-    dQKV_quantizer.set_usage(rowwise=True, columnwise=False)
+    O_quantizer = quantizers["scaling_fwd"][META_O]
+    O_quantizer.internal = False
+    O_quantizer.set_usage(rowwise=True, columnwise=False)
+
     dO_quantizer = quantizers["scaling_bwd"][META_DO]
-    dO_quantizer.set_usage(rowwise=True, columnwise=False)
     dO_quantizer.internal = True
+    dO_quantizer.set_usage(rowwise=True, columnwise=False)
+
     dP_quantizer = quantizers["scaling_bwd"][META_DP]
-    dP_quantizer.set_usage(rowwise=True, columnwise=False)
     dP_quantizer.interal = True
+    dP_quantizer.set_usage(rowwise=True, columnwise=False)
+
+    dQKV_quantizer = quantizers["scaling_bwd"][META_DQKV]
+    dQKV_quantizer.interal = False
+    dQKV_quantizer.set_usage(rowwise=True, columnwise=False)
 
     if fp8_recipe.mxfp8():
-        QKV_quantizer.columnwise = True
+        QKV_quantizer.columnwise_usage = True
         QKV_quantizer.optimize_for_gemm = True
-        O_quantizer.columnwise = True
-        O_quantizer.optimize_for_gemm = True
         S_quantizer = None
-        dQKV_quantizer.columnwise = True
-        dQKV_quantizer.optimize_for_gemm = True
-        dO_quantizer.columnwise = True
+        O_quantizer.columnwise_usage = True
+
+        dO_quantizer.columnwise_usage = True
         dO_quantizer.optimize_for_gemm = True
         dP_quantizer = None
+        dQKV_quantizer.columnwise_usage = True
 
     return QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer
 
