@@ -2190,6 +2190,16 @@ def print_quantizers(
                     f"{label} >> {names[i]:14s}: {type_str}"
                 )
 
+def permute_to_grouped_tensor(src_format, tensor):
+    """Permute tensor to bhsd or htd format for grouped quantization in MXFP8BlockScaling. src_format ={bshd, sbhd, thd}"""
+    if src_format in ["bhsd", "htd"]:
+        return tensor, src_format
+    tensor = tensor.contiguous() if not tensor.is_contiguous() else tensor
+    dim_s_or_t = src_format.find("s") if 's' in src_format else src_format.find("t")
+    dim_others = [i for i in range(len(tensor.shape)) if i != dim_s_or_t]
+    perm = [*dim_others[:-1], dim_s_or_t, dim_others[-1]]
+    tensor = tensor.permute(*perm).contiguous()
+    return tensor, "bhsd" if src_format != "thd" else "htd"
 
 def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     """Combine q,k,v based on qkv_layout and quantize them together"""
@@ -2199,22 +2209,13 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     qkv_group = len(qkv_layout.split("_"))
     src_nominal_dtype = q.dtype
     if isinstance(qkv_quantizer, MXFP8Quantizer):
-        
-        def permute_x(f, x):
-            x = x.contiguous() if not x.is_contiguous() else x
-            dim_s_dim_t = f.find("s") if 's' in f else f.find("t")
-            dim_others = [i for i in range(len(x.shape)) if i != dim_s_dim_t]
-            perm = [*dim_others[:-1], dim_s_dim_t, dim_others[-1]]
-            x = x.permute(*perm).contiguous()
-            return x
-
         # bs3hd, sb3hd, etc -> bshd_bshd_bhsd -> bhsd_bhsd_bhsd
         # t3hd, etc -> thd_thd_thd -> htd_htd_htd
         if q_format not in ["bhsd", "htd"]:
-            q = permute_x(q_format, q)
+            q, _ = permute_to_grouped_tensor(q_format, q)
         if kv_format not in ["bhsd", "htd"]:
-            k = permute_x(kv_format, k)
-            v = permute_x(kv_format, v)
+            k, _ = permute_to_grouped_tensor(kv_format, k)
+            v, _ = permute_to_grouped_tensor(kv_format, v)
         qkv_layout = "bhsd_bhsd_bhsd" if qkv_format != "thd" else "htd_htd_htd"
 
         original_shapes = [x.shape for x in [q, k, v]]

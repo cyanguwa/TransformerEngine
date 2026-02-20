@@ -828,7 +828,7 @@ void nvte_fused_attn_bwd_qkvpacked(
     Tensor dK_view = make_tensor_view(output_dQKV, unpacked_shape, stride);
     Tensor dV_view = make_tensor_view(output_dQKV, unpacked_shape, 2 * stride);
 
-    fused_attn_fp8_bwd(b, h, h, max_seqlen, max_seqlen, d, d, attn_scale, dropout, qkv_layout,
+    fused_attn_fp8_bwd(b, h, h, max_seqlen, max_seqlen, d, d, attn_scale, dropout, qkv_layout, qkv_format, qkv_format, qkv_layout,
                        bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, &Q_view, &K_view, &V_view, input_O, input_dO, input_dO_f16,
                        input_M, input_ZInv, input_S, input_output_dP, &dQ_view, &dK_view, &dV_view,
                        input_cu_seqlens, input_cu_seqlens, input_rng_state, wkspace, stream,
@@ -1150,7 +1150,7 @@ void nvte_fused_attn_bwd_kvpacked(
     Tensor dV_view = make_tensor_view(output_dKV, unpacked_kv_shape, stride);
 
     fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, attn_scale, dropout,
-                       qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, &K_view, &V_view, input_O,
+                       qkv_layout, q_format, q_format, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, &K_view, &V_view, input_O,
                        input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ, &dK_view,
                        &dV_view, input_cu_seqlens_q, input_cu_seqlens_kv, input_rng_state, wkspace,
                        stream, handle);
@@ -1293,7 +1293,7 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
                          const NVTETensor cu_seqlens_q_padded,
                          const NVTETensor cu_seqlens_kv_padded, size_t max_seqlen_q,
                          size_t max_seqlen_kv, float attn_scale, float dropout,
-                         NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type,
+                         NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_QKV_Format d_out_format, NVTE_QKV_Layout dqkv_layout, NVTE_Bias_Type bias_type,
                          NVTE_Mask_Type attn_mask_type, NVTE_Softmax_Type softmax_type,
                          int64_t window_size_left, int64_t window_size_right,
                          bool bottom_right_diagonal, bool deterministic, bool cuda_graph,
@@ -1390,7 +1390,7 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
     input_dO_f16 = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[3]);
     }
     fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, attn_scale, dropout,
-                       qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, input_K, input_V, input_O,
+                       qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, input_K, input_V, input_O,
                        input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ,
                        output_dK, output_dV, input_cu_seqlens_q, input_cu_seqlens_kv,
                        input_rng_state, wkspace, stream, handle);

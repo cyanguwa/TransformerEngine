@@ -327,11 +327,11 @@ std::vector<py::object> fused_attn_fwd(
 // fused attention BWD with separate Q, K and V
 std::vector<py::object> fused_attn_bwd(
     size_t max_seqlen_q, size_t max_seqlen_kv, float attn_scale, float p_dropout, bool set_zero,
-    NVTE_QKV_Layout qkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
+    NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_QKV_Format d_out_format, NVTE_QKV_Layout dqkv_layout, NVTE_Bias_Type bias_type, NVTE_Mask_Type attn_mask_type,
     NVTE_Softmax_Type softmax_type, const std::vector<int64_t> window_size,
     bool bottom_right_diagonal, bool deterministic, const at::Tensor cu_seqlens_q,
     const at::Tensor cu_seqlens_kv, const py::handle Q, const py::handle K, const py::handle V,
-    const py::handle O, const py::handle dO, const at::ScalarType fake_dtype, const DType dqkv_type,
+    const py::handle O, const py::handle dO, const at::ScalarType fake_dtype, //const DType dqkv_type,
     const std::vector<at::Tensor> Aux_CTX_Tensors,
     const std::optional<at::Tensor> cu_seqlens_q_padded,
     const std::optional<at::Tensor> cu_seqlens_kv_padded, py::handle s_quantizer,
@@ -366,18 +366,18 @@ std::vector<py::object> fused_attn_bwd(
   const DType fake_dtype_te = GetTransformerEngineDType(fake_dtype);
 
   at::Tensor dQ, dK, dV, dQKV, dKV;
-  NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(qkv_layout);
+  NVTE_QKV_Layout_Group layout_group = nvte_get_qkv_layout_group(dqkv_layout);
   std::vector<int64_t> tmp_shape;
-  // DType dqkv_type = DType::kNumTypes;
-  // if (!dqkv_quantizer.is_none()) {
-  //   dqkv_type = dqkv_quantizer.attr("fp8_dtype").cast<DType>();
-  // }
-  // printf(">>>>>> dQKV_type: %d\n", dqkv_type);
+  DType dqkv_type = fake_dtype_te;
+  if (!dqkv_quantizer.is_none()) {
+    dqkv_type = dqkv_quantizer.attr("fp8_dtype").cast<DType>();
+  }
+  printf(">>>>>> dQKV_type: %d\n", dqkv_type);
   auto options = torch::TensorOptions().dtype(GetATenDType(dqkv_type)).device(torch::kCUDA);
   if (dqkv_type == DType::kFloat8E4M3 || dqkv_type == DType::kFloat8E5M2) {
     options = options.dtype(torch::kUInt8);
   }
-  if (detail::IsFloat8CurrentScalingQuantizers(dqkv_quantizer.ptr())) {
+  if (detail::IsFloat8CurrentScalingQuantizers(dqkv_quantizer.ptr()) || detail::IsMXFP8Quantizers(dqkv_quantizer.ptr())) {
     options = options.dtype(fake_dtype);
   }
 
@@ -460,7 +460,7 @@ std::vector<py::object> fused_attn_bwd(
   // construct NVTE tensors
   if (dqkv_type == DType::kFloat8E4M3 || dqkv_type == DType::kFloat8E5M2) {
     // FP8
-    if (set_zero && (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD)) {
+    if (set_zero && (nvte_get_qkv_format(dqkv_layout) == NVTE_QKV_Format::NVTE_THD)) {
       if (((h_q * d_qk) % block_size == 0) && ((h_kv * d_qk) % block_size == 0) &&
           dQ.is_contiguous() && dK.is_contiguous() && dV.is_contiguous()) {
         mha_fill(te_dQ, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
@@ -473,7 +473,7 @@ std::vector<py::object> fused_attn_bwd(
       }
     }
   } else if (dqkv_type == DType::kBFloat16 || dqkv_type == DType::kFloat16) {
-    if (nvte_get_qkv_format(qkv_layout) == NVTE_QKV_Format::NVTE_THD) {
+    if (nvte_get_qkv_format(dqkv_layout) == NVTE_QKV_Format::NVTE_THD) {
       dQ.fill_(0);
       dK.fill_(0);
       dV.fill_(0);
@@ -560,7 +560,7 @@ std::vector<py::object> fused_attn_bwd(
         &nvte_aux_tensor_pack, te_dQ.data(), te_dK.data(), te_dV.data(), te_dBias.data(),
         te_dSoftmaxOffset.data(), te_cu_seqlens_q.data(), te_cu_seqlens_kv.data(),
         te_cu_seqlens_q_padded.data(), te_cu_seqlens_kv_padded.data(), max_seqlen_q, max_seqlen_kv,
-        attn_scale, p_dropout, qkv_layout, bias_type, attn_mask_type, softmax_type, window_size[0],
+        attn_scale, p_dropout, qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, attn_mask_type, softmax_type, window_size[0],
         window_size[1], bottom_right_diagonal, deterministic, cuda_graph, workspace.data(),
         at::cuda::getCurrentCUDAStream());
   });
@@ -577,7 +577,7 @@ std::vector<py::object> fused_attn_bwd(
         &nvte_aux_tensor_pack, te_dQ.data(), te_dK.data(), te_dV.data(), te_dBias.data(),
         te_dSoftmaxOffset.data(), te_cu_seqlens_q.data(), te_cu_seqlens_kv.data(),
         te_cu_seqlens_q_padded.data(), te_cu_seqlens_kv_padded.data(), max_seqlen_q, max_seqlen_kv,
-        attn_scale, p_dropout, qkv_layout, bias_type, attn_mask_type, softmax_type, window_size[0],
+        attn_scale, p_dropout, qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, attn_mask_type, softmax_type, window_size[0],
         window_size[1], bottom_right_diagonal, deterministic, cuda_graph, workspace.data(),
         at::cuda::getCurrentCUDAStream());
   });

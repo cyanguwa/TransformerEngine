@@ -1213,6 +1213,7 @@ class FusedAttnFunc(torch.autograd.Function):
         if fp8_meta is not None and fp8_meta.get("local_recipes", None) is not None:
             fp8_recipe = fp8_meta["local_recipes"][0]
 
+        # save qkv_layout and get output format
         original_qkv_layout = qkv_layout
         _, o_format, _ = dpa_utils.get_qkv_format(qkv_layout)
 
@@ -1300,14 +1301,6 @@ class FusedAttnFunc(torch.autograd.Function):
                 softmax_offset,
                 cuda_graph=is_graph_capturing(),
             )
-            print(f"out_.shape: {out_.shape}, type(out_): {type(out_)}")
-            # if original_qkv_layout != qkv_layout:
-            #     original_qkv_format = original_qkv_layout.split("_")[0]
-            #     new_qkv_format = qkv_layout.split("_")[0]
-            #     perm = []
-            #     for i in new_qkv_format:
-            #         perm.append(original_qkv_format.find(i))
-            #     out_ = out_.permute(*perm).contiguous()
 
             # out_fp8: Float8Tensor/MXFP8Tensor; dtype = torch.float16 or torch.bfloat16
             #                        fp8_dtype = tex.DType.kFloat8E4M3
@@ -1463,9 +1456,10 @@ class FusedAttnFunc(torch.autograd.Function):
             else:
                 ctx.qkv_layout = qkv_layout
         else:
-            ctx.original_qkv_layout = original_qkv_layout
             ctx.qkv_layout = qkv_layout
 
+        ctx.o_format = o_format
+        ctx.dqkv_layout = original_qkv_layout
         ctx.attn_bias_type = attn_bias_type
         ctx.attn_mask_type = attn_mask_type
         ctx.softmax_type = softmax_type
@@ -1486,29 +1480,32 @@ class FusedAttnFunc(torch.autograd.Function):
         # pylint: disable=missing-function-docstring
 
         print(f"ctx.fp8: {ctx.fp8}, ctx.is_output_fp8: {ctx.is_output_fp8}, isinstance(d_out, QuantizedTensorStorage): {isinstance(d_out, QuantizedTensorStorage)}")
-        # reshape d_out to ctx.qkv_layout; only happens with MXFP8BlockScaling
-        if ctx.original_qkv_layout != ctx.qkv_layout:
-            print(f"ctx.original_qkv_layout: {ctx.original_qkv_layout}, ctx.qkv_layout: {ctx.qkv_layout}")
-            print(f"d_out before reshape: {d_out.shape}, {type(d_out)}")
-            original_qkv_format = ctx.original_qkv_layout.split("_")[0]
-            new_qkv_format = ctx.qkv_layout.split("_")[0]
-            perm = []
-            for i in original_qkv_format:
-                perm.append(new_qkv_format.find(i))
-            d_out = d_out.permute(*perm).contiguous()
-            print(f"d_out after reshape: {d_out.shape}, {type(d_out)}")
+        # # reshape d_out to ctx.qkv_layout; only happens with MXFP8BlockScaling
+        # if ctx.original_qkv_layout != ctx.qkv_layout:
+        #     print(f"ctx.original_qkv_layout: {ctx.original_qkv_layout}, ctx.qkv_layout: {ctx.qkv_layout}")
+        #     print(f"d_out before reshape: {d_out.shape}, {type(d_out)}")
+        #     original_qkv_format = ctx.original_qkv_layout.split("_")[0]
+        #     new_qkv_format = ctx.qkv_layout.split("_")[0]
+        #     perm = []
+        #     for i in original_qkv_format:
+        #         perm.append(new_qkv_format.find(i))
+        #     d_out = d_out.permute(*perm).contiguous()
+        #     print(f"d_out after reshape: {d_out.shape}, {type(d_out)}")
 
         # d_out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
         # d_out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16
         #                          fp8_dtype = tex.DType.kFloat8E5M2
         d_out_fp8 = None
+        d_out_format = ctx.o_format
         if ctx.fp8:
             print(f"d_out before quantizer: {d_out.shape}, {type(d_out)}")
+            if ctx.fp8_recipe.mxfp8():
+                d_out, d_out_format = dpa_utils.permute_to_grouped_tensor(d_out_format, d_out)
             if isinstance(d_out, QuantizedTensorStorage):
                 d_out_fp8 = d_out
             else:
                 d_out_fp8 = ctx.dO_quantizer(d_out)
-            print(f"d_out after quantizer: {d_out_fp8.shape}, {type(d_out_fp8)}")
+            print(f"d_out after quantizer: {d_out.shape}, {d_out_fp8.shape}, {type(d_out)}, {type(d_out_fp8)}")
         if not isinstance(d_out, QuantizedTensorStorage) and not ctx.use_FAv2_bwd:
             d_out = d_out.contiguous()
         (
@@ -1583,8 +1580,8 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.dP_quantizer,
                     )
 
-                    # get tex.DType for dq, dk, dv data
-                    dqkv_te_dtype = d_out_fp8._fp8_dtype
+                    # # get tex.DType for dq, dk, dv data
+                    # dqkv_te_dtype = d_out_fp8._fp8_dtype
 
                     # q_fp8, k_fp8, v_fp8, out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16,
                     #                               fp8_dtype = tex.DType.kFloat8E4M3
@@ -1616,7 +1613,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         out_,
                         d_out_fp8,
                         dqkv_nominal_dtype,
-                        dqkv_te_dtype, # could we remove this?
+                        # dqkv_te_dtype, # could we remove this?
                         aux_ctx_tensors,
                         ctx.fused_attention_backend,
                         cu_seqlens_q_padded,
@@ -1628,6 +1625,9 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.dropout_p,
                         ctx.fast_zero_fill,
                         ctx.qkv_layout,
+                        ctx.o_format,
+                        d_out_format,
+                        ctx.dqkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
                         ctx.softmax_type,
@@ -1636,13 +1636,15 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.deterministic,
                         is_graph_capturing(),
                     )
-                    if ctx.original_qkv_layout != ctx.qkv_layout:
-                        original_qkv_format = ctx.original_qkv_layout.split("_")[0]
-                        new_qkv_format = ctx.qkv_layout.split("_")[0]
-                        perm = []
-                        for i in new_qkv_format:
-                            perm.append(original_qkv_format.find(i))
-                        dq_, dk_, dv_ = [x.permute(*perm).contiguous() for x in (dq_, dk_, dv_)]
+                    print(f"dq_.shape: {dq_.shape}, dk_.shape: {dk_.shape}, dv_.shape: {dv_.shape}")
+                    print(f"types: {type(dq_)}, {type(dk_)}, {type(dv_)}")
+                    # if ctx.original_qkv_layout != ctx.qkv_layout:
+                    #     original_qkv_format = ctx.original_qkv_layout.split("_")[0]
+                    #     new_qkv_format = ctx.qkv_layout.split("_")[0]
+                    #     perm = []
+                    #     for i in new_qkv_format:
+                    #         perm.append(original_qkv_format.find(i))
+                    #     dq_, dk_, dv_ = [x.permute(*perm).contiguous() for x in (dq_, dk_, dv_)]
 
                     # dq, dk, dv:             torch.Tensor; dtype = torch.float16 or torch.bfloat16
                     dq, dk, dv = dq_, dk_, dv_
@@ -1676,7 +1678,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 else:
                     if isinstance(d_out, QuantizedTensorStorage):
                         d_out = d_out.dequantize(dtype=ctx.nominal_dtype)
-                    dqkv_te_dtype = TE_DType[d_out.dtype]
+                    # dqkv_te_dtype = TE_DType[d_out.dtype]
                     # q, k, v, out, d_out, dq, dk, dv: torch.Tensor; torch.float16 or torch.bfloat16
                     dq, dk, dv, *rest = fused_attn_bwd(
                         ctx.max_seqlen_q,
@@ -1689,7 +1691,7 @@ class FusedAttnFunc(torch.autograd.Function):
                         out,
                         d_out,
                         dqkv_nominal_dtype,
-                        dqkv_te_dtype,
+                        # dqkv_te_dtype,
                         aux_ctx_tensors,
                         ctx.fused_attention_backend,
                         cu_seqlens_q_padded,

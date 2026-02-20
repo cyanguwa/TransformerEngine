@@ -364,7 +364,7 @@ def fused_attn_bwd(
     o: torch.Tensor,
     d_o: torch.Tensor,
     fake_dtype: torch.dtype,
-    dqkv_dtype: tex.DType,
+    # dqkv_dtype: tex.DType,
     aux_ctx_tensors: List[torch.Tensor],
     fused_attention_backend: tex.NVTE_Fused_Attn_Backend,
     cu_seqlens_q_padded: torch.Tensor = None,
@@ -376,6 +376,9 @@ def fused_attn_bwd(
     dropout: float = 0.0,
     fast_zero_fill: bool = True,
     qkv_layout: str = "sbh3d",
+    o_format: str = "sbhd",
+    d_out_format: str = "sbhd",
+    dqkv_layout: str = "sbh3d",
     attn_bias_type: str = "no_bias",
     attn_mask_type: str = "padding",
     softmax_type: str = "vanilla",
@@ -414,8 +417,8 @@ def fused_attn_bwd(
     fake_dtype : tex.DType
                 data type of Q, K and V - in case of high precision, fake dtype in case of FP8;
                 in torch.dtype
-    dqkv_dtype : tex.DType
-                data type of dQ, dK and dV; in tex.DType, not torch.dtype
+    # dqkv_dtype : tex.DType
+    #             data type of dQ, dK and dV; in tex.DType, not torch.dtype
     aux_ctx_tensors : List[torch.Tensor]
                 auxiliary output tensors of the forward pass when its is_training is True,
                 e.g. aux_ctx_tensors = [M, ZInv, rng_state]
@@ -439,6 +442,15 @@ def fused_attn_bwd(
                 if False, uses PyTorch's .fill_() method
     qkv_layout : str, default = "sbh3d"
                 layout of Q, K and V;
+                {"sb3hd", "sbh3d", "sbhd_sb2hd", "sbhd_sbh2d", "sbhd_sbhd_sbhd",
+                "bs3hd", "bsh3d", "bshd_bs2hd", "bshd_bsh2d", "bshd_bshd_bshd",
+                "t3hd", "th3d", "thd_t2hd", "thd_th2d", "thd_thd_thd"}
+    o_format : str, default = "sbhd"
+                format of O; {"sbhd", "bshd", "thd"}
+    d_out_format : str, default = "sbhd"
+                format of dO; {"sbhd", "bshd", "thd"}
+    dqkv_layout : str, default = "sbh3d"
+                layout of dQ, dK and dV;
                 {"sb3hd", "sbh3d", "sbhd_sb2hd", "sbhd_sbh2d", "sbhd_sbhd_sbhd",
                 "bs3hd", "bsh3d", "bshd_bs2hd", "bshd_bsh2d", "bshd_bshd_bshd",
                 "t3hd", "th3d", "thd_t2hd", "thd_th2d", "thd_thd_thd"}
@@ -496,9 +508,9 @@ def fused_attn_bwd(
         ), "aux_ctx_tensors must contain rng_state as its last element."
 
     if fused_attention_backend == FusedAttnBackend["FP8"]:
-        assert (
-            dqkv_dtype is not None
-        ), "dqkv_dtype is required as an input for FP8 fused attention backward."
+        # assert (
+        #     dqkv_dtype is not None
+        # ), "dqkv_dtype is required as an input for FP8 fused attention backward."
         assert (
             len(aux_ctx_tensors) >= 3
         ), "aux_ctx_tensors is required to be [M, ZInv, rng_state] for FP8 fused attention."
@@ -510,6 +522,9 @@ def fused_attn_bwd(
         dropout,
         fast_zero_fill,
         QKVLayout[qkv_layout],
+        QKVFormat[o_format],
+        QKVFormat[d_out_format],
+        QKVLayout[dqkv_layout],
         AttnBiasType[attn_bias_type],
         AttnMaskType[attn_mask_type],
         SoftmaxType[softmax_type],
@@ -524,7 +539,7 @@ def fused_attn_bwd(
         o,
         d_o,
         fake_dtype,
-        dqkv_dtype,
+        # dqkv_dtype,
         aux_ctx_tensors,
         cu_seqlens_q_padded,
         cu_seqlens_kv_padded,
