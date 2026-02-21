@@ -1825,19 +1825,19 @@ void fused_attn_fp8_fwd_impl_v1(
         generateMatrixStridesWithFormat(b, hg, padded.s_kv_scale_padded, padded.d_v_padded, v_scale_strides.data(), kv_format, true);
         descale_q = mha_graph->tensor(fe::graph::Tensor_attributes()
                                           .set_name("Descale_q")
-                                          .set_dim({b, h, s_q_padded, d_qk_scale_padded})
+                                          .set_dim({b, h, padded.s_q_padded, padded.d_qk_scale_padded})
                                           .set_stride(q_scale_strides)
                                           .set_data_type(fe::DataType_t::FP8_E8M0)
                                           .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_k = mha_graph->tensor(fe::graph::Tensor_attributes()
                                           .set_name("Descale_k")
-                                          .set_dim({b, hg, s_kv_padded, d_qk_scale_padded})
+                                          .set_dim({b, hg, padded.s_kv_padded, padded.d_qk_scale_padded})
                                           .set_stride(k_scale_strides)
                                           .set_data_type(fe::DataType_t::FP8_E8M0)
                                           .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_v = mha_graph->tensor(fe::graph::Tensor_attributes()
                                           .set_name("Descale_v")
-                                          .set_dim({b, hg, s_kv_scale_padded, d_v_padded})
+                                          .set_dim({b, hg, padded.s_kv_scale_padded, padded.d_v_padded})
                                           .set_stride(v_scale_strides)
                                           .set_data_type(fe::DataType_t::FP8_E8M0)
                                           .set_reordering_type(fe::TensorReordering_t::F8_128x4));
@@ -2351,43 +2351,43 @@ void fused_attn_fp8_bwd_impl_v1(
         printf("dO_t_scale_strides: %d, %d, %d, %d\n", dO_t_scale_strides[0], dO_t_scale_strides[1], dO_t_scale_strides[2], dO_t_scale_strides[3]);
         descale_q = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_q")
-                                  .set_dim({b, h, s_q_padded, d_qk_scale_padded})
+                                  .set_dim({b, h, padded.s_q_padded, padded.d_qk_scale_padded})
                                   .set_stride(q_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_q_t = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_q_t")
-                                  .set_dim({b, h, s_q_scale_padded, d_qk_padded})
+                                  .set_dim({b, h, padded.s_q_scale_padded, padded.d_qk_padded})
                                   .set_stride(q_t_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_k = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_k")
-                                  .set_dim({b, hg, s_kv_padded, d_qk_scale_padded})
+                                  .set_dim({b, hg, padded.s_kv_padded, padded.d_qk_scale_padded})
                                   .set_stride(k_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_k_t = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_k_t")
-                                  .set_dim({b, hg, s_kv_scale_padded, d_qk_padded})
+                                  .set_dim({b, hg, padded.s_kv_scale_padded, padded.d_qk_padded})
                                   .set_stride(k_t_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_v = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_v")
-                                  .set_dim({b, hg, s_kv_padded, d_v_scale_padded})
+                                  .set_dim({b, hg, padded.s_kv_padded, padded.d_v_scale_padded})
                                   .set_stride(v_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_dO = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_dO")
-                                  .set_dim({b, h, s_q_padded, d_v_scale_padded})
+                                  .set_dim({b, h, padded.s_q_padded, padded.d_v_scale_padded})
                                   .set_stride(dO_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
         descale_dO_t = mha_graph->tensor(fe::graph::Tensor_attributes()
                                   .set_name("Descale_dO_t")
-                                  .set_dim({b, h, s_q_scale_padded, d_v_padded})
+                                  .set_dim({b, h, padded.s_q_scale_padded, padded.d_v_padded})
                                   .set_stride(dO_t_scale_strides)
                                   .set_data_type(fe::DataType_t::FP8_E8M0)
                                   .set_reordering_type(fe::TensorReordering_t::F8_128x4));
