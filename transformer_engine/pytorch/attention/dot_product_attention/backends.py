@@ -1457,6 +1457,8 @@ class FusedAttnFunc(torch.autograd.Function):
                 ctx.qkv_layout = qkv_layout
         else:
             ctx.qkv_layout = qkv_layout
+            if fp8 and not ctx.fp8:
+                ctx.qkv_layout = original_qkv_layout
 
         ctx.o_format = o_format
         ctx.dqkv_layout = original_qkv_layout
@@ -1505,7 +1507,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 d_out_fp8 = d_out
             else:
                 d_out_fp8 = ctx.dO_quantizer(d_out)
-            print(f"d_out after quantizer: {d_out.shape}, {d_out_fp8.shape}, {type(d_out)}, {type(d_out_fp8)}")
+            print(f"d_out after quantizer: {d_out.shape}, {d_out_fp8._rowwise_data.shape}, {type(d_out)}, {type(d_out_fp8)}")
         if not isinstance(d_out, QuantizedTensorStorage) and not ctx.use_FAv2_bwd:
             d_out = d_out.contiguous()
         (
@@ -1600,8 +1602,12 @@ class FusedAttnFunc(torch.autograd.Function):
                     if ctx.fp8_recipe.mxfp8():
                         out_ = out
                         aux_ctx_tensors.append(d_out)
+                    print(f"q_fp8._with_gemm_swizzled_scales: {q_fp8._with_gemm_swizzled_scales}")
+                    print(f"k_fp8._with_gemm_swizzled_scales: {k_fp8._with_gemm_swizzled_scales}")
+                    print(f"v_fp8._with_gemm_swizzled_scales: {v_fp8._with_gemm_swizzled_scales}")
+                    print(f"d_out_fp8._with_gemm_swizzled_scales: {d_out_fp8._with_gemm_swizzled_scales}")
                     print(f"types: {type(q_fp8)}, {type(k_fp8)}, {type(v_fp8)}, {type(out_)}, {type(d_out_fp8)}, {[type(x) for x in aux_ctx_tensors]}")
-                    print(f"shapes: {q_fp8.shape}, {k_fp8.shape}, {v_fp8.shape}, {out_.shape}, {d_out_fp8.shape}, {[x.shape for x in aux_ctx_tensors]}")
+                    print(f"shapes: {q_fp8._rowwise_data.shape}, {k_fp8._rowwise_data.shape}, {v_fp8._rowwise_data.shape}, {out_.shape}, {d_out_fp8._rowwise_data.shape}, {[x.shape for x in aux_ctx_tensors]}")
                     dq_, dk_, dv_, *rest = fused_attn_bwd(
                         ctx.max_seqlen_q,
                         ctx.max_seqlen_kv,
@@ -1703,6 +1709,9 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.dropout_p,
                         ctx.fast_zero_fill,
                         ctx.qkv_layout,
+                        ctx.o_format,
+                        d_out_format,
+                        ctx.dqkv_layout,
                         ctx.attn_bias_type,
                         ctx.attn_mask_type,
                         ctx.softmax_type,

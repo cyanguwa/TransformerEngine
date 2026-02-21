@@ -447,12 +447,13 @@ NVTE_Fused_Attn_Backend nvte_get_fused_attn_backend(
            bias_type == NVTE_Bias_Type::NVTE_POST_SCALE_BIAS)) &&
         // qkv format
         (qkv_format == NVTE_QKV_Format::NVTE_SBHD || qkv_format == NVTE_QKV_Format::NVTE_BSHD ||
+          qkv_format == NVTE_QKV_Format::NVTE_BHSD ||
          (qkv_format == NVTE_QKV_Format::NVTE_THD && sm_arch_ >= 90 &&
           ((cudnn_runtime_version >= 90100 && num_attn_heads == num_gqa_groups) ||
            cudnn_runtime_version >= 90600)) ||
-         ((q_format == NVTE_QKV_Format::NVTE_SBHD || q_format == NVTE_QKV_Format::NVTE_BSHD ||
+         ((q_format == NVTE_QKV_Format::NVTE_SBHD || q_format == NVTE_QKV_Format::NVTE_BSHD || q_format == NVTE_QKV_Format::NVTE_BHSD ||
            (q_format == NVTE_QKV_Format::NVTE_THD && sm_arch_ >= 90) ||
-           kv_format == NVTE_QKV_Format::NVTE_SBHD || kv_format == NVTE_QKV_Format::NVTE_BSHD ||
+           kv_format == NVTE_QKV_Format::NVTE_SBHD || kv_format == NVTE_QKV_Format::NVTE_BSHD || kv_format == NVTE_QKV_Format::NVTE_BHSD ||
            (kv_format == NVTE_QKV_Format::NVTE_THD && sm_arch_ >= 90)) &&
           cudnn_runtime_version >= 90700)) &&
         // sliding window
@@ -1345,6 +1346,8 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
       h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, window_size_left, window_size_right, false,
       cuda_graph, deterministic);
 
+  printf("Q_type: %d, KV_type: %d, qkv_layout: %d, bias_type: %d, attn_mask_type: %d, softmax_type: %d, dropout: %f, h_q: %d, h_kv: %d, max_seqlen_q: %d, max_seqlen_kv: %d, d_qk: %d, d_v: %d, window_size_left: %d, window_size_right: %d, deterministic: %d\n", Q_type, KV_type, qkv_layout, bias_type, attn_mask_type, softmax_type, dropout, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, window_size_left, window_size_right, deterministic);
+  printf("fused_attention_backend: %d\n", fused_attention_backend);
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
     Tensor *output_S = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[0]);

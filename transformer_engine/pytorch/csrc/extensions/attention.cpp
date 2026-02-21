@@ -370,7 +370,7 @@ std::vector<py::object> fused_attn_bwd(
   std::vector<int64_t> tmp_shape;
   DType dqkv_type = fake_dtype_te;
   if (!dqkv_quantizer.is_none()) {
-    dqkv_type = dqkv_quantizer.attr("fp8_dtype").cast<DType>();
+    dqkv_type = dqkv_quantizer.attr("dtype").cast<DType>();
   }
   printf(">>>>>> dQKV_type: %d\n", dqkv_type);
   auto options = torch::TensorOptions().dtype(GetATenDType(dqkv_type)).device(torch::kCUDA);
