@@ -1816,7 +1816,7 @@ qkv_format_fp8_vs_f16 = ["bshd", "sbhd"]
 @pytest.mark.parametrize("fp8_dpa_bwd", [True, False])
 @pytest.mark.parametrize("RoPE", [True, False])
 @pytest.mark.parametrize("is_training", [True, False])
-@pytest.mark.parametrize("scaling_mode", ["delayed", "current"])
+@pytest.mark.parametrize("scaling_mode", ["delayed", "current", "mxfp8"])
 def test_mha_fp8_vs_f16(
     dtype, model, qkv_format, input_layernorm, fp8_dpa_bwd, RoPE, is_training, scaling_mode
 ):
@@ -1837,6 +1837,12 @@ def test_mha_fp8_vs_f16(
         )
     elif scaling_mode == "current":
         fp8_recipe = recipe.Float8CurrentScaling(
+            fp8_format=recipe.Format.HYBRID,
+            fp8_dpa=True,
+            fp8_mha=True,
+        )
+    elif scaling_mode == "mxfp8":
+        fp8_recipe = recipe.MXFP8BlockScaling(
             fp8_format=recipe.Format.HYBRID,
             fp8_dpa=True,
             fp8_mha=True,
