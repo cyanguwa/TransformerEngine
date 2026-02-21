@@ -139,6 +139,11 @@ layers as follows.
 |                   |           | export NVTE_DPA_FP8DS_AMAX_HISTLEN=1              # or any other integer          |
 |                   |           | export NVTE_DPA_FP8DS_REDUCE_AMAX=1               # or 0                          |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
+| NVFP4             | MXFP8     | Pass NVFP4 to autocast();                                                         |
+|                   |           | Attention MXFP8 reuses the fp8_dpa, fp8_mha values from linear NVFP4;             |
+|                   |           | export NVTE_DPA_FP8_RECIPE="MXFP8BlockScaling"    # switch to MXFP8BS             |
+|                   |           | export NVTE_DPA_FP8_FORMAT="HYBRID"               # or "E4M3", "E5M2"             |
++-------------------+-----------+-----------------------------------------------------------------------------------+
 """
 _dpa_fp8_recipe = os.getenv("NVTE_DPA_FP8_RECIPE", "")
 formats = {"HYBRID": Format.HYBRID, "E4M3": Format.E4M3, "E5M2": Format.E5M2}
@@ -673,6 +678,15 @@ class DotProductAttention(TransformerEngineBaseModule):
             ]
             fp8_recipe_dpa = fake_recipes[1]
             fp8_recipes = fake_recipes
+        elif fp8_recipe.nvfp4() and _dpa_fp8_recipe == "MXFP8BlockScaling":
+            # reuse fp8_dpa, fp8_mha from fp8_recipe but not fp8_format; construct a MXFP8 recipe
+            fake_recipe = MXFP8BlockScaling(
+                fp8_format=_dpa_fp8_format,
+                fp8_dpa=fp8_recipe.fp8_dpa,
+                fp8_mha=fp8_recipe.fp8_mha,
+            )
+            fp8_recipe_dpa = fake_recipe
+            fp8_recipes = fp8_recipe_dpa
 
         # reduce over TP+CP groups; expect fp8_group to be set up so
         # assume attention uses the same fp8_group as GEMMs
