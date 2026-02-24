@@ -949,6 +949,9 @@ std::pair<TensorWrapper, py::object> MXFP8Quantizer::create_unquantized_tensor_w
   TensorWrapper out_cpp = std::move(out.first);
   py::object out_py = std::move(out.second);
   out_cpp.set_amax(amax_tensor.data_ptr(), DType::kFloat32, std::vector<size_t>{1});
+  printf("after MXFP8Quantizer::create_unquantized_tensor_with_amax\n");
+  printf("amax_ptr: %p\n", amax_tensor.data_ptr());
+  printf("out_cpp.amax(): %f\n", amax_tensor.cpu().item<float>());
   return {std::move(out_cpp), std::move(out_py)};
 }
 

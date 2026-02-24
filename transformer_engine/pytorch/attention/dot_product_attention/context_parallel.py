@@ -3403,10 +3403,10 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 fused_attn_backend = FusedAttnBackend["FP8"]
                 if is_input_fp8:
                     q_fp8, k_fp8, v_fp8 = q, k, v
-                    q, k, v = q_fp8._data, k_fp8._data, v_fp8._data
-                else:
-                    q_fp8, k_fp8, v_fp8 = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
-                    q, k, v = [q_fp8._data, k_fp8._data, v_fp8._data]
+                elif not isinstance(QKV_quantizer, MXFP8Quantizer):
+                    q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
+                q, k, v = [q_fp8._data, k_fp8._data, v_fp8._data]
+
                 fp8_meta_kwargs = {}
                 fp8_meta_kwargs["s_quantizer"] = S_quantizer
                 fp8_meta_kwargs["o_quantizer"] = O_quantizer

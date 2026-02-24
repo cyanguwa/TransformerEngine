@@ -195,13 +195,19 @@ NVTE_QKV_Format nvte_get_kv_format(NVTE_QKV_Layout qkv_layout);
 
 /*! \brief Convert one NVTE_QKV_Format to another.
  *
- *  \param[in]     src_shape           The source shape.
  *  \param[in]     src_format          The source format.
+ *  \param[in]     src_shape           The source shape.
  *  \param[in]     dst_format          The destination format.
+ *  \param[in,out] dst_shape           The destination shape.
+ *  \param[in,out] b                   The batch size.
+ *  \param[in,out] h                   The number of heads.
+ *  \param[in,out] s                   The sequence length.
+ *  \param[in,out] d                   The head dimension.
+ *  \param[in,out] t                   The time dimension.
  *
  *  \return        The destination shape.
  */
- std::vector<size_t> nvte_convert_qkv_format(std::vector<size_t> src_shape, NVTE_QKV_Format src_format, NVTE_QKV_Format dst_format);
+ void nvte_convert_qkv_format(NVTE_QKV_Format src_format, std::vector<size_t> src_shape, NVTE_QKV_Format dst_format, std::vector<size_t> &dst_shape, size_t *b, size_t *h, size_t *s, size_t *d, size_t *t);
 
 /*! \brief Get fused attention backend based on input parameters.
  *

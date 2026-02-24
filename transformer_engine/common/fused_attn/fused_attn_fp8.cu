@@ -1822,7 +1822,7 @@ void fused_attn_fp8_fwd_impl_v1(
         auto padded = pad_s_d_for_mxfp8(s_q, s_kv, d_qk, d_v);
         generateMatrixStridesWithFormat(b, h, padded.s_q_padded, padded.d_qk_scale_padded, q_scale_strides.data(), q_format, false);
         generateMatrixStridesWithFormat(b, hg, padded.s_kv_padded, padded.d_qk_scale_padded, k_scale_strides.data(), kv_format, false);
-        generateMatrixStridesWithFormat(b, hg, padded.s_kv_scale_padded, padded.d_v_padded, v_scale_strides.data(), kv_format, true);
+        generateMatrixStridesWithFormat(b, hg, padded.s_kv_scale_padded, padded.d_v_padded, v_scale_strides.data(), kv_format, false);
         descale_q = mha_graph->tensor(fe::graph::Tensor_attributes()
                                           .set_name("Descale_q")
                                           .set_dim({b, h, padded.s_q_padded, padded.d_qk_scale_padded})
@@ -2038,7 +2038,7 @@ void fused_attn_fp8_fwd_impl_v1(
 void fused_attn_fp8_bwd_impl_v1(
     int64_t b, int64_t h, int64_t hg, int64_t s_q, int64_t s_kv, int64_t d_qk, int64_t d_v, float scaling_factor,
     float dropout_probability, NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_QKV_Format d_out_format, NVTE_QKV_Layout dqkv_layout, NVTE_Bias_Type bias_type,
-    NVTE_Mask_Type mask_type, int64_t window_size_left, int64_t window_size_right, bool bottom_right_diagonal,void* devPtrQ, void* devPtrK, void* devPtrV, void* devPtrM,
+    NVTE_Mask_Type mask_type, int64_t window_size_left, int64_t window_size_right, bool bottom_right_diagonal, bool deterministic, void* devPtrQ, void* devPtrK, void* devPtrV, void* devPtrM,
     void* devPtrZInv, void* devPtrO, void* devPtrdO, void* devPtrdQ, void* devPtrdK, void* devPtrdV,
     void* devPtrDescaleQ, void* devPtrDescaleK, void* devPtrDescaleV, void* devPtrDescaleO,
     void* devPtrDescaledO, void* devPtrDescaleS, void* devPtrDescaledP, void* devPtrScaleS,
@@ -2101,7 +2101,7 @@ void fused_attn_fp8_bwd_impl_v1(
                                window_size_left,
                                window_size_right,
                                bottom_right_diagonal,
-                               false,
+                               deterministic,
                                qkv_tensor_type,
                                o_tensor_type,
                                do_tensor_type,
@@ -2265,20 +2265,20 @@ void fused_attn_fp8_bwd_impl_v1(
         std::vector<int64_t> q_t_stride(4);
         std::vector<int64_t> k_t_stride(4);
         std::vector<int64_t> dO_t_stride(4);
-        generateMatrixStridesWithFormat(b, h, s_q, d_qk, q_t_stride.data(), q_format, true);
-        generateMatrixStridesWithFormat(b, hg, s_kv, d_qk, k_t_stride.data(), kv_format, true);
-        generateMatrixStridesWithFormat(b, h, s_q, d_v, dO_t_stride.data(), d_out_format, true);
+        generateMatrixStridesWithFormat(b, h, s_q, d_qk, q_t_stride.data(), q_format, false);
+        generateMatrixStridesWithFormat(b, hg, s_kv, d_qk, k_t_stride.data(), kv_format, false);
+        generateMatrixStridesWithFormat(b, h, s_q, d_v, dO_t_stride.data(), d_out_format, false);
         printf("q_t_stride: %d, %d, %d, %d\n", q_t_stride[0], q_t_stride[1], q_t_stride[2], q_t_stride[3]);
         printf("k_t_stride: %d, %d, %d, %d\n", k_t_stride[0], k_t_stride[1], k_t_stride[2], k_t_stride[3]);
         printf("dO_t_stride: %d, %d, %d, %d\n", dO_t_stride[0], dO_t_stride[1], dO_t_stride[2], dO_t_stride[3]);
-        printf("qkv_tensor_type: %d\n", qkv_tensor_type);
-        printf("o_tensor_type: %d\n", o_tensor_type);
-        printf("do_tensor_type: %d\n", do_tensor_type);
-        printf("dqkv_tensor_type: %d\n", dqkv_tensor_type);
-        printf("qkv_layout: %d\n", qkv_layout);
-        printf("o_format: %d\n", o_format);
-        printf("d_out_format: %d\n", d_out_format);
-        printf("dqkv_layout: %d\n", dqkv_layout);
+        printf("qkv_tensor_type: %d, %d, %d\n", qkv_tensor_type, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
+        printf("o_tensor_type: %d, %d, %d\n", o_tensor_type, cudnn_frontend::DataType_t::HALF, cudnn_frontend::DataType_t::BFLOAT16);
+        printf("do_tensor_type: %d, %d, %d\n", do_tensor_type, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
+        printf("dqkv_tensor_type: %d, %d, %d\n", dqkv_tensor_type, cudnn_frontend::DataType_t::FP8_E4M3, cudnn_frontend::DataType_t::FP8_E5M2);
+        printf("qkv_layout: %d, %d, %d\n", qkv_layout, NVTE_QKV_Layout::NVTE_BSHD_BSHD_BSHD, NVTE_QKV_Layout::NVTE_BHSD_BHSD_BHSD);
+        printf("o_format: %d, %d, %d\n", o_format, NVTE_QKV_Format::NVTE_BSHD, NVTE_QKV_Format::NVTE_BHSD);
+        printf("d_out_format: %d, %d, %d\n", d_out_format, NVTE_QKV_Format::NVTE_BSHD, NVTE_QKV_Format::NVTE_BHSD);
+        printf("dqkv_layout: %d, %d, %d\n", dqkv_layout, NVTE_QKV_Layout::NVTE_BSHD_BSHD_BSHD, NVTE_QKV_Layout::NVTE_BHSD_BHSD_BHSD);
         printf("b: %d\n", b);
         printf("h: %d\n", h);
         printf("hg: %d\n", hg);
@@ -2336,12 +2336,12 @@ void fused_attn_fp8_bwd_impl_v1(
         std::vector<int64_t> dO_scale_strides(4);
         std::vector<int64_t> dO_t_scale_strides(4);
         generateMatrixStridesWithFormat(b, h, padded.s_q_padded, padded.d_qk_scale_padded, q_scale_strides.data(), q_format, false);
-        generateMatrixStridesWithFormat(b, h, padded.s_q_scale_padded, padded.d_qk_padded, q_t_scale_strides.data(), q_format, true);
+        generateMatrixStridesWithFormat(b, h, padded.s_q_scale_padded, padded.d_qk_padded, q_t_scale_strides.data(), q_format, false);
         generateMatrixStridesWithFormat(b, hg, padded.s_kv_padded, padded.d_qk_scale_padded, k_scale_strides.data(), kv_format, false);
-        generateMatrixStridesWithFormat(b, hg, padded.s_kv_scale_padded, padded.d_qk_padded, k_t_scale_strides.data(), kv_format, true);
+        generateMatrixStridesWithFormat(b, hg, padded.s_kv_scale_padded, padded.d_qk_padded, k_t_scale_strides.data(), kv_format, false);
         generateMatrixStridesWithFormat(b, hg, padded.s_kv_padded, padded.d_v_scale_padded, v_scale_strides.data(), kv_format, false);
         generateMatrixStridesWithFormat(b, h, padded.s_q_padded, padded.d_v_scale_padded, dO_scale_strides.data(), d_out_format, false);
-        generateMatrixStridesWithFormat(b, h, padded.s_q_scale_padded, padded.d_v_padded, dO_t_scale_strides.data(), d_out_format, true);
+        generateMatrixStridesWithFormat(b, h, padded.s_q_scale_padded, padded.d_v_padded, dO_t_scale_strides.data(), d_out_format, false);
         printf("q_scale_strides: %d, %d, %d, %d\n", q_scale_strides[0], q_scale_strides[1], q_scale_strides[2], q_scale_strides[3]);
         printf("q_t_scale_strides: %d, %d, %d, %d\n", q_t_scale_strides[0], q_t_scale_strides[1], q_t_scale_strides[2], q_t_scale_strides[3]);
         printf("k_scale_strides: %d, %d, %d, %d\n", k_scale_strides[0], k_scale_strides[1], k_scale_strides[2], k_scale_strides[3]);
@@ -2430,6 +2430,10 @@ void fused_attn_fp8_bwd_impl_v1(
       //       sdpa_backward_options.set_dbias(dBias);
       //     }
       // }
+
+      if (cudnn_runtime_version >= 92100) {
+        sdpa_backward_options.set_deterministic_algorithm(deterministic);
+      }
 
       if (is_padding) {
         seq_q = mha_graph->tensor(fe::graph::Tensor_attributes()
@@ -2797,7 +2801,7 @@ void fused_attn_fp8_fwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
 void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_groups,
                         size_t max_seqlen_q, size_t max_seqlen_kv, size_t head_dim_qk, size_t head_dim_v,
                         float attn_scale, float p_dropout, NVTE_QKV_Layout qkv_layout, NVTE_QKV_Format o_format, NVTE_QKV_Format d_out_format, NVTE_QKV_Layout dqkv_layout,
-                        NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, size_t window_size_left, size_t window_size_right, bool bottom_right_diagonal, const Tensor* input_Q,
+                        NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, size_t window_size_left, size_t window_size_right, bool bottom_right_diagonal, bool deterministic, const Tensor* input_Q,
                         const Tensor* input_K, const Tensor* input_V, const Tensor* input_O,
                         const Tensor* input_dO, const Tensor* input_dO_f16, const Tensor* input_M, const Tensor* input_ZInv,
                         const Tensor* input_S, Tensor* input_output_dP, const Tensor* output_dQ,
@@ -2866,7 +2870,7 @@ void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   if ((dqkv_format == NVTE_QKV_Format::NVTE_BSHD) || (dqkv_format == NVTE_QKV_Format::NVTE_SBHD)) {
     fused_attn::fused_attn_fp8_bwd_impl_v1(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim_qk, head_dim_v, attn_scale,
-        p_dropout, qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, mask_type, window_size_left, window_size_right, bottom_right_diagonal, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv,
+        p_dropout, qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, mask_type, window_size_left, window_size_right, bottom_right_diagonal, deterministic, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv,
         devPtrO, devPtrdO, devPtrdQ, devPtrdK, devPtrdV, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleO, devPtrDescaledO, devPtrDescaleS, devPtrDescaledP,
         devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP,

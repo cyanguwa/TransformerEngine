@@ -209,49 +209,83 @@ NVTE_QKV_Format nvte_get_kv_format(NVTE_QKV_Layout qkv_layout) {
 }
 
 // map one NVTE_QKV_Format to another
-std::vector<size_t> nvte_convert_qkv_format(std::vector<size_t> src_shape, NVTE_QKV_Format src_format, NVTE_QKV_Format dst_format) {
-  std::vector<size_t> dst_shape(src_shape.size());
-  size_t b=0, h=0, s=0, d=0, t=0;
+void nvte_convert_qkv_format(NVTE_QKV_Format src_format, std::vector<size_t> src_shape, NVTE_QKV_Format dst_format, std::vector<size_t> &dst_shape,
+  size_t *b, size_t *h, size_t *s, size_t *d, size_t *t) {
+  printf("src_format: %d, src_shape: %d, %d, %d, %d, %d\n", src_format, src_shape[0], src_shape[1], src_shape[2], src_shape[3], src_shape[4]);
+  size_t _b=0, _h=0, _s=0, _d=0, _t=0;
   switch (src_format) {
     case NVTE_QKV_Format::NVTE_BSHD:
-      b = src_shape[0];
-      s = src_shape[1];
-      h = src_shape[2];
-      d = src_shape[3];
+      _b = src_shape[0];
+      _s = src_shape[1];
+      _h = src_shape[2];
+      _d = src_shape[3];
       break;
     case NVTE_QKV_Format::NVTE_SBHD:
-      s = src_shape[0];
-      b = src_shape[1];
-      h = src_shape[2];
-      d = src_shape[3];
+      _s = src_shape[0];
+      _b = src_shape[1];
+      _h = src_shape[2];
+      _d = src_shape[3];
       break;
     case NVTE_QKV_Format::NVTE_BHSD:
-      b = src_shape[0];
-      h = src_shape[1];
-      s = src_shape[2];
-      d = src_shape[3];
+      _b = src_shape[0];
+      _h = src_shape[1];
+      _s = src_shape[2];
+      _d = src_shape[3];
       break;
     case NVTE_QKV_Format::NVTE_THD:
-      t = src_shape[0];
-      h = src_shape[1];
-      d = src_shape[2];
+      _t = src_shape[0];
+      _h = src_shape[1];
+      _d = src_shape[2];
+      break;
+    default:
+      NVTE_ERROR("src_format not supported!");
       break;
   }
   switch (dst_format) {
     case NVTE_QKV_Format::NVTE_BSHD:
-      dst_shape = {b, s, h, d};
+      dst_shape[0] = _b;
+      dst_shape[1] = _s;
+      dst_shape[2] = _h;
+      dst_shape[3] = _d;
       break;
     case NVTE_QKV_Format::NVTE_SBHD:
-      dst_shape = {s, b, h, d};
+      dst_shape[0] = _s;
+      dst_shape[1] = _b;
+      dst_shape[2] = _h;
+      dst_shape[3] = _d;
       break;
     case NVTE_QKV_Format::NVTE_BHSD:
-      dst_shape = {b, h, s, d};
+      dst_shape[0] = _b;
+      dst_shape[1] = _h;
+      dst_shape[2] = _s;
+      dst_shape[3] = _d;
       break;
     case NVTE_QKV_Format::NVTE_THD:
-      dst_shape = {t, h, d};
+      dst_shape[0] = _t;
+      dst_shape[1] = _h;
+      dst_shape[2] = _d;
+      break;
+    default:
+      NVTE_ERROR("dst_format not supported!");
       break;
   }
-  return dst_shape;
+  printf("dst_format: %d, dst_shape: %d, %d, %d, %d, %d\n", dst_format, dst_shape[0], dst_shape[1], dst_shape[2], dst_shape[3], dst_shape[4]);
+
+  if (b != nullptr) {
+    *b = _b;
+  }
+  if (h != nullptr) {
+    *h = _h;
+  }
+  if (s != nullptr) {
+    *s = _s;
+  }
+  if (d != nullptr) {
+    *d = _d;
+  }
+  if (t != nullptr) {
+    *t = _t;
+  }
 }
 
 // select a backend for fused attention
@@ -830,7 +864,7 @@ void nvte_fused_attn_bwd_qkvpacked(
     Tensor dV_view = make_tensor_view(output_dQKV, unpacked_shape, 2 * stride);
 
     fused_attn_fp8_bwd(b, h, h, max_seqlen, max_seqlen, d, d, attn_scale, dropout, qkv_layout, qkv_format, qkv_format, qkv_layout,
-                       bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, &Q_view, &K_view, &V_view, input_O, input_dO, input_dO_f16,
+                       bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, deterministic, &Q_view, &K_view, &V_view, input_O, input_dO, input_dO_f16,
                        input_M, input_ZInv, input_S, input_output_dP, &dQ_view, &dK_view, &dV_view,
                        input_cu_seqlens, input_cu_seqlens, input_rng_state, wkspace, stream,
                        handle);
@@ -1151,7 +1185,7 @@ void nvte_fused_attn_bwd_kvpacked(
     Tensor dV_view = make_tensor_view(output_dKV, unpacked_kv_shape, stride);
 
     fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d, d, attn_scale, dropout,
-                       qkv_layout, q_format, q_format, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, &K_view, &V_view, input_O,
+                       qkv_layout, q_format, q_format, qkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, deterministic, input_Q, &K_view, &V_view, input_O,
                        input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ, &dK_view,
                        &dV_view, input_cu_seqlens_q, input_cu_seqlens_kv, input_rng_state, wkspace,
                        stream, handle);
@@ -1393,7 +1427,7 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
     input_dO_f16 = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[3]);
     }
     fused_attn_fp8_bwd(b, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, attn_scale, dropout,
-                       qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, input_Q, input_K, input_V, input_O,
+                       qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, attn_mask_type, window_size_left, window_size_right, bottom_right_diagonal, deterministic, input_Q, input_K, input_V, input_O,
                        input_dO, input_dO_f16, input_M, input_ZInv, input_S, input_output_dP, output_dQ,
                        output_dK, output_dV, input_cu_seqlens_q, input_cu_seqlens_kv,
                        input_rng_state, wkspace, stream, handle);

@@ -1301,7 +1301,7 @@ class FusedAttnFunc(torch.autograd.Function):
                 softmax_offset,
                 cuda_graph=is_graph_capturing(),
             )
-
+            print(f"out_.shape: {out_.shape}, {type(out_)}, qkv_layout: {qkv_layout}, o_format: {o_format}")
             # out_fp8: Float8Tensor/MXFP8Tensor; dtype = torch.float16 or torch.bfloat16
             #                        fp8_dtype = tex.DType.kFloat8E4M3
             # out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
@@ -1606,8 +1606,10 @@ class FusedAttnFunc(torch.autograd.Function):
                     print(f"k_fp8._with_gemm_swizzled_scales: {k_fp8._with_gemm_swizzled_scales}")
                     print(f"v_fp8._with_gemm_swizzled_scales: {v_fp8._with_gemm_swizzled_scales}")
                     print(f"d_out_fp8._with_gemm_swizzled_scales: {d_out_fp8._with_gemm_swizzled_scales}")
-                    print(f"types: {type(q_fp8)}, {type(k_fp8)}, {type(v_fp8)}, {type(out_)}, {type(d_out_fp8)}, {[type(x) for x in aux_ctx_tensors]}")
-                    print(f"shapes: {q_fp8._rowwise_data.shape}, {k_fp8._rowwise_data.shape}, {v_fp8._rowwise_data.shape}, {out_.shape}, {d_out_fp8._rowwise_data.shape}, {[x.shape for x in aux_ctx_tensors]}")
+                    # print(f"types: {type(q_fp8)}, {type(k_fp8)}, {type(v_fp8)}, {type(out_)}, {type(d_out_fp8)}, {[type(x) for x in aux_ctx_tensors]}")
+                    # print(f"shapes: {q_fp8._rowwise_data.shape}, {k_fp8._rowwise_data.shape}, {v_fp8._rowwise_data.shape}, {out_.shape}, {d_out_fp8._rowwise_data.shape}, {[x.shape for x in aux_ctx_tensors]}")
+                    print(f"out_.shape: {out_.shape}, d_out_fp8.shape: {d_out_fp8._rowwise_data.shape}, d_out_fp8.columnwise_data.shape: {d_out_fp8._columnwise_data.shape}, d_out.shape: {d_out.shape}")
+                    print(f"out_.stride: {out_.stride()}, d_out_fp8.rowwise_data.stride: {d_out_fp8._rowwise_data.stride()}, d_out_fp8.columnwise_data.stride: {d_out_fp8._columnwise_data.stride()}, d_out.stride: {d_out.stride()}")
                     dq_, dk_, dv_, *rest = fused_attn_bwd(
                         ctx.max_seqlen_q,
                         ctx.max_seqlen_kv,
