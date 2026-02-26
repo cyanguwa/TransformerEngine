@@ -98,19 +98,19 @@ layers as follows.
 +-------------------+-----------+-----------------------------------------------------------------------------------+
 | Linear            | Attention | Configuration                                                                     |
 +===================+===========+===================================================================================+
-| FP8DS/FP8CS/NVFP4 | FP16/BF16 | Pass FP8DS, FP8CS or NVFP4 to autocast();                                     |
-|                   |           | export NVTE_DPA_FP8_RECIPE="F16"                                                  |
+| FP8DS/FP8CS/NVFP4 | FP16/BF16 | Pass FP8DS, FP8CS, NVFP4 or MXFP8 to autocast();                                  |
+| /MXFP8            |           | export NVTE_DPA_FP8_RECIPE="F16"                                                  |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
-| FP8DS             | FP8DS     | Pass FP8DS to autocast();                                                     |
+| FP8DS             | FP8DS     | Pass FP8DS to autocast();                                                         |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
-| FP8CS             | FP8DS     | Pass FP8CS to autocast();                                                     |
+| FP8CS             | FP8DS     | Pass FP8CS to autocast();                                                         |
 |                   |           | Attention FP8DS reuses the fp8_format, fp8_dpa, fp8_mha values from linear FP8CS; |
 |                   |           | export NVTE_DPA_FP8_RECIPE="DelayedScaling"       # switch to DS                  |
 |                   |           | export NVTE_DPA_FP8DS_AMAX_ALGO="most_recent"     # or "max"                      |
 |                   |           | export NVTE_DPA_FP8DS_AMAX_HISTLEN=1              # or any other integer          |
 |                   |           | export NVTE_DPA_FP8DS_REDUCE_AMAX=1               # or 0                          |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
-| NVFP4             | FP8DS     | Pass NVFP4 to autocast();                                                     |
+| NVFP4             | FP8DS     | Pass NVFP4 to autocast();                                                         |
 |                   |           | Attention FP8DS reuses the fp8_dpa, fp8_mha values from linear NVFP4;             |
 |                   |           | export NVTE_DPA_FP8_RECIPE="DelayedScaling"       # switch to DS                  |
 |                   |           | export NVTE_DPA_FP8_FORMAT="HYBRID"               # or "E4M3", "E5M2"             |
@@ -118,19 +118,19 @@ layers as follows.
 |                   |           | export NVTE_DPA_FP8DS_AMAX_HISTLEN=1              # or any other integer          |
 |                   |           | export NVTE_DPA_FP8DS_REDUCE_AMAX=1               # or 0                          |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
-| FP8DS             | FP8CS     | Pass FP8DS to autocast();                                                     |
+| FP8DS             | FP8CS     | Pass FP8DS to autocast();                                                         |
 |                   |           | Attention uses FP8DS for S, dP tensors, and creates a new FP8CS recipe for QKV, O,|
 |                   |           | dO, dQKV tensors based on fp8_format, fp8_dpa, fp8_mha from linear FP8DS;         |
 |                   |           | export NVTE_DPA_FP8_RECIPE="Float8CurrentScaling" # switch to CS                  |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
-| FP8CS             | FP8CS     | Pass FP8CS to autocast();                                                     |
+| FP8CS             | FP8CS     | Pass FP8CS to autocast();                                                         |
 |                   |           | Attention uses FP8CS for QKV, O, dO, dQKV tensors, and creates a new FP8DS recipe |
 |                   |           | for S, dP tensors based on fp8_format, fp8_dpa, fp8_mha from linear FP8CS and:    |
 |                   |           | export NVTE_DPA_FP8DS_AMAX_ALGO="most_recent"     # or "max"                      |
 |                   |           | export NVTE_DPA_FP8DS_AMAX_HISTLEN=1              # or any other integer          |
 |                   |           | export NVTE_DPA_FP8DS_REDUCE_AMAX=1               # or 0                          |
 +-------------------+-----------+-----------------------------------------------------------------------------------+
-| NVFP4             | FP8CS     | Pass NVFP4 to autocast();                                                     |
+| NVFP4             | FP8CS     | Pass NVFP4 to autocast();                                                         |
 |                   |           | Attention creates a new FP8CS recipe for QKV, O, dO, dQKV, and a new FP8DS recipe |
 |                   |           | for S, dP, based on the fp8_dpa, fp8_mha values from linear NVFP4 and:            |
 |                   |           | export NVTE_DPA_FP8_RECIPE="Float8CurrentScaling" # switch to CS                  |
