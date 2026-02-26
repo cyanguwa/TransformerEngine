@@ -1301,7 +1301,6 @@ class FusedAttnFunc(torch.autograd.Function):
                 softmax_offset,
                 cuda_graph=is_graph_capturing(),
             )
-            print(f"out_.shape: {out_.shape}, {type(out_)}, qkv_layout: {qkv_layout}, o_format: {o_format}")
             # out_fp8: Float8Tensor/MXFP8Tensor; dtype = torch.float16 or torch.bfloat16
             #                        fp8_dtype = tex.DType.kFloat8E4M3
             # out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
@@ -1481,33 +1480,18 @@ class FusedAttnFunc(torch.autograd.Function):
     def backward(ctx, d_out, *_args):
         # pylint: disable=missing-function-docstring
 
-        print(f"ctx.fp8: {ctx.fp8}, ctx.is_output_fp8: {ctx.is_output_fp8}, isinstance(d_out, QuantizedTensorStorage): {isinstance(d_out, QuantizedTensorStorage)}")
-        # # reshape d_out to ctx.qkv_layout; only happens with MXFP8BlockScaling
-        # if ctx.original_qkv_layout != ctx.qkv_layout:
-        #     print(f"ctx.original_qkv_layout: {ctx.original_qkv_layout}, ctx.qkv_layout: {ctx.qkv_layout}")
-        #     print(f"d_out before reshape: {d_out.shape}, {type(d_out)}")
-        #     original_qkv_format = ctx.original_qkv_layout.split("_")[0]
-        #     new_qkv_format = ctx.qkv_layout.split("_")[0]
-        #     perm = []
-        #     for i in original_qkv_format:
-        #         perm.append(new_qkv_format.find(i))
-        #     d_out = d_out.permute(*perm).contiguous()
-        #     print(f"d_out after reshape: {d_out.shape}, {type(d_out)}")
-
         # d_out:     torch.Tensor; dtype = torch.float16 or torch.bfloat16
         # d_out_fp8: Float8Tensor; dtype = torch.float16 or torch.bfloat16
         #                          fp8_dtype = tex.DType.kFloat8E5M2
         d_out_fp8 = None
         d_out_format = ctx.o_format
         if ctx.fp8:
-            print(f"d_out before quantizer: {d_out.shape}, {type(d_out)}")
             if ctx.fp8_recipe.mxfp8():
                 d_out, d_out_format = dpa_utils.permute_to_grouped_tensor(d_out_format, d_out)
             if isinstance(d_out, QuantizedTensorStorage):
                 d_out_fp8 = d_out
             else:
                 d_out_fp8 = ctx.dO_quantizer(d_out)
-            print(f"d_out after quantizer: {d_out.shape}, {d_out_fp8._rowwise_data.shape}, {type(d_out)}, {type(d_out_fp8)}")
         if not isinstance(d_out, QuantizedTensorStorage) and not ctx.use_FAv2_bwd:
             d_out = d_out.contiguous()
         (
@@ -1602,14 +1586,6 @@ class FusedAttnFunc(torch.autograd.Function):
                     if ctx.fp8_recipe.mxfp8():
                         out_ = out
                         aux_ctx_tensors.append(d_out)
-                    print(f"q_fp8._with_gemm_swizzled_scales: {q_fp8._with_gemm_swizzled_scales}")
-                    print(f"k_fp8._with_gemm_swizzled_scales: {k_fp8._with_gemm_swizzled_scales}")
-                    print(f"v_fp8._with_gemm_swizzled_scales: {v_fp8._with_gemm_swizzled_scales}")
-                    print(f"d_out_fp8._with_gemm_swizzled_scales: {d_out_fp8._with_gemm_swizzled_scales}")
-                    # print(f"types: {type(q_fp8)}, {type(k_fp8)}, {type(v_fp8)}, {type(out_)}, {type(d_out_fp8)}, {[type(x) for x in aux_ctx_tensors]}")
-                    # print(f"shapes: {q_fp8._rowwise_data.shape}, {k_fp8._rowwise_data.shape}, {v_fp8._rowwise_data.shape}, {out_.shape}, {d_out_fp8._rowwise_data.shape}, {[x.shape for x in aux_ctx_tensors]}")
-                    print(f"out_.shape: {out_.shape}, d_out_fp8.shape: {d_out_fp8._rowwise_data.shape}, d_out_fp8.columnwise_data.shape: {d_out_fp8._columnwise_data.shape}, d_out.shape: {d_out.shape}")
-                    print(f"out_.stride: {out_.stride()}, d_out_fp8.rowwise_data.stride: {d_out_fp8._rowwise_data.stride()}, d_out_fp8.columnwise_data.stride: {d_out_fp8._columnwise_data.stride()}, d_out.stride: {d_out.stride()}")
                     dq_, dk_, dv_, *rest = fused_attn_bwd(
                         ctx.max_seqlen_q,
                         ctx.max_seqlen_kv,
@@ -1644,15 +1620,6 @@ class FusedAttnFunc(torch.autograd.Function):
                         ctx.deterministic,
                         is_graph_capturing(),
                     )
-                    print(f"dq_.shape: {dq_.shape}, dk_.shape: {dk_.shape}, dv_.shape: {dv_.shape}")
-                    print(f"types: {type(dq_)}, {type(dk_)}, {type(dv_)}")
-                    # if ctx.original_qkv_layout != ctx.qkv_layout:
-                    #     original_qkv_format = ctx.original_qkv_layout.split("_")[0]
-                    #     new_qkv_format = ctx.qkv_layout.split("_")[0]
-                    #     perm = []
-                    #     for i in new_qkv_format:
-                    #         perm.append(original_qkv_format.find(i))
-                    #     dq_, dk_, dv_ = [x.permute(*perm).contiguous() for x in (dq_, dk_, dv_)]
 
                     # dq, dk, dv:             torch.Tensor; dtype = torch.float16 or torch.bfloat16
                     dq, dk, dv = dq_, dk_, dv_

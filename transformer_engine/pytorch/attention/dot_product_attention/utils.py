@@ -2241,14 +2241,6 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
             k_fp8 = qkv_quantizer(k)
             v_fp8 = qkv_quantizer(v)
         q_fp8, k_fp8, v_fp8 = [x.view(s) for x, s in zip([q_fp8, k_fp8, v_fp8], original_shapes)]
-        print(f"q_fp8._rowwise_data.shape: {q_fp8._rowwise_data.shape}, k_fp8._rowwise_data.shape: {k_fp8._rowwise_data.shape}, v_fp8._rowwise_data.shape: {v_fp8._rowwise_data.shape}")
-        print(f"q_fp8._rowwise_scale_inv.shape: {q_fp8._rowwise_scale_inv.shape}, k_fp8._rowwise_scale_inv.shape: {k_fp8._rowwise_scale_inv.shape}, v_fp8._rowwise_scale_inv.shape: {v_fp8._rowwise_scale_inv.shape}")
-        print(f"q_fp8._columnwise_data.shape: {q_fp8._columnwise_data.shape}, k_fp8._columnwise_data.shape: {k_fp8._columnwise_data.shape}, v_fp8._columnwise_data.shape: {v_fp8._columnwise_data.shape}")
-        print(f"q_fp8._columnwise_scale_inv.shape: {q_fp8._columnwise_scale_inv.shape}, k_fp8._columnwise_scale_inv.shape: {k_fp8._columnwise_scale_inv.shape}, v_fp8._columnwise_scale_inv.shape: {v_fp8._columnwise_scale_inv.shape}")
-        print(f"q_fp8._rowwise_data.stride: {q_fp8._rowwise_data.stride()}, k_fp8._rowwise_data.stride: {k_fp8._rowwise_data.stride()}, v_fp8._rowwise_data.stride: {v_fp8._rowwise_data.stride()}")
-        print(f"q_fp8._rowwise_scale_inv.stride: {q_fp8._rowwise_scale_inv.stride()}, k_fp8._rowwise_scale_inv.stride: {k_fp8._rowwise_scale_inv.stride()}, v_fp8._rowwise_scale_inv.stride: {v_fp8._rowwise_scale_inv.stride()}")
-        print(f"q_fp8._columnwise_data.stride: {q_fp8._columnwise_data.stride()}, k_fp8._columnwise_data.stride: {k_fp8._columnwise_data.stride()}, v_fp8._columnwise_data.stride: {v_fp8._columnwise_data.stride()}")
-        print(f"q_fp8._columnwise_scale_inv.stride: {q_fp8._columnwise_scale_inv.stride()}, k_fp8._columnwise_scale_inv.stride: {k_fp8._columnwise_scale_inv.stride()}, v_fp8._columnwise_scale_inv.stride: {v_fp8._columnwise_scale_inv.stride()}")
 
         return q_fp8, k_fp8, v_fp8, qkv_layout
 

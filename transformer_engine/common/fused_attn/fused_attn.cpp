@@ -211,7 +211,6 @@ NVTE_QKV_Format nvte_get_kv_format(NVTE_QKV_Layout qkv_layout) {
 // map one NVTE_QKV_Format to another
 void nvte_convert_qkv_format(NVTE_QKV_Format src_format, std::vector<size_t> src_shape, NVTE_QKV_Format dst_format, std::vector<size_t> &dst_shape,
   size_t *b, size_t *h, size_t *s, size_t *d, size_t *t) {
-  printf("src_format: %d, src_shape: %d, %d, %d, %d, %d\n", src_format, src_shape[0], src_shape[1], src_shape[2], src_shape[3], src_shape[4]);
   size_t _b=0, _h=0, _s=0, _d=0, _t=0;
   switch (src_format) {
     case NVTE_QKV_Format::NVTE_BSHD:
@@ -269,7 +268,6 @@ void nvte_convert_qkv_format(NVTE_QKV_Format src_format, std::vector<size_t> src
       NVTE_ERROR("dst_format not supported!");
       break;
   }
-  printf("dst_format: %d, dst_shape: %d, %d, %d, %d, %d\n", dst_format, dst_shape[0], dst_shape[1], dst_shape[2], dst_shape[3], dst_shape[4]);
 
   if (b != nullptr) {
     *b = _b;
@@ -1380,8 +1378,6 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
       h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, window_size_left, window_size_right, false,
       cuda_graph, deterministic);
 
-  printf("Q_type: %d, KV_type: %d, qkv_layout: %d, bias_type: %d, attn_mask_type: %d, softmax_type: %d, dropout: %f, h_q: %d, h_kv: %d, max_seqlen_q: %d, max_seqlen_kv: %d, d_qk: %d, d_v: %d, window_size_left: %d, window_size_right: %d, deterministic: %d\n", Q_type, KV_type, qkv_layout, bias_type, attn_mask_type, softmax_type, dropout, h_q, h_kv, max_seqlen_q, max_seqlen_kv, d_qk, d_v, window_size_left, window_size_right, deterministic);
-  printf("fused_attention_backend: %d\n", fused_attention_backend);
   if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_F16_max512_seqlen) {
 #if (CUDNN_VERSION >= 8901)
     Tensor *output_S = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[0]);
