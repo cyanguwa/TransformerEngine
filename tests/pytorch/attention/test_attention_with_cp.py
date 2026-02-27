@@ -17,6 +17,8 @@ from transformer_engine.pytorch import (
 from transformer_engine.common.recipe import (
     DelayedScaling,
     Float8CurrentScaling,
+    MXFP8BlockScaling,
+    Format,
 )
 from transformer_engine.pytorch.attention.dot_product_attention.utils import FlashAttentionUtils
 
@@ -149,7 +151,7 @@ model_configs_fused_attn = {
     "cp_1_3": ModelConfig(2, 4096, 12, 128, attn_bias_type="post_scale_bias"),  # MHA
     "cp_1_4": ModelConfig(2, 4096, 12, 128, attn_mask_type="causal", window_size=(512, 512)),  # MHA
     "cp_2_0": ModelConfig(2, 4096, 12, 128, num_gqa_groups=2, attn_mask_type="causal"),  # GQA
-    "cp_2_1": ModelConfig(2, 4096, 12, 128, num_gqa_groups=2),  # GQA
+    "cp_2_1": ModelConfig(2, 4096, 16, 128),#, num_gqa_groups=12),  # GQA
     "cp_2_2": ModelConfig(
         2,
         4096,
@@ -166,7 +168,7 @@ model_configs_fused_attn = {
         2, 4096, 12, 128, num_gqa_groups=2, attn_mask_type="causal", window_size=(512, 512)
     ),  # GQA
     "cp_3_0": ModelConfig(2, 4096, 12, 128, attn_mask_type="causal", head_dim_v=64),  # MLA
-    "cp_3_1": ModelConfig(2, 4096, 12, 128, head_dim_v=64),  # MLA
+    "cp_3_1": ModelConfig(2, 4096, 12, 192, head_dim_v=128),  # MLA
     "cp_3_2": ModelConfig(
         2, 4096, 12, 128, attn_mask_type="causal", attn_bias_type="post_scale_bias", head_dim_v=64
     ),  # MLA
@@ -192,14 +194,16 @@ if test_essential:
         "cp_1_1",
         "cp_1_4",
         "cp_2_0",
+        "cp_2_1",
         "cp_2_2",
         "cp_2_4",
+        "cp_3_1",
         "cp_3_2",
         "cp_4_2",
     ]
     model_configs_fused_attn = {k: model_configs_fused_attn[k] for k in configs}
     dtypes = ["bf16", "fp8"]
-    qkv_formats = ["sbhd", "thd"]
+    qkv_formats = ["bshd", "sbhd", "thd"]
 
 
 @pytest.mark.skipif(get_cudnn_version() < (8, 9, 7), reason="cuDNN 8.9.7+ is required.")
@@ -211,7 +215,7 @@ if test_essential:
 @pytest.mark.parametrize("fp8_bwd", [True, False])
 @pytest.mark.parametrize("fp8_mha", [True, False])
 @pytest.mark.parametrize("fp8_dpa", [True, False])
-@pytest.mark.parametrize("scaling_mode", [None, "delayed", "current"])
+@pytest.mark.parametrize("scaling_mode", [None, "delayed", "current", "mxfp8"])
 @pytest.mark.parametrize("f16_O", [True, False])
 def test_cp_with_fused_attention(
     dtype, model, qkv_format, cp_comm_type, fp8_bwd, fp8_mha, fp8_dpa, scaling_mode, f16_O
@@ -280,7 +284,7 @@ def test_cp_with_fused_attention(
         and cp_comm_type not in ["p2p", "a2a+p2p", "a2a"]
     ):
         pytest.skip("fp8 only works with P2P, A2A and A2A+P2P for scaling_mode = current!")
-    if f16_O and (dtype != "fp8" or scaling_mode != "current"):
+    if f16_O and (dtype != "fp8" or scaling_mode not in ["current", "mxfp8"]):
         pytest.skip("f16_O only needs to be tested for dtype = fp8 and scaling_mode = current!")
     if "p2p" not in cp_comm_type and config.head_dim_qk != config.head_dim_v:
         pytest.skip("MLA CP currently only support KV P2P!")
@@ -301,6 +305,8 @@ def test_cp_with_fused_attention(
             "Unless cudnn version >= 9.18.0, CP implementation does not support qkv_format=thd for"
             " non-vanilla softmax types!"
         )
+    if scaling_mode == "mxfp8" and not f16_O:
+        pytest.skip("MXFP8 only works with f16_O=True!")
 
     dtypes = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp8": torch.bfloat16}
 
@@ -323,6 +329,11 @@ def test_cp_with_fused_attention(
         fp8_meta["local_recipes"] = [
             Float8CurrentScaling(fp8_dpa=True),
             DelayedScaling(fp8_dpa=True),
+        ]
+    if fp8 and scaling_mode == "mxfp8":
+        fp8_meta["recipe"] = MXFP8BlockScaling(fp8_format=Format.HYBRID, fp8_dpa=True)
+        fp8_meta["local_recipes"] = [
+            MXFP8BlockScaling(fp8_format=Format.HYBRID, fp8_dpa=True),
         ]
     available_backends, _, fused_attn_backends = get_available_attention_backends(
         config,

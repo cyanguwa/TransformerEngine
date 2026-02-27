@@ -23,6 +23,8 @@ from transformer_engine.pytorch.cpp_extensions.fused_attn import (
 from transformer_engine.pytorch.quantization import FP8GlobalStateManager
 from transformer_engine.pytorch.tensor.float8_tensor import Float8Tensor
 from transformer_engine.pytorch.quantized_tensor import QuantizedTensorStorage
+from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
+from transformer_engine.common.recipe import MXFP8BlockScaling, Format
 from transformer_engine.pytorch.jit import jit_fuser
 from transformer_engine.pytorch.graph import is_graph_capturing
 from transformer_engine.pytorch.constants import (
@@ -58,6 +60,16 @@ _softmax_offset_chunk_ids_cache = {}
 # Float8CurrentScaling: fused_attn_bwd takes O in FP8 by default, this flag allows it in F16
 _dpa_fp8_cs_o_in_f16 = os.getenv("NVTE_DPA_FP8CS_O_in_F16", "1") == "1"
 
+def get_bsh_dims(tensor_format):
+    """Get batch dimension and sequence dimension from tensor format"""
+    if tensor_format in ["bshd", "sbhd", "bhsd"]:
+        batch_dim = tensor_format.index("b")
+        seq_dim = tensor_format.index("s")
+        head_dim = tensor_format.index("h")
+    else:  # tensor_format == "thd"
+        batch_dim = seq_dim = tensor_format.index("t")
+        head_dim = tensor_format.index("h")
+    return batch_dim, seq_dim, head_dim
 
 def flash_attn_p2p_communicate(
     rank, send_tensor, send_dst, recv_tensor, recv_src, cp_group, batch_p2p_comm
@@ -419,6 +431,7 @@ def flash_attn_a2a_communicate(
     ), "cu_seqlens_padded is required for THD format!"
     a2a_inputs = [a2a_inputs] if not isinstance(a2a_inputs, list) else a2a_inputs
     a2a_outputs, a2a_reqs = [None] * len(a2a_inputs), [None] * len(a2a_inputs)
+    batch_dim, _, head_dim = get_bsh_dims(qkv_format)
     if before_attn:
         for i in range(len(a2a_inputs) + 2):
             if 0 < i < len(a2a_inputs) + 1:
@@ -430,13 +443,14 @@ def flash_attn_a2a_communicate(
                 with torch.cuda.stream(cp_stream):
                     a2a_reqs[i - 2].wait()
                     x = a2a_outputs[i - 2]
-                    if qkv_format in ["bshd", "sbhd"]:
+                    if qkv_format in ["bshd", "sbhd", "bhsd"]:
                         # reorder the sequence chunks
                         x = reorder_seq_chunks_for_a2a_before_attn(
                             x, chunk_ids_for_a2a, seq_dim, cp_size
                         )
                         # [b, cp*2, s//2, np//cp, hn] -> [b, cp*s, np//cp, hn]
                         # or [cp*2, s//2, b, np//cp, hn] -> [cp*s, b, np//cp, hn]
+                        # or [b, np//cp, cp*2, s//2, hn] -> [b, np//cp, cp*s, hn]
                         a2a_outputs[i - 2] = x.view(
                             *x.shape[:seq_dim], -1, *x.shape[(seq_dim + 2) :]
                         )
@@ -452,12 +466,14 @@ def flash_attn_a2a_communicate(
                 x = a2a_inputs[i]
                 # [b, s, np, hn] -> [b, s, cp, np//cp, hn]
                 # or [s, b, np, hn] -> [s, b, cp, np//cp, hn]
+                # or [b, np, s, hn] -> [b, cp, np//cp, s, hn]
                 # or [t, np, hn] -> [t, cp, np//cp, hn]
-                x = x.view(*x.shape[:-2], cp_size, x.shape[-2] // cp_size, x.shape[-1])
+                x = x.view(*x.shape[:head_dim], cp_size, x.shape[head_dim] // cp_size, *x.shape[head_dim + 1:])
                 # [b, s, cp, np//cp, hn] -> [cp, b, s, np//cp, hn]
                 # or [s, b, cp, np//cp, hn] -> [cp, s, b, np//cp, hn]
+                # or [b, cp, np//cp, s, hn] -> [cp, b, np//cp, s, hn]
                 # or [t, cp, np//cp, hn] -> [cp, t, np//cp, hn]
-                a2a_inputs[i] = x.movedim(-3, 0).contiguous()
+                a2a_inputs[i] = x.movedim(head_dim, 0).contiguous()
     else:
         for i in range(len(a2a_inputs) + 2):
             if 0 < i < len(a2a_inputs) + 1:
@@ -467,9 +483,10 @@ def flash_attn_a2a_communicate(
                 )
             if i < len(a2a_inputs):
                 x = a2a_inputs[i]
-                if qkv_format in ["bshd", "sbhd"]:
+                if qkv_format in ["bshd", "sbhd", "bhsd"]:
                     # [b, cp*s, np//cp, hn] -> [b, cp*2, s//2, np//cp, hn]
                     # or [cp*s, b, np//cp, hn] -> [cp*2, s//2, b, np//cp, hn]
+                    # or [b, np//cp, cp*s, hn] -> [b, np//cp, cp*2, s//2, hn]
                     x = x.view(*x.shape[:seq_dim], cp_size * 2, -1, *x.shape[(seq_dim + 1) :])
                     # reorder the sequence chunks
                     a2a_inputs[i] = reorder_seq_chunks_for_a2a_after_attn(
@@ -486,10 +503,12 @@ def flash_attn_a2a_communicate(
                     x = a2a_outputs[i - 2]
                     # [cp, 2, b, s//2, np//cp, hn] -> [b, 2, s//2, cp, np//cp, hn]
                     # or [cp, 2, s//2, b, np//cp, hn] -> [2, s//2, b, cp, np//cp, hn]
+                    # or [cp, 2, b, np//cp, s//2, hn] -> [b, cp, np//cp, 2, s//2, hn]
                     # or [cp, t, np//cp, hn] -> [t, cp, np//cp, hn]
-                    x = x.movedim(0, -3).movedim(0, seq_dim).contiguous()
+                    x = x.movedim(0, head_dim+1).movedim(0, seq_dim+1).contiguous()
                     # [b, 2, s//2, cp, np//cp, hn] -> [b*s, np, hn]
                     # or [2, s//2, b, cp, np//cp, hn] -> [s*b, np, hn]
+                    # or [b, cp, np//cp, 2, s//2, hn] -> [b*np, s, hn]
                     # or [t, cp, np//cp, hn] -> [t, np, hn]
                     a2a_outputs[i - 2] = x.view(-1, x.shape[-3] * x.shape[-2], x.shape[-1])
     torch.cuda.current_stream().wait_stream(cp_stream)
@@ -3367,21 +3386,19 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         ), "The number of attention heads needs to be divisible by CP size!"
 
         qkv_layout = qkv_format + "_" + qkv_format + "_" + qkv_format
-
-        if qkv_format in ["bshd", "sbhd"]:
-            batch_dim = qkv_format.index("b")
-            seq_dim = qkv_format.index("s")
-        else:  # qkv_format == "thd"
-            batch_dim = seq_dim = qkv_format.index("t")
+        original_qkv_layout = qkv_layout
+        o_format = qkv_format
+        batch_dim_qkv, seq_dim_qkv, _ = get_bsh_dims(qkv_format)
+        _, seq_dim_o, _ = get_bsh_dims(o_format)
 
         assert (
-            q.shape[seq_dim] % 2 == 0 and k.shape[seq_dim] % 2 == 0
+            q.shape[seq_dim_qkv] % 2 == 0 and k.shape[seq_dim_qkv] % 2 == 0
         ), "Sequence length per GPU needs to be divisible by 2!"
 
         assert isinstance(k, q.__class__) and isinstance(
             v, q.__class__
-        ), "q, k, v must be of the same class, e.g. torch.Tensor or Float8Tensor."
-        is_input_fp8 = isinstance(q, Float8Tensor)
+        ), "q, k, v must be of the same class, e.g. torch.Tensor or QuantizedTensorStorage."
+        is_input_fp8 = isinstance(q, QuantizedTensorStorage)
         is_output_fp8 = fp8_output
         is_bwd_fp8 = int(os.getenv("NVTE_FP8_DPA_BWD", "1"))
         # recipe passed in through autocast or set by NVTE_DPA_FP8_RECIPE;
@@ -3392,6 +3409,9 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         fwd_nominal_dtype = q.dtype
         fused_attn_backend = None
         max_logit = None
+        if torch.cuda.current_device() == 0:
+            print(f"is_input_fp8: {is_input_fp8}, is_output_fp8: {is_output_fp8}, is_bwd_fp8: {is_bwd_fp8}")
+            print(f"fp8: {fp8}, fp8_recipe: {fp8_recipe}")
 
         QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer = (
             dpa_utils.get_attention_quantizers(fp8, fp8_recipe, quantizers)
@@ -3403,10 +3423,14 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 fused_attn_backend = FusedAttnBackend["FP8"]
                 if is_input_fp8:
                     q_fp8, k_fp8, v_fp8 = q, k, v
-                elif not isinstance(QKV_quantizer, MXFP8Quantizer):
+                elif not fp8_recipe.mxfp8():
                     q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
-                q, k, v = [q_fp8._data, k_fp8._data, v_fp8._data]
-
+                if not fp8_recipe.mxfp8():
+                    q, k, v = [q_fp8._data, k_fp8._data, v_fp8._data]
+                # else:
+                #     q, k, v = [q_fp8, k_fp8, v_fp8]
+                    # qkv_format, _, _ = dpa_utils.get_qkv_format(qkv_layout)
+                    # batch_dim_qkv, seq_dim_qkv, _ = get_bsh_dims(qkv_format)
                 fp8_meta_kwargs = {}
                 fp8_meta_kwargs["s_quantizer"] = S_quantizer
                 fp8_meta_kwargs["o_quantizer"] = O_quantizer
@@ -3417,11 +3441,15 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 fp8_meta_kwargs = {}
                 fused_attn_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
 
+        if torch.cuda.current_device() == 0:
+            print(f"before flash_attn_a2a_communicate: q: {q.shape} {type(q)}, k: {k.shape} {type(k)}, v: {v.shape} {type(v)}")
+            print(f"qkv_format: {qkv_format}, o_format: {o_format}")
+            print(f"batch_dim_qkv: {batch_dim_qkv}, seq_dim_qkv: {seq_dim_qkv}")
         chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_before_attn(cp_size, q.device)
         q, k, v = flash_attn_a2a_communicate(
             [q, k, v],
             chunk_ids_for_a2a,
-            seq_dim,
+            seq_dim_qkv,
             cp_size,
             cp_group,
             cp_stream,
@@ -3429,6 +3457,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             qkv_format=qkv_format,
             cu_seqlens_padded=cu_seqlens_q_padded,
         )
+        if torch.cuda.current_device() == 0:
+            print(f"after flash_attn_a2a_communicate: q: {q.shape} {type(q)}, k: {k.shape} {type(k)}, v: {v.shape} {type(v)}")
         if softmax_type != "vanilla":
             softmax_offset = flash_attn_a2a_communicate_softmax_offset(
                 softmax_offset, 1, cp_size, cp_group, cp_stream, True
@@ -3436,15 +3466,20 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
 
         out_fp8 = None
         out_f16 = None
-        batch_size = q.shape[batch_dim]
+        batch_size = q.shape[batch_dim_qkv]
         q_part, k_part, v_part = q, k, v
         out_part = None
         if use_fused_attention:
-            if fp8:
+            if fp8 and not fp8_recipe.mxfp8():
                 q_part, k_part, v_part = [
                     Float8Tensor.make_like(x, data=y, dtype=fwd_nominal_dtype)
                     for x, y in zip([q_fp8, k_fp8, v_fp8], [q_part, k_part, v_part])
                 ]
+            if fp8 and fp8_recipe.mxfp8():
+                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q_part, k_part, v_part, QKV_quantizer)
+                q_part, k_part, v_part = [q_fp8, k_fp8, v_fp8]
+            if torch.cuda.current_device() == 0:
+                print(f"before fused_attn_fwd: q_part: {q_part.shape} {type(q_part)}, k_part: {k_part.shape} {type(k_part)}, v_part: {v_part.shape} {type(v_part)}")
             out_, aux_ctx_tensors, *max_logit = fused_attn_fwd(
                 is_training,
                 max_seqlen_q,
@@ -3459,6 +3494,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 attn_scale=softmax_scale,
                 dropout=dropout_p,
                 qkv_layout=qkv_layout,
+                o_format=o_format,
                 attn_mask_type=attn_mask_type,
                 attn_bias_type=attn_bias_type,
                 attn_bias=attn_bias,
@@ -3471,7 +3507,9 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 return_max_logit=return_max_logit,
                 cuda_graph=is_graph_capturing(),
             )
-            if isinstance(out_, Float8Tensor):
+            if torch.cuda.current_device() == 0:
+                print(f"after fused_attn_fwd: out_: {out_.shape} {type(out_)}")
+            if isinstance(out_, QuantizedTensorStorage):
                 out_fp8 = out_
                 out_ = out_._data
                 if is_bwd_fp8 and not (
@@ -3487,6 +3525,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                     fp8
                     and is_bwd_fp8
                     and not (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16)
+                    and not fp8_recipe.mxfp8()
                 ):
                     out_part = O_quantizer(out_)
         else:
@@ -3516,33 +3555,39 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             aux_ctx_tensors = [softmax_lse, rng_state]
             out_part = out_
 
+        if torch.cuda.current_device() == 0:
+            print(f"before flash_attn_a2a_communicate: out_: {out_.shape} {type(out_)}")
         chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_after_attn(cp_size, out_.device)
         out_ = flash_attn_a2a_communicate(
             out_,
             chunk_ids_for_a2a,
-            seq_dim,
+            seq_dim_o,
             cp_size,
             cp_group,
             cp_stream,
             before_attn=False,
-            qkv_format=qkv_format,
+            qkv_format=o_format,
             cu_seqlens_padded=cu_seqlens_q_padded,
         )
+        if torch.cuda.current_device() == 0:
+            print(f"after flash_attn_a2a_communicate: out_: {out_.shape} {type(out_)}")
         if return_max_logit:
             max_logit = flash_attn_a2a_communicate_softmax_offset(
                 *max_logit, 0, cp_size, cp_group, cp_stream, False
             )
 
         if use_fused_attention:
-            if qkv_format == "bshd":
+            if o_format == "bshd":
                 # [b*s, h, d] -> [b, s, h, d]
                 out_ = out_.view(batch_size, -1, *out_.shape[-2:])
-            elif qkv_format == "sbhd":
+            elif o_format == "sbhd":
                 # [s*b, h, d] -> [s, b, h, d]
                 out_ = out_.view(-1, batch_size, *out_.shape[-2:])
+        if torch.cuda.current_device() == 0:
+            print(f"after view: out_: {out_.shape} {type(out_)}")
 
         if fp8 and use_fused_attention:
-            if fp8_recipe.float8_current_scaling():
+            if fp8_recipe.float8_current_scaling() or fp8_recipe.mxfp8():
                 out_f16 = out_
                 if is_output_fp8:
                     out_fp8 = O_quantizer(out_)
@@ -3556,19 +3601,28 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         out_ret = out_fp8 if is_output_fp8 else out_f16
 
         ctx.fp8 = fp8 and is_bwd_fp8
+        ctx.qkv_layout = qkv_layout
+        ctx.o_format = o_format
+        ctx.dqkv_layout = original_qkv_layout
         fp8_tensors = (None, None, None, None)
         f16_tensors = (None, None, None, None)
         if ctx.fp8:
-            if fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16:
+            if (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16) or fp8_recipe.mxfp8():
                 fp8_tensors = (q_part, k_part, v_part, None)
                 f16_tensors = (None, None, None, out_part)
             else:
                 fp8_tensors = (q_part, k_part, v_part, out_part)
-        elif fp8:
+        elif fp8 and not fp8_recipe.mxfp8():
             q_part, k_part, v_part = combine_and_dequantize(qkv_layout, q_part, k_part, v_part)
             f16_tensors = (q_part, k_part, v_part, out_part)
+        elif fp8 and fp8_recipe.mxfp8():
+            f16_tensors = (q, k, v, out_part)
+            ctx.qkv_layout = original_qkv_layout
         else:
             f16_tensors = (q_part, k_part, v_part, out_part)
+        if torch.cuda.current_device() == 0:
+            print(f"fp8_tensors: {[x.shape if x is not None else None for x in fp8_tensors]}, type of fp8_tensors: {[type(x) for x in fp8_tensors]}")
+            print(f"f16_tensors: {[x.shape if x is not None else None for x in f16_tensors]}, type of f16_tensors: {[type(x) for x in f16_tensors]}")
 
         tensors_to_save, tensor_objects = prepare_for_saving(
             *fp8_tensors,
@@ -3590,7 +3644,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         ctx.max_seqlen_q = max_seqlen_q
         ctx.max_seqlen_kv = max_seqlen_kv
         ctx.softmax_scale = softmax_scale
-        ctx.qkv_format = qkv_format
+        # ctx.qkv_format = qkv_format
         ctx.attn_mask_type = attn_mask_type
         ctx.attn_bias_type = attn_bias_type
         ctx.deterministic = deterministic
@@ -3612,11 +3666,13 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
         ctx.S_quantizer = S_quantizer
         if ctx.fp8:
             ctx.QKV_quantizer = QKV_quantizer.copy()
-            ctx.QKV_quantizer.scale = QKV_quantizer.scale.clone()
             ctx.O_quantizer = O_quantizer.copy()
-            ctx.O_quantizer.scale = O_quantizer.scale.clone()
-            ctx.S_quantizer = S_quantizer.copy()
-            ctx.S_quantizer.scale = S_quantizer.scale.clone()
+            ctx.S_quantizer = S_quantizer.copy() if S_quantizer is not None else None
+
+            if not ctx.fp8_recipe.mxfp8():
+                ctx.QKV_quantizer.scale = QKV_quantizer.scale.clone()
+                ctx.O_quantizer.scale = O_quantizer.scale.clone()
+                ctx.S_quantizer.scale = S_quantizer.scale.clone()
         nvtx_range_pop("transformer_engine.AttnFuncWithCPAndQKVOA2A.forward")
         if return_max_logit:
             return out_ret, max_logit
@@ -3644,27 +3700,28 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             *aux_ctx_tensors,
         ) = restore_from_saved(ctx.tensor_objects, ctx.saved_tensors)
 
-        qkv_format = ctx.qkv_format
-        qkv_layout = qkv_format + "_" + qkv_format + "_" + qkv_format
+        # qkv_format = ctx.qkv_format
+        # qkv_layout = qkv_format + "_" + qkv_format + "_" + qkv_format
+        # qkv_layout = ctx.qkv_layout
         causal = "causal" in ctx.attn_mask_type
+        dqkv_format, _, _ = dpa_utils.get_qkv_format(ctx.dqkv_layout)
 
-        if qkv_format in ["bshd", "sbhd"]:
-            seq_dim = qkv_format.index("s")
-        else:  # qkv_format == "thd"
-            seq_dim = qkv_format.index("t")
+        batch_dim_dqkv, seq_dim_dqkv, _ = get_bsh_dims(dqkv_format)
+        _, seq_dim_do, _ = get_bsh_dims(ctx.o_format)
 
         bwd_nominal_dtype = ctx.fwd_nominal_dtype
-        dqkv_te_dtype = None
+        # dqkv_te_dtype = None
         fused_attn_backend = None
         dout_fp8 = dout
         if ctx.fp8:
             if ctx.use_fused_attention:
                 fused_attn_backend = FusedAttnBackend["FP8"]
-                if not isinstance(dout, QuantizedTensorStorage):
+                if not isinstance(dout, QuantizedTensorStorage) and not ctx.fp8_recipe.mxfp8():
                     dout = ctx.dO_quantizer(dout)
                     dout_fp8 = dout
-                dqkv_te_dtype = dout._fp8_dtype
-                dout = dout._data
+                if not ctx.fp8_recipe.mxfp8():
+                    # dqkv_te_dtype = dout._fp8_dtype
+                    dout = dout._data            
                 fp8_meta_kwargs = {}
                 fp8_meta_kwargs["s_quantizer"] = ctx.S_quantizer
                 fp8_meta_kwargs["dp_quantizer"] = ctx.dP_quantizer
@@ -3677,29 +3734,32 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 dout = dout.dequantize(dtype=bwd_nominal_dtype)
             if ctx.use_fused_attention:
                 fp8_meta_kwargs = {}
-                dqkv_te_dtype = TE_DType[dout.dtype]
+                # dqkv_te_dtype = TE_DType[dout.dtype]
                 fused_attn_backend = FusedAttnBackend["F16_arbitrary_seqlen"]
 
         if not ctx.use_fused_attention:
-            if qkv_format in ["bshd", "sbhd"]:
+            if ctx.o_format in ["bshd", "sbhd"]:
                 out = out.view(ctx.batch_size, -1, *out.shape[-2:])
                 dout = dout.view(ctx.batch_size, -1, *dout.shape[-2:])
         else:
             dout = dout.view(*ctx.out_shape)
 
+        if torch.cuda.current_device() == 0:
+            print(f"before flash_attn_a2a_communicate: dout: {dout.shape} {type(dout)}")
         chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_before_attn(cp_size, dout.device)
         dout = flash_attn_a2a_communicate(
             dout,
             chunk_ids_for_a2a,
-            seq_dim,
+            seq_dim_do,
             cp_size,
             ctx.cp_group,
             ctx.cp_stream,
             before_attn=True,
-            qkv_format=qkv_format,
+            qkv_format=ctx.o_format,
             cu_seqlens_padded=cu_seqlens_q_padded,
         )
-
+        if torch.cuda.current_device() == 0:
+            print(f"after flash_attn_a2a_communicate: dout: {dout.shape} {type(dout)}")
         flash_attn_bwd = None
         if not ctx.use_fused_attention:
             fa_backward_kwargs = {"softmax_scale": ctx.softmax_scale}
@@ -3714,7 +3774,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 fa_backward_kwargs["window_size"] = ctx.window_size
                 fa_backward_kwargs["deterministic"] = ctx.deterministic
             else:
-                if qkv_format == "thd":
+                if ctx.o_format == "thd":
                     from transformer_engine.pytorch.attention.dot_product_attention.backends import (
                         _flash_attn_varlen_bwd,
                     )
@@ -3740,13 +3800,31 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                     fa_backward_kwargs["softcap"] = 0.0
 
         dq_fp8, dk_fp8, dv_fp8 = None, None, None
+        d_out_format = ctx.o_format
         if ctx.use_fused_attention:
             q_part, k_part, v_part, out_part, dout_part = q, k, v, out, dout
             if ctx.fp8:
                 q_part, k_part, v_part, out_part = q_fp8, k_fp8, v_fp8, out_fp8
-                if ctx.fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16:
+                if (ctx.fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16) or ctx.fp8_recipe.mxfp8():
                     out_part = out
-                dout_part = Float8Tensor.make_like(dout_fp8, data=dout, dtype=bwd_nominal_dtype)
+                if not ctx.fp8_recipe.mxfp8():
+                    dout_part = Float8Tensor.make_like(dout_fp8, data=dout, dtype=bwd_nominal_dtype)
+                else:
+                    dout, d_out_format = dpa_utils.permute_to_grouped_tensor(d_out_format, dout)
+                    dout_part = ctx.dO_quantizer(dout)
+                    print(f"dout.ptr: {hex(dout.data_ptr())}, {hex(dout_part._rowwise_data.data_ptr())}, {hex(dout_part._columnwise_data.data_ptr())}, {hex(dout_part._rowwise_scale_inv.data_ptr())}, {hex(dout_part._columnwise_scale_inv.data_ptr())}")
+                    aux_ctx_tensors.append(dout)
+            if torch.cuda.current_device() == 0:
+                print(f"before fused_attn_bwd: q_part: {q_part.shape} {type(q_part)}, k_part: {k_part.shape} {type(k_part)}, v_part: {v_part.shape} {type(v_part)}, out_part: {out_part.shape} {type(out_part)}, dout_part: {dout_part.shape} {type(dout_part)}")
+                print(f"type of aux_ctx_tensors: {[type(x) for x in aux_ctx_tensors]} {[x.shape if x is not None else None for x in aux_ctx_tensors]}")
+                print(f"fused_attn_backend: {fused_attn_backend}")
+                # print(f"cu_seqlens_q: {cu_seqlens_q.shape} {type(cu_seqlens_q)}, cu_seqlens_kv: {cu_seqlens_kv.shape} {type(cu_seqlens_kv)}")
+                # print(f"cu_seqlens_q_padded: {cu_seqlens_q_padded.shape} {type(cu_seqlens_q_padded)}, cu_seqlens_kv_padded: {cu_seqlens_kv_padded.shape} {type(cu_seqlens_kv_padded)}")
+                # print(f"ctx.softmax_scale: {ctx.softmax_scale}, ctx.dropout_p: {ctx.dropout_p}, ctx.window_size: {ctx.window_size}, ctx.deterministic: {ctx.deterministic}")
+                print(f"ctx.qkv_layout: {ctx.qkv_layout}, ctx.o_format: {ctx.o_format}, ctx.dqkv_layout: {ctx.dqkv_layout}")
+                # print(f"ctx.attn_mask_type: {ctx.attn_mask_type}, ctx.attn_bias_type: {ctx.attn_bias_type}")
+                print(f"is contiguous: {q_part.is_contiguous()}, {k_part.is_contiguous()}, {v_part.is_contiguous()}, {out_part.is_contiguous()}, {dout_part.is_contiguous()}")
+                print(fp8_meta_kwargs)
             dq, dk, dv, *rest = fused_attn_bwd(
                 ctx.max_seqlen_q,
                 ctx.max_seqlen_kv,
@@ -3758,14 +3836,17 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 out_part,
                 dout_part,
                 bwd_nominal_dtype,
-                dqkv_te_dtype,
+                # dqkv_te_dtype,
                 aux_ctx_tensors,
                 fused_attn_backend,
                 cu_seqlens_q_padded=cu_seqlens_q_padded,
                 cu_seqlens_kv_padded=cu_seqlens_kv_padded,
                 attn_scale=ctx.softmax_scale,
                 dropout=ctx.dropout_p,
-                qkv_layout=qkv_layout,
+                qkv_layout=ctx.qkv_layout,
+                o_format=ctx.o_format,
+                d_out_format=d_out_format,
+                dqkv_layout=ctx.dqkv_layout,
                 attn_mask_type=ctx.attn_mask_type,
                 attn_bias_type=ctx.attn_bias_type,
                 window_size=ctx.window_size,
@@ -3774,7 +3855,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 **fp8_meta_kwargs,
                 softmax_type=ctx.softmax_type,
             )
-            if isinstance(dq, Float8Tensor):
+            if isinstance(dq, QuantizedTensorStorage) and not ctx.fp8_recipe.mxfp8():
                 dq_fp8, dk_fp8, dv_fp8 = dq, dk, dv
                 dq, dk, dv = [x._data for x in [dq, dk, dv]]
         else:
@@ -3783,7 +3864,7 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
             fa_backward_args_thd = get_fa_args(
                 False,
                 ctx.use_flash_attn_3,
-                qkv_format,
+                ctx.o_format,
                 cu_seqlens_q=cu_seqlens_q,
                 cu_seqlens_kv=cu_seqlens_kv,
                 max_seqlen_q=ctx.max_seqlen_q,
@@ -3806,22 +3887,27 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 **fa_backward_kwargs,
             )
 
+        if torch.cuda.current_device() == 0:
+            print(f"after flash_attn_bwd: dq: {dq.shape}, dk: {dk.shape}, dv: {dv.shape}")
+            print(f"type of dq: {type(dq)}, type of dk: {type(dk)}, type of dv: {type(dv)}")
         chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_after_attn(cp_size, dq.device)
         dq, dk, dv = flash_attn_a2a_communicate(
             [dq, dk, dv],
             chunk_ids_for_a2a,
-            seq_dim,
+            seq_dim_dqkv,
             cp_size,
             ctx.cp_group,
             ctx.cp_stream,
             before_attn=False,
-            qkv_format=qkv_format,
+            qkv_format=dqkv_format,
             cu_seqlens_padded=cu_seqlens_q_padded,
         )
-
-        if qkv_format == "bshd":
+        if torch.cuda.current_device() == 0:
+            print(f"after flash_attn_a2a_communicate: dq: {dq.shape}, dk: {dk.shape}, dv: {dv.shape}")
+            print(f"type of dq: {type(dq)}, type of dk: {type(dk)}, type of dv: {type(dv)}")
+        if dqkv_format == "bshd":
             dq, dk, dv = [x.view(ctx.batch_size, -1, *x.shape[-2:]) for x in [dq, dk, dv]]
-        elif qkv_format == "sbhd":
+        elif dqkv_format == "sbhd":
             dq, dk, dv = [x.view(-1, ctx.batch_size, *x.shape[-2:]) for x in [dq, dk, dv]]
 
         d_bias = None
@@ -3836,8 +3922,8 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 )
 
         if ctx.fp8:
-            if ctx.fp8_recipe.float8_current_scaling() and ctx.is_input_fp8:
-                dq, dk, dv = combine_and_quantize(qkv_layout, dq, dk, dv, ctx.dQKV_quantizer)
+            if (ctx.fp8_recipe.float8_current_scaling() or ctx.fp8_recipe.mxfp8()) and ctx.is_input_fp8:
+                dq, dk, dv = combine_and_quantize(ctx.dqkv_layout, dq, dk, dv, ctx.dQKV_quantizer)
             if ctx.fp8_recipe.delayed():
                 dq, dk, dv = [
                     Float8Tensor.make_like(x, data=y, dtype=bwd_nominal_dtype)
@@ -3845,13 +3931,15 @@ class AttnFuncWithCPAndQKVOA2A(torch.autograd.Function):
                 ]
                 if not ctx.is_input_fp8:
                     dq, dk, dv = combine_and_dequantize(
-                        qkv_layout,
+                        ctx.dqkv_layout,
                         dq,
                         dk,
                         dv,
                         src_nominal_dtype=bwd_nominal_dtype,
                     )
-
+        if torch.cuda.current_device() == 0:
+            print(f"after combine_and_dequantize: dq: {dq.shape}, dk: {dk.shape}, dv: {dv.shape}")
+            print(f"type of dq: {type(dq)}, type of dk: {type(dk)}, type of dv: {type(dv)}")
         nvtx_range_pop("transformer_engine.AttnFuncWithCPAndQKVOA2A.backward")
 
         return (
@@ -3982,7 +4070,19 @@ def attn_forward_func_with_cp(
     in Megatron-LM.
 
     """
-
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {cp_comm_type=}")
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {qkv_format=}")
+    # print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {deterministic=}")
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {use_fused_attention=}")
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {fp8=}")
+    # print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {fp8_meta=}")
+    # print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {cp_group=}")
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {cp_global_ranks=}")
+    # print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {cp_stream=}")
+    # print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {quantizers=}")
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {pad_between_seqs=}")
+    print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {fp8_output=}")
+    # print(f"rank {torch.distributed.get_rank()} attn_forward_func_with_cp: {layer_number=}")
     if cp_comm_type == "a2a+p2p":
         assert (
             isinstance(cp_group, list) and len(cp_group) == 2

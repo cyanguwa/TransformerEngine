@@ -515,6 +515,17 @@ def get_attention_backend(
                             " with cuDNN < 9.18.0"
                         )
                         use_fused_attention = False
+        if use_fused_attention and fp8_recipe.mxfp8():
+            if device_compute_capability < (10, 0):
+                logger.debug("Disabling FusedAttention for MXFP8 on arch < sm100")
+                use_fused_attention = False
+            else:
+                if cudnn_version < (9, 21, 0):
+                    logger.debug("Disabling FusedAttention for MXFP8 with cuDNN < 9.21.0")
+                    use_fused_attention = False
+                elif qkv_format == "thd":
+                    logger.debug("Disabling FusedAttention for MXFP8 with qkv_format = thd")
+                    use_fused_attention = False
 
         if device_compute_capability == (12, 0):
             if use_flash_attention:
@@ -2096,7 +2107,7 @@ def get_attention_quantizers(fp8, fp8_recipe, quantizers):
         return [None] * 6
 
     QKV_quantizer = quantizers["scaling_fwd"][META_QKV]
-    QKV_quantizer.internal = True
+    QKV_quantizer.internal = False
     QKV_quantizer.set_usage(rowwise=True, columnwise=False)
 
     S_quantizer = quantizers["scaling_fwd"][META_S]
@@ -2108,7 +2119,7 @@ def get_attention_quantizers(fp8, fp8_recipe, quantizers):
     O_quantizer.set_usage(rowwise=True, columnwise=False)
 
     dO_quantizer = quantizers["scaling_bwd"][META_DO]
-    dO_quantizer.internal = True
+    dO_quantizer.internal = False
     dO_quantizer.set_usage(rowwise=True, columnwise=False)
 
     dP_quantizer = quantizers["scaling_bwd"][META_DP]

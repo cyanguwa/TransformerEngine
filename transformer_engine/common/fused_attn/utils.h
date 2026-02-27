@@ -49,6 +49,13 @@ struct MXFP8PaddedSizes {
   int64_t d_v_scale_padded;
 };
 
+inline bool is_aligned_modulo(void* ptr, int64_t modulo) {
+    // Cast the pointer to a large enough integer type (uintptr_t)
+    uintptr_t address = reinterpret_cast<uintptr_t>(ptr);
+    // Check if the address is perfectly divisible by 16
+    return (address % modulo) == 0;
+}
+
 // Pad s and d for MXFP8 layout
 inline MXFP8PaddedSizes pad_s_d_for_mxfp8(int64_t s_q, int64_t s_kv, int64_t d_qk, int64_t d_v) {
   constexpr int64_t block_size = 32;

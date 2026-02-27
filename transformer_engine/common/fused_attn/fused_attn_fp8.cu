@@ -2399,17 +2399,17 @@ void fused_attn_fp8_bwd_impl_v1(
                                   .set_causal_mask(is_causal)
                                   .set_attn_scale(attn_scale);
 
-      // fe::DiagonalAlignment_t const &diagonal_alignment =
-      //     bottom_right_diagonal ? fe::DiagonalAlignment_t::BOTTOM_RIGHT
-      //                           : fe::DiagonalAlignment_t::TOP_LEFT;
-      // sdpa_backward_options.set_diagonal_alignment(diagonal_alignment);
+      fe::DiagonalAlignment_t const &diagonal_alignment =
+          bottom_right_diagonal ? fe::DiagonalAlignment_t::BOTTOM_RIGHT
+                                : fe::DiagonalAlignment_t::TOP_LEFT;
+      sdpa_backward_options.set_diagonal_alignment(diagonal_alignment);
 
-      // if (cudnn_runtime_version >= 90200 && window_size_left != -1) {
-      //   sdpa_backward_options.set_diagonal_band_left_bound(window_size_left + 1);
-      // }
-      // if (cudnn_runtime_version >= 90600 && window_size_right != -1) {
-      //   sdpa_backward_options.set_diagonal_band_right_bound(window_size_right);
-      // }
+      if (cudnn_runtime_version >= 90200 && window_size_left != -1) {
+        sdpa_backward_options.set_diagonal_band_left_bound(window_size_left + 1);
+      }
+      if (cudnn_runtime_version >= 90600 && window_size_right != -1) {
+        sdpa_backward_options.set_diagonal_band_right_bound(window_size_right);
+      }
 
       // sdpa_backward_options.set_alibi_mask(is_alibi);
 
@@ -2632,9 +2632,33 @@ void fused_attn_fp8_bwd_impl_v1(
       variant_pack[dO_t] = devPtrdO_t;
       variant_pack[descale_q_t] = devPtrDescaleQ_t;
       variant_pack[descale_k_t] = devPtrDescaleK_t;
-      variant_pack[descale_dO] = devPtrDescaledO;
+      // variant_pack[descale_dO] = devPtrDescaledO;
       variant_pack[descale_dO_t] = devPtrDescaledO_t;
     }
+    int64_t modulo = 16;
+    printf("devPtrQ: %p, is_aligned: %d\n", devPtrQ, is_aligned_modulo(devPtrQ, modulo));
+    printf("devPtrK: %p, is_aligned: %d\n", devPtrK, is_aligned_modulo(devPtrK, modulo));
+    printf("devPtrV: %p, is_aligned: %d\n", devPtrV, is_aligned_modulo(devPtrV, modulo));
+    printf("devPtrO: %p, is_aligned: %d\n", devPtrO, is_aligned_modulo(devPtrO, modulo));
+    printf("devPtrM: %p, is_aligned: %d\n", devPtrM, is_aligned_modulo(devPtrM, modulo));
+    printf("devPtrdO: %p, is_aligned: %d\n", devPtrdO, is_aligned_modulo(devPtrdO, modulo));
+    printf("devPtrDescaleQ: %p, is_aligned: %d\n", devPtrDescaleQ, is_aligned_modulo(devPtrDescaleQ, modulo));
+    printf("devPtrDescaleK: %p, is_aligned: %d\n", devPtrDescaleK, is_aligned_modulo(devPtrDescaleK, modulo));
+    printf("devPtrDescaleV: %p, is_aligned: %d\n", devPtrDescaleV, is_aligned_modulo(devPtrDescaleV, modulo));
+    printf("devPtrDescaledO: %p, is_aligned: %d\n", devPtrDescaledO, is_aligned_modulo(devPtrDescaledO, modulo));
+    printf("devPtrDescaledO_t: %p, is_aligned: %d\n", devPtrDescaledO_t, is_aligned_modulo(devPtrDescaledO_t, modulo));
+    printf("devPtrdQ: %p, is_aligned: %d\n", devPtrdQ, is_aligned_modulo(devPtrdQ, modulo));
+    printf("devPtrdK: %p, is_aligned: %d\n", devPtrdK, is_aligned_modulo(devPtrdK, modulo));
+    printf("devPtrdV: %p, is_aligned: %d\n", devPtrdV, is_aligned_modulo(devPtrdV, modulo));
+    printf("devPtrAmaxdQ: %p, is_aligned: %d\n", devPtrAmaxdQ, is_aligned_modulo(devPtrAmaxdQ, modulo));
+    printf("devPtrAmaxdK: %p, is_aligned: %d\n", devPtrAmaxdK, is_aligned_modulo(devPtrAmaxdK, modulo));
+    printf("devPtrAmaxdV: %p, is_aligned: %d\n", devPtrAmaxdV, is_aligned_modulo(devPtrAmaxdV, modulo));
+    printf("devPtrQ_t: %p, is_aligned: %d\n", devPtrQ_t, is_aligned_modulo(devPtrQ_t, modulo));
+    printf("devPtrK_t: %p, is_aligned: %d\n", devPtrK_t, is_aligned_modulo(devPtrK_t, modulo));
+    printf("devPtrdO_f16: %p, is_aligned: %d\n", devPtrdO_f16, is_aligned_modulo(devPtrdO_f16, modulo));
+    printf("devPtrdO_t: %p, is_aligned: %d\n", devPtrdO_t, is_aligned_modulo(devPtrdO_t, modulo));
+    printf("devPtrDescaleQ_t: %p, is_aligned: %d\n", devPtrDescaleQ_t, is_aligned_modulo(devPtrDescaleQ_t, modulo));
+    printf("devPtrDescaleK_t: %p, is_aligned: %d\n", devPtrDescaleK_t, is_aligned_modulo(devPtrDescaleK_t, modulo));
 
     /* if (is_bias) {
        variant_pack[bias] = devPtrBias;

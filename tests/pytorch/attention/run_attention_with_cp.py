@@ -19,8 +19,9 @@ from transformer_engine.pytorch import (
     DotProductAttention,
     Float8Quantizer,
     Float8CurrentScalingQuantizer,
+    MXFP8Quantizer,
 )
-from transformer_engine.common.recipe import DelayedScaling, Float8CurrentScaling
+from transformer_engine.common.recipe import DelayedScaling, Float8CurrentScaling, MXFP8BlockScaling, Format
 from utils import ModelConfig, compare_and_assert
 
 dtypes = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp8": torch.bfloat16}
@@ -189,7 +190,7 @@ def run_dpa_with_cp(
     os.environ["NVTE_FP8_DPA_BWD"] = "1" if fp8_bwd else "0"
     fp8_dpa = fp8_dpa == "True" and dtype == "fp8"
     fp8_mha = fp8_mha == "True" and dtype == "fp8"
-    f16_O = dtype == "fp8" and scaling_mode == "current" and f16_O == "True"
+    f16_O = dtype == "fp8" and scaling_mode in ["current", "mxfp8"] and f16_O == "True"
     os.environ["NVTE_DPA_FP8CS_O_in_F16"] = "1" if f16_O else "0"
     os.environ["NVTE_FLASH_ATTN"] = "0"
     os.environ["NVTE_FUSED_ATTN"] = "0"
@@ -219,6 +220,7 @@ def run_dpa_with_cp(
         device_count = torch.cuda.device_count()
         device = rank % device_count
         torch.cuda.set_device(device)
+    print(f"rank: {rank}, world_size: {world_size}")
     logging.info(f"[Rank {rank}] Setup: world_size {world_size}")
     dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
 
@@ -244,6 +246,8 @@ def run_dpa_with_cp(
             fp8_recipe = DelayedScaling(fp8_dpa=fp8_dpa, fp8_mha=fp8_mha)
         if scaling_mode == "current":
             fp8_recipe = Float8CurrentScaling(fp8_dpa=fp8_dpa, fp8_mha=fp8_mha)
+        if scaling_mode == "mxfp8":
+            fp8_recipe = MXFP8BlockScaling(fp8_format=Format.HYBRID, fp8_dpa=fp8_dpa, fp8_mha=fp8_mha)
 
     # instantiate attention module
     core_attn = DotProductAttention(
@@ -297,10 +301,25 @@ def run_dpa_with_cp(
             fp8_dtype=tex.DType.kFloat8E5M2,
             device="cuda",
         )
+    if scaling_mode == "mxfp8":
+        qkv_quantizer = MXFP8Quantizer(
+            fp8_dtype=tex.DType.kFloat8E4M3,
+            rowwise=True,
+            columnwise=True,
+        )
+        qkv_quantizer.optimize_for_gemm = True
+        qkv_quantizer.internal = False
+        dout_quantizer = MXFP8Quantizer(
+            fp8_dtype=tex.DType.kFloat8E5M2,
+            rowwise=True,
+            columnwise=True,
+        )
+        dout_quantizer.optimize_for_gemm = True
+        dout_quantizer.internal = False
     qkv_layout = "_".join([qkv_format] * 3)
     q, k, v, dout = [x.clone().detach() for x in [q_orig, k_orig, v_orig, dout_orig]]
     if fp8_mha:
-        q, k, v = combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer)
+        q, k, v, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer)
     for x in [q, k, v]:
         x.requires_grad = True
 
@@ -386,7 +405,7 @@ def run_dpa_with_cp(
         dout_quantizer.scale.fill_(1.0)
         dout_quantizer.amax.fill_(0.0)
     if fp8_mha:
-        q_, k_, v_ = combine_and_quantize(qkv_layout, q_, k_, v_, qkv_quantizer)
+        q_, k_, v_, qkv_layout = combine_and_quantize(qkv_layout, q_, k_, v_, qkv_quantizer)
     q_, k_, v_ = [x.requires_grad_() for x in [q_, k_, v_]]
     if bias_ is not None:
         bias_ = bias_.view(
