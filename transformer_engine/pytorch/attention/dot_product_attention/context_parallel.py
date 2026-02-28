@@ -4163,6 +4163,7 @@ def attn_forward_func_with_cp(
     assert not enable_mla or cp_comm_type in [
         "p2p",
         "a2a+p2p",
+        "a2a",
     ], f"Context parallelism does not support MLA with {cp_comm_type=}!"
 
     if fp8 and fp8_meta is not None:

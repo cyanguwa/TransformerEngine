@@ -286,7 +286,7 @@ def test_cp_with_fused_attention(
         pytest.skip("fp8 only works with P2P, A2A and A2A+P2P for scaling_mode = current!")
     if f16_O and (dtype != "fp8" or scaling_mode not in ["current", "mxfp8"]):
         pytest.skip("f16_O only needs to be tested for dtype = fp8 and scaling_mode = current!")
-    if "p2p" not in cp_comm_type and config.head_dim_qk != config.head_dim_v:
+    if cp_comm_type not in ["p2p", "a2a+p2p", "a2a"] and config.head_dim_qk != config.head_dim_v:
         pytest.skip("MLA CP currently only support KV P2P!")
     # if dtype == "fp8" and config.head_dim_qk != config.head_dim_v:
     #     pytest.skip("MLA CP currently does not support FP8 attention!")
