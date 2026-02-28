@@ -2898,9 +2898,6 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
 
         assert qkv_format != "thd", f"{qkv_format} format is not supported!"
         qkv_layout = qkv_format + "_" + qkv_format + "_" + qkv_format
-        q_shape = q.shape
-        k_shape = k.shape
-        v_shape = v.shape
 
         causal = "causal" in attn_mask_type
         padding = "padding" in attn_mask_type
@@ -2985,7 +2982,7 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
             fused_attn_backend = tex.NVTE_Fused_Attn_Backend.NVTE_FP8
             if is_input_fp8:
                 q_fp8, k_fp8, v_fp8 = q, k, v
-            else:
+            elif not fp8_recipe.mxfp8():
                 q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
             if not fp8_recipe.mxfp8():
                 q, k, v = [q_fp8._data, k_fp8._data, v_fp8._data]
@@ -2996,8 +2993,11 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
 
         # [b, s, h, d] -> [b, 2, s//2, h, d] or [s, b, h, d] -> [2, s//2, b, h, d]
         q = q.view(*q.shape[:seq_dim], 2, q.shape[seq_dim] // 2, *q.shape[(seq_dim + 1) :])
+        q_shape = q.shape
         # [b, s, h, d] or [s, b, h, d] -> [s, b, h, d]
         k, v = [x.movedim(seq_dim, 0).contiguous() for x in [k, v]]
+        k_shape = k.shape
+        v_shape = v.shape
 
         # [s, b, h, d] -> [cp, s, b, h, d]
         k_ag, _ = gather_along_first_dim(k, cp_group)
@@ -3060,16 +3060,17 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
                     k_, v_ = [x.movedim(0, seq_dim).contiguous() for x in [k_, v_]]
                     if use_fused_attention:
                         q_part, k_part, v_part = q_, k_, v_
+                        new_qkv_layout = qkv_layout
                         if fp8:
                             if not fp8_recipe.mxfp8():
                                 q_part = Float8Tensor.make_like(q_fp8, data=q_, dtype=fwd_nominal_dtype)
                                 k_part = Float8Tensor.make_like(k_fp8, data=k_, dtype=fwd_nominal_dtype)
                                 v_part = Float8Tensor.make_like(v_fp8, data=v_, dtype=fwd_nominal_dtype)
                             else:
-                                q_part, k_part, v_part, qkv_layout = combine_and_quantize(qkv_layout, q_part, k_part, v_part, QKV_quantizer)
+                                q_part, k_part, v_part, new_qkv_layout = combine_and_quantize(qkv_layout, q_part, k_part, v_part, QKV_quantizer)
                         (
                             out_per_step[i],
-                            [softmax_lse_per_step[i], rng_states[i]],
+                            aux_ctx_tensors,
                             *max_logit_,
                         ) = fused_attn_fwd(
                             is_training,
@@ -3084,7 +3085,7 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
                             fused_attn_backend,
                             attn_scale=softmax_scale,
                             dropout=dropout_p,
-                            qkv_layout=qkv_layout,
+                            qkv_layout=new_qkv_layout,
                             o_format=qkv_format,
                             attn_mask_type=attn_mask_type,
                             attn_bias_type=attn_bias_type,
@@ -3096,6 +3097,10 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
                             cuda_graph=is_graph_capturing(),
                             **fp8_meta_kwargs,
                         )
+                        if fp8:
+                            softmax_lse_per_step[i], _, rng_states[i] = aux_ctx_tensors
+                        else:
+                            softmax_lse_per_step[i], rng_states[i], *rest = aux_ctx_tensors
                         if return_max_logit:
                             max_logit_per_step[i] = max_logit_[0]
                         if fp8 and isinstance(out_per_step[i], QuantizedTensorStorage):
@@ -3245,15 +3250,23 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
         cp_size = get_distributed_world_size(ctx.cp_group)
         rank = get_distributed_rank(ctx.cp_group)
 
+        cu_seqlens_kv_per_step = [None, None]
+        out_per_step = [None, None]
+        softmax_lse_per_step = [None, None]
+        rng_states = [None, None]
         (
             q_fp8, k_fp8, v_fp8, out_fp8,
             q, k, v, out,
             cu_seqlens_q,
             cu_seqlens_q_padded,
-            cu_seqlens_kv_per_step,
-            out_per_step,
-            softmax_lse_per_step,
-            rng_states
+            cu_seqlens_kv_per_step[0],
+            cu_seqlens_kv_per_step[1],
+            out_per_step[0],
+            out_per_step[1],
+            softmax_lse_per_step[0],
+            softmax_lse_per_step[1],
+            rng_states[0],
+            rng_states[1],
         ) = restore_from_saved(ctx.tensor_objects, ctx.saved_tensors)
 
         kv_seq_range_per_step = ctx.kv_seq_range_per_step
@@ -3277,9 +3290,15 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
         if ctx.fp8 and not ctx.fp8_recipe.mxfp8():
             q, k, v = [x._data for x in [q_fp8, k_fp8, v_fp8]]
 
+        if torch.cuda.current_device() == 0:
+            print(f"ctx.q_shape: {ctx.q_shape} {ctx.k_shape} {ctx.v_shape}")
         dq = torch.empty(ctx.q_shape, dtype=ctx.fwd_nominal_dtype, device=q.device)
         dk = torch.zeros((ctx.k_shape[0] * cp_size, *ctx.k_shape[1:]), dtype=ctx.fwd_nominal_dtype, device=k.device)
         dv = torch.zeros((ctx.v_shape[0] * cp_size, *ctx.v_shape[1:]), dtype=ctx.fwd_nominal_dtype, device=v.device)
+        if torch.cuda.current_device() == 0:
+            print(f"dq: {dq.shape} {dq.dtype} {dq.device}")
+            print(f"dk: {dk.shape} {dk.dtype} {dk.device}")
+            print(f"dv: {dv.shape} {dv.dtype} {dv.device}")
         dq_per_step = [None, None]
         dk_per_step = [None, None]
         dv_per_step = [None, None]
@@ -3354,10 +3373,12 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
                     out_ = out_per_step[i]
                     dout_ = dout.select(seq_dim, i).contiguous().view(out_.shape)
                     if ctx.use_fused_attention:
-                        aux_ctx_tensors = [softmax_lse_per_step[i], rng_states[i]]
+                        aux_ctx_tensors = [softmax_lse_per_step[i], softmax_lse_per_step[i], rng_states[i]]
                         q_part, k_part, v_part, out_part, dout_part = q_, k_, v_, out_, dout_
                         fused_attn_backend = tex.NVTE_Fused_Attn_Backend.NVTE_F16_arbitrary_seqlen
                         fp8_meta_kwargs = {}
+                        new_qkv_layout = qkv_layout
+                        d_out_format = ctx.qkv_format
                         if ctx.fp8:
                             fused_attn_backend = tex.NVTE_Fused_Attn_Backend.NVTE_FP8
                             fp8_meta_kwargs["s_quantizer"] = ctx.S_quantizer
@@ -3377,9 +3398,13 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
                                     out_part = ctx.O_quantizer(out_part)
                                 dout_part = Float8Tensor.make_like(dout_fp8, data=dout_part, dtype=ctx.fwd_nominal_dtype)
                             else:
-                                q_part, k_part, v_part, qkv_layout = combine_and_quantize(qkv_layout, q_part, k_part, v_part, ctx.QKV_quantizer)
+                                q_part, k_part, v_part, new_qkv_layout = combine_and_quantize(qkv_layout, q_part, k_part, v_part, ctx.QKV_quantizer)
+                                print(f"aux_ctx_tensors: {len(aux_ctx_tensors)} {[x.shape if x is not None else None for x in aux_ctx_tensors]} {[type(x) for x in aux_ctx_tensors]}")
+                                dout_part, d_out_format = dpa_utils.permute_to_grouped_tensor(d_out_format, dout_part)
                                 aux_ctx_tensors.append(dout_part)
                                 dout_part = ctx.dO_quantizer(dout_part)
+                        print(f"q_part type: {type(q_part)} {type(k_part)} {type(v_part)} {type(out_part)} {type(dout_part)}")
+                        print(f"q_part shape: {q_part.shape} {k_part.shape} {v_part.shape} {out_part.shape} {dout_part.shape}")
                         dq_per_step[i], dk_per_step[i], dv_per_step[i], *_ = fused_attn_bwd(
                             ctx.max_seqlen_q,
                             max_seqlen_kv,
@@ -3398,9 +3423,9 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
                             cu_seqlens_kv_padded=cu_seqlens_kv_per_step[i],
                             attn_scale=ctx.softmax_scale,
                             dropout=ctx.dropout_p,
-                            qkv_layout=qkv_layout,
+                            qkv_layout=new_qkv_layout,
                             o_format=ctx.qkv_format,
-                            d_out_format=ctx.qkv_format,
+                            d_out_format=d_out_format,
                             dqkv_layout=qkv_layout,
                             attn_mask_type=ctx.attn_mask_type,
                             attn_bias_type=ctx.attn_bias_type,
@@ -3453,6 +3478,8 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
 
             if i > 0:
                 with torch.cuda.stream(flash_attn_streams[i - 1]):
+                    if torch.cuda.current_device() == 0:
+                        print(f"dq.shape: {dq.shape} dq_per_step[i - 1].shape: {dq_per_step[i - 1].shape}")
                     if ctx.qkv_format == "bshd":
                         dq[:, i - 1].copy_(dq_per_step[i - 1])
                     elif ctx.qkv_format == "sbhd":
@@ -3502,6 +3529,7 @@ class AttnFuncWithCPAndKVAllGather(torch.autograd.Function):
             dq,
             dk,
             dv,
+            None,
             None,
             None,
             None,

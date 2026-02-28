@@ -2891,7 +2891,7 @@ void fused_attn_fp8_bwd(size_t batch, size_t num_attn_heads, size_t num_gqa_grou
   size_t workspace_size = 0;
 
   NVTE_QKV_Format dqkv_format = nvte_get_qkv_format(dqkv_layout);
-  if ((dqkv_format == NVTE_QKV_Format::NVTE_BSHD) || (dqkv_format == NVTE_QKV_Format::NVTE_SBHD)) {
+  if ((dqkv_format == NVTE_QKV_Format::NVTE_BSHD) || (dqkv_format == NVTE_QKV_Format::NVTE_SBHD) || (dqkv_format == NVTE_QKV_Format::NVTE_BHSD)) {
     fused_attn::fused_attn_fp8_bwd_impl_v1(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim_qk, head_dim_v, attn_scale,
         p_dropout, qkv_layout, o_format, d_out_format, dqkv_layout, bias_type, mask_type, window_size_left, window_size_right, bottom_right_diagonal, deterministic, devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv,
