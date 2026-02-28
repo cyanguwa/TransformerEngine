@@ -1408,15 +1408,17 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         q_fp8, k_fp8, v_fp8 = (None, None, None)
         # communicate for the 'a2a' part of 'a2a+p2p'
         if cp_size_a2a > 1:
+            print(f">>>>>>======================>>>>>> {torch.cuda.current_device()}: fp8: {fp8}, is_input_fp8: {is_input_fp8}, fp8_recipe.mxfp8(): {fp8_recipe.mxfp8()}")
             if fp8 and is_input_fp8:
                 QKV_quantizer = q._quantizer
                 q_fp8, k_fp8, v_fp8 = q, k, v
-                q, k, v = (q._data, k._data, v._data)
+                if not fp8_recipe.mxfp8():
+                    q, k, v = (q._data, k._data, v._data)
             chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_before_attn(cp_size_a2a, q.device)
             q, k, v = flash_attn_a2a_communicate(
                 [q, k, v], chunk_ids_for_a2a, seq_dim, cp_size_a2a, cp_group_a2a, cp_stream, True
             )
-            if fp8 and is_input_fp8:
+            if fp8 and is_input_fp8 and not fp8_recipe.mxfp8():
                 q_fp8, k_fp8, v_fp8 = [
                     Float8Tensor.make_like(x, data=y, dtype=fwd_nominal_dtype)
                     for x, y in zip([q_fp8, k_fp8, v_fp8], [q, k, v])
@@ -1576,6 +1578,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         k_shape = k.shape
         k_numel = k.numel()
         v_shape = v.shape
+        o_shape = q.shape if not enable_mla else q.shape[:-1] + v.shape[-1:]
         p2p_comm_buffers[0] = torch.cat((k.view(-1), v.view(-1)), dim=-1)
         send_recv_reqs = [[], []]
 
@@ -1820,7 +1823,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                         if qkv_format == "thd":
                             if enable_mla:
                                 out = torch.zeros_like(v if not fp8 else out_per_step[0]).view(
-                                    v_shape
+                                    o_shape
                                 )
                             else:
                                 # MHA or GQA
@@ -1874,8 +1877,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                             softmax_lse_per_step[0],
                             seq_dim,
                         )
+                        print(f"====o/v===== {torch.cuda.current_device()}: i: {i}, {enable_mla}, out.shape: {out.shape} {out_per_step[0].shape} {v_shape} {o_shape}")
                         if enable_mla:
-                            out = out.view(v_shape)
+                            out = out.view(o_shape)
                         else:
                             out = out.view(q.shape)
                     else:
@@ -1922,6 +1926,9 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         elif o_format == "sbhd":
             out = out.view(-1, *out.shape[-3:])
             ctx.batch_size = out.shape[1]
+        print(f"========= {torch.cuda.current_device()}: out.shape: {out.shape} {out.dtype}")
+        out_part = out.to(fwd_nominal_dtype)
+        print(f"========= {torch.cuda.current_device()}: out_part.shape: {out_part.shape} {out_part.dtype}")
 
         if cp_size_a2a > 1:
             chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_after_attn(cp_size_a2a, out.device)
@@ -1986,6 +1993,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         # q, kv, out
         fp8_tensors = (None, None, None)
         f16_tensors = (None, None, None)
+        out_f16 = out_part
         if ctx.fp8:
             # fwd: fp8, bwd: fp8, save all fp8
             fp8_tensors = (q_fp8, kv_fp8, out_fp8)
@@ -2064,6 +2072,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         ctx.k_numel = k_numel
         ctx.k_shape = k_shape
         ctx.v_shape = v_shape
+        ctx.o_shape = o_shape
 
         ctx.fwd_nominal_dtype = fwd_nominal_dtype
         ctx.dQKV_quantizer = dQKV_quantizer
@@ -2292,14 +2301,15 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
 
         # communicate for the 'a2a' part of 'a2a+p2p'
         if cp_size_a2a > 1:
+            print(f"========= {torch.cuda.current_device()}: before a2a: out.shape: {out.shape} {out.dtype} dout.shape: {dout.shape} {dout.dtype}")
             if not ctx.use_fused_attention:
-                out = out.view(ctx.batch_size, -1, *out.shape[-2:])
+                # out = out.view(ctx.batch_size, -1, *out.shape[-2:])
                 dout = dout.view(*out.shape)
             chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_before_attn(
                 cp_size_a2a, out.device
             )
-            out, dout = flash_attn_a2a_communicate(
-                [out, dout],
+            dout = flash_attn_a2a_communicate(
+                [dout],
                 chunk_ids_for_a2a,
                 seq_dim,
                 cp_size_a2a,
@@ -2307,10 +2317,11 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                 ctx.cp_stream,
                 True,
             )
+            print(f"========= {torch.cuda.current_device()}: after a2a: dout.shape: {dout.shape} {dout.dtype} {q.shape} {ctx.v_shape}")
 
         if ctx.enable_mla:
-            out = out.view(*ctx.v_shape)
-            dout = dout.view(*ctx.v_shape)
+            out = out.view(*ctx.o_shape)
+            dout = dout.view(*ctx.o_shape)
         else:
             # MHA or GQA
             out = out.view(*q.shape)
@@ -2754,7 +2765,8 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
         if cp_size_a2a > 1:
             if ctx.fp8 and ctx.is_input_fp8:
                 dq_fp8, dk_fp8, dv_fp8 = dq, dk, dv
-                dq, dk, dv = (dq_fp8._data, dk_fp8._data, dv_fp8._data)
+                if not ctx.fp8_recipe.mxfp8():
+                    dq, dk, dv = (dq_fp8._data, dk_fp8._data, dv_fp8._data)
             chunk_ids_for_a2a = get_seq_chunk_ids_for_reordering_after_attn(cp_size_a2a, q.device)
             dq, dk, dv = flash_attn_a2a_communicate(
                 [dq, dk, dv],
@@ -2765,7 +2777,7 @@ class AttnFuncWithCPAndKVP2P(torch.autograd.Function):
                 ctx.cp_stream,
                 False,
             )
-            if ctx.fp8 and ctx.is_input_fp8:
+            if ctx.fp8 and ctx.is_input_fp8 and not ctx.fp8_recipe.mxfp8():
                 dq, dk, dv = [
                     Float8Tensor.make_like(x, data=y, dtype=bwd_nominal_dtype)
                     for x, y in zip([dq_fp8, dk_fp8, dv_fp8], [dq, dk, dv])
