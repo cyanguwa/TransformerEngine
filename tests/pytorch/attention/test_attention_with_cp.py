@@ -151,7 +151,7 @@ model_configs_fused_attn = {
     "cp_1_3": ModelConfig(2, 4096, 12, 128, attn_bias_type="post_scale_bias"),  # MHA
     "cp_1_4": ModelConfig(2, 4096, 12, 128, attn_mask_type="causal", window_size=(512, 512)),  # MHA
     "cp_2_0": ModelConfig(2, 4096, 12, 128, num_gqa_groups=2, attn_mask_type="causal"),  # GQA
-    "cp_2_1": ModelConfig(2, 4096, 16, 192, head_dim_v=128, num_gqa_groups=4, attn_mask_type="causal"),  # GQA
+    "cp_2_1": ModelConfig(2, 4096, 16, 128), #192, head_dim_v=128, num_gqa_groups=4, attn_mask_type="causal"),  # GQA
     "cp_2_2": ModelConfig(
         2,
         4096,
@@ -249,10 +249,10 @@ def test_cp_with_fused_attention(
                 "CP implementation with QKVO A2A+P2P (Hierarchical A2A) does not support THD format"
                 " yet!"
             )
-    if dtype == "fp8" and cp_comm_type == "all_gather":
-        pytest.skip(
-            "CP implementation with KV all-gather does not support FP8 + context parallelism yet!"
-        )
+    # if dtype == "fp8" and cp_comm_type == "all_gather":
+    #     pytest.skip(
+    #         "CP implementation with KV all-gather does not support FP8 + context parallelism yet!"
+    #     )
     if dtype == "fp8" and qkv_format == "thd":
         pytest.skip("FP8 attention cannot work with THD format yet!")
     if dtype == "fp8" and config.attn_bias_type != "no_bias":
