@@ -787,6 +787,7 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
   using namespace group_quantize_kernel;
 
   checkCuDriverContext(stream);
+  CheckNoopTensor(*noop, "cast_noop");
 
   const bool use_rowwise_scaling = output->has_data();
   const bool use_colwise_scaling = output->has_columnwise_data();

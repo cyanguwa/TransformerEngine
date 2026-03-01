@@ -30,6 +30,7 @@ void nvte_group_quantize(const NVTEGroupedTensor input, NVTEGroupedTensor output
                          cudaStream_t stream) {
   NVTE_API_CALL(nvte_group_quantize);
   using namespace transformer_engine;
+
   constexpr bool IS_ACT = false;
   dispatch::group_quantize_fwd_helper<IS_ACT, Empty, nullptr>(input, output, nullptr, stream);
 }

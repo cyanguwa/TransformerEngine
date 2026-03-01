@@ -967,6 +967,7 @@ class TensorWrapper {
 /*! \struct GroupedTensorWrapper
  *  \brief C++ wrapper for the NVTEGroupedTensor class.
  */
+
 class GroupedTensorWrapper {
  public:
   /*! \brief Constructs new GroupedTensorWrapper.
