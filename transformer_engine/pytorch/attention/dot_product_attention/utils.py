@@ -2209,20 +2209,20 @@ def print_quantizers(
                     f" {q.amax.item():.4e} = {q.scale.item()*q.amax.item():.4e}"
                 )
             else:
-                print(
-                    f"{label} >> {names[i]:14s}: {type_str}"
-                )
+                print(f"{label} >> {names[i]:14s}: {type_str}")
+
 
 def permute_to_grouped_tensor(src_format, tensor):
     """Permute tensor to bhsd or htd format for grouped quantization in MXFP8BlockScaling. src_format ={bshd, sbhd, thd}"""
     if src_format in ["bhsd", "htd"]:
         return tensor, src_format
     tensor = tensor.contiguous() if not tensor.is_contiguous() else tensor
-    dim_s_or_t = src_format.find("s") if 's' in src_format else src_format.find("t")
+    dim_s_or_t = src_format.find("s") if "s" in src_format else src_format.find("t")
     dim_others = [i for i in range(len(tensor.shape)) if i != dim_s_or_t]
     perm = [*dim_others[:-1], dim_s_or_t, dim_others[-1]]
     tensor = tensor.permute(*perm).contiguous()
     return tensor, "bhsd" if src_format != "thd" else "htd"
+
 
 def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
     """Combine q,k,v based on qkv_layout and quantize them together"""
@@ -2244,7 +2244,10 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
         original_shapes = [x.shape for x in [q, k, v]]
         s_q, d_qk = q.shape[-2:]
         s_kv, d_v = v.shape[-2:]
-        print(f">>>>>>>>>>>> {torch.cuda.current_device()}: {qkv_layout} s_q: {s_q}, d_qk: {d_qk}, s_kv: {s_kv}, d_v: {d_v}, {q.shape}, {k.shape}, {v.shape}")
+        print(
+            f">>>>>>>>>>>> {torch.cuda.current_device()}: {qkv_layout} s_q: {s_q}, d_qk: {d_qk},"
+            f" s_kv: {s_kv}, d_v: {d_v}, {q.shape}, {k.shape}, {v.shape}"
+        )
         assert s_q % 128 == 0
         assert s_kv % 128 == 0
         assert d_qk % 32 == 0
@@ -2254,7 +2257,9 @@ def combine_and_quantize(qkv_layout, q, k, v, qkv_quantizer):
 
         # consider bhsd for now
         if d_qk == d_v:
-            grouped_tensor = GroupedTensor.create_and_quantize(tensors=[q, k, v], quantizer=qkv_quantizer)
+            grouped_tensor = GroupedTensor.create_and_quantize(
+                tensors=[q, k, v], quantizer=qkv_quantizer
+            )
             q_fp8, k_fp8, v_fp8 = grouped_tensor.quantized_tensors
         else:
             q_fp8 = qkv_quantizer(q)

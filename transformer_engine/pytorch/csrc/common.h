@@ -306,7 +306,7 @@ class MXFP8Quantizer : public Quantizer {
    * amax to be initialized to zero.
   */
   std::pair<TensorWrapper, py::object> create_unquantized_tensor_with_amax(
-    const std::vector<size_t>& shape, DType dtype, std::optional<at::Tensor> data = std::nullopt);
+      const std::vector<size_t>& shape, DType dtype, std::optional<at::Tensor> data = std::nullopt);
 
   std::pair<GroupedTensorWrapper, py::object> create_grouped_tensor(
       size_t num_tensors, const std::vector<size_t>& logical_shape, DType dtype,

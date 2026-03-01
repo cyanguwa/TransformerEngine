@@ -154,7 +154,9 @@ model_configs_fused_attn = {
     ),  # MHA
     "cp_1_5": ModelConfig(2, 4096, 12, 128, attn_mask_type="causal", window_size=(512, 512)),  # MHA
     "cp_2_0": ModelConfig(2, 4096, 12, 128, num_gqa_groups=2, attn_mask_type="causal"),  # GQA
-    "cp_2_1": ModelConfig(2, 4096, 16, 192, head_dim_v=128), #num_gqa_groups=4, attn_mask_type="causal"),  # GQA
+    "cp_2_1": ModelConfig(
+        2, 4096, 16, 192, head_dim_v=128
+    ),  # num_gqa_groups=4, attn_mask_type="causal"),  # GQA
     "cp_2_2": ModelConfig(
         2,
         4096,

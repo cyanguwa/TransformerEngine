@@ -319,7 +319,7 @@ void generateMatrixStrides(int64_t b, int64_t h, int64_t s_q, int64_t s_kv, int6
         strideA[hidden_transpose_dim_idx] = 1;
       }
       break;
-}
+  }
 
   if (matrix == NVTE_QKV_Matrix::NVTE_S_Matrix) {
     strideA[seqlen_kv_dim_idx] = 1;

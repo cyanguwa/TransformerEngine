@@ -361,7 +361,6 @@ class TestGroupedTensor:
             expected_offset = _rowwise_offset_bytes(i * numel, quantization)
             assert rowwise_data.data_ptr() == original_data_ptr + expected_offset
 
-
     @pytest.mark.skipif(not mxfp8_available, reason=reason_for_no_mxfp8)
     def test_quantize_grouped_mxfp8(self) -> None:
         """Test grouped quantization for MXFP8 against per-tensor quantization."""
@@ -372,7 +371,7 @@ class TestGroupedTensor:
         # Create BF16 input tensors and pack into a grouped tensor
         input_tensors = [torch.randn(s, dtype=torch.bfloat16, device="cuda") for s in shapes]
         quantizer = MXFP8Quantizer(fp8_dtype=tex.DType.kFloat8E4M3)
-        quantizer.optimize_for_gemm=True
+        quantizer.optimize_for_gemm = True
         grouped_input = GroupedTensor.make_grouped_tensor_with_shapes(
             num_tensors=num_tensors,
             shapes=shapes,

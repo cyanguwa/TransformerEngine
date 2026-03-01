@@ -175,15 +175,26 @@ class FP8EmulationFunc(torch.autograd.Function):
             query_layer, key_layer, value_layer = [
                 x.contiguous() for x in [tensor1, tensor2, tensor3]
             ]
-            assert qkv_layout == "sbhd_sbhd_sbhd", "sbhd_sbhd_sbhd is assumed to be the shape always at this point in UnfusedDotProductAttention."
+            assert qkv_layout == "sbhd_sbhd_sbhd", (
+                "sbhd_sbhd_sbhd is assumed to be the shape always at this point in"
+                " UnfusedDotProductAttention."
+            )
             q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(
                 qkv_layout, query_layer, key_layer, value_layer, quantizer
             )
             tensors = combine_and_dequantize(
-                qkv_layout, q_fp8, k_fp8, v_fp8, src_nominal_dtype=query_layer.dtype, des_nominal_dtype=query_layer.dtype
+                qkv_layout,
+                q_fp8,
+                k_fp8,
+                v_fp8,
+                src_nominal_dtype=query_layer.dtype,
+                des_nominal_dtype=query_layer.dtype,
             )
             if isinstance(quantizer, MXFP8Quantizer):
-                assert qkv_layout == "bhsd_bhsd_bhsd", "bhsd_bhsd_bhsd is assumed to be the shape always at this point in UnfusedDotProductAttention."
+                assert qkv_layout == "bhsd_bhsd_bhsd", (
+                    "bhsd_bhsd_bhsd is assumed to be the shape always at this point in"
+                    " UnfusedDotProductAttention."
+                )
                 # permute back to sbhd_sbhd_sbhd
                 tensors = [x.permute(2, 0, 1, 3).contiguous() for x in tensors]
         elif quantizer_name in ["S_quantizer", "O_quantizer"]:
@@ -217,7 +228,10 @@ class FP8EmulationFunc(torch.autograd.Function):
                 ctx.qkv_layout, dq_fp8, dk_fp8, dv_fp8, src_nominal_dtype=query_grad.dtype
             )
             if isinstance(ctx.quantizer, MXFP8Quantizer):
-                assert ctx.qkv_layout == "bhsd_bhsd_bhsd", "bhsd_bhsd_bhsd is assumed to be the shape always at this point in UnfusedDotProductAttention."
+                assert ctx.qkv_layout == "bhsd_bhsd_bhsd", (
+                    "bhsd_bhsd_bhsd is assumed to be the shape always at this point in"
+                    " UnfusedDotProductAttention."
+                )
                 # permute back to sbhd_sbhd_sbhd
                 tensors = [x.permute(2, 0, 1, 3).contiguous() for x in tensors]
         else:
@@ -469,7 +483,14 @@ class UnfusedDotProductAttention(torch.nn.Module):
                     fp8_dtype=dP_quantizer.dtype, device="cuda"
                 )
             # disable swizzle for MXFP8Quantizer
-            for q in [QKV_quantizer, O_quantizer, S_quantizer, dQKV_quantizer, dO_quantizer, dP_quantizer]:
+            for q in [
+                QKV_quantizer,
+                O_quantizer,
+                S_quantizer,
+                dQKV_quantizer,
+                dO_quantizer,
+                dP_quantizer,
+            ]:
                 if isinstance(q, MXFP8Quantizer):
                     q.optimize_for_gemm = False
                     q.internal = False
@@ -477,11 +498,21 @@ class UnfusedDotProductAttention(torch.nn.Module):
             # q, k, v are in sbhd after previous reshaping
             # quantize and dequantize QKV to emulate FP8
             query_layer, key_layer, value_layer = FP8EmulationFunc.apply(
-                query_layer, key_layer, value_layer, QKV_quantizer, "QKV_quantizer", "sbhd_sbhd_sbhd"
+                query_layer,
+                key_layer,
+                value_layer,
+                QKV_quantizer,
+                "QKV_quantizer",
+                "sbhd_sbhd_sbhd",
             )
             # quantize and dequantize dQKV to emulate FP8
             query_layer, key_layer, value_layer = FP8EmulationFunc.apply(
-                query_layer, key_layer, value_layer, dQKV_quantizer, "dQKV_quantizer", "sbhd_sbhd_sbhd"
+                query_layer,
+                key_layer,
+                value_layer,
+                dQKV_quantizer,
+                "dQKV_quantizer",
+                "sbhd_sbhd_sbhd",
             )
 
         # [sq, b, np, hn] -> [sq, b * np, hn]
@@ -1250,7 +1281,9 @@ class FusedAttnFunc(torch.autograd.Function):
             if is_input_fp8:
                 q_fp8, k_fp8, v_fp8 = q, k, v
             else:
-                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(qkv_layout, q, k, v, QKV_quantizer)
+                q_fp8, k_fp8, v_fp8, qkv_layout = combine_and_quantize(
+                    qkv_layout, q, k, v, QKV_quantizer
+                )
 
             # print quantizers
             print_quantizers(
@@ -1335,7 +1368,9 @@ class FusedAttnFunc(torch.autograd.Function):
             fp8_tensors = (None, None, None, None)
             qkvo_tensors = (None, None, None, None)
             if is_bwd_fp8:
-                if (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16) or isinstance(QKV_quantizer, MXFP8Quantizer):
+                if (fp8_recipe.float8_current_scaling() and _dpa_fp8_cs_o_in_f16) or isinstance(
+                    QKV_quantizer, MXFP8Quantizer
+                ):
                     fp8_tensors = (q_fp8, k_fp8, v_fp8, None)
                     qkvo_tensors = (None, None, None, out)
                 else:

@@ -87,6 +87,7 @@ class Recipe:
     """
     Base recipe class.
     """
+
     @classmethod
     def nvfp4(cls):
         """Whether the given recipe is NVFP4 1D block scaling."""

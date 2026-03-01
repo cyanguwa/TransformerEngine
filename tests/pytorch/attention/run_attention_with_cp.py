@@ -21,7 +21,12 @@ from transformer_engine.pytorch import (
     Float8CurrentScalingQuantizer,
     MXFP8Quantizer,
 )
-from transformer_engine.common.recipe import DelayedScaling, Float8CurrentScaling, MXFP8BlockScaling, Format
+from transformer_engine.common.recipe import (
+    DelayedScaling,
+    Float8CurrentScaling,
+    MXFP8BlockScaling,
+    Format,
+)
 from utils import ModelConfig, compare_and_assert
 
 dtypes = {"fp16": torch.float16, "bf16": torch.bfloat16, "fp8": torch.bfloat16}
@@ -250,7 +255,9 @@ def run_dpa_with_cp(
         if scaling_mode == "current":
             fp8_recipe = Float8CurrentScaling(fp8_dpa=fp8_dpa, fp8_mha=fp8_mha)
         if scaling_mode == "mxfp8":
-            fp8_recipe = MXFP8BlockScaling(fp8_format=Format.HYBRID, fp8_dpa=fp8_dpa, fp8_mha=fp8_mha)
+            fp8_recipe = MXFP8BlockScaling(
+                fp8_format=Format.HYBRID, fp8_dpa=fp8_dpa, fp8_mha=fp8_mha
+            )
 
     # instantiate attention module
     core_attn = DotProductAttention(
