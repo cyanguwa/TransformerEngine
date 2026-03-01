@@ -970,5 +970,7 @@ class GroupedTensor:
         """
         self.quantized_tensors = self.split_into_quantized_tensors()
         for i in range(self.num_tensors):
-            self.quantizer.update_quantized(tensors[i], self.quantized_tensors[i], noop_flag=noop_flag)
+            self.quantizer.update_quantized(
+                tensors[i], self.quantized_tensors[i], noop_flag=noop_flag
+            )
         return self.quantized_tensors
