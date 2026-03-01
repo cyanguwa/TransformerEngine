@@ -787,7 +787,6 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
   using namespace group_quantize_kernel;
 
   checkCuDriverContext(stream);
-  // CheckNoopTensor(*noop, "cast_noop");
 
   const bool use_rowwise_scaling = output->has_data();
   const bool use_colwise_scaling = output->has_columnwise_data();
@@ -800,13 +799,6 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
   } else if (!use_rowwise_scaling) {
     scaling_type = ScalingType::COLWISE;
   }
-  // if (use_rowwise_scaling && (!use_colwise_scaling)) {
-  //   scaling_type = ScalingType::ROWWISE;
-  // } else if ((!use_rowwise_scaling) && use_colwise_scaling) {
-  //   scaling_type = ScalingType::COLWISE;
-  // } else if (use_rowwise_scaling && use_colwise_scaling) {
-  //   scaling_type = ScalingType::BIDIMENSIONAL;
-  // }
 
   ShapeRepresentation shape_rep = ShapeRepresentation::SAME_BOTH_DIMS;
   if (output->all_same_shape()) {
@@ -885,10 +877,6 @@ void group_quantize(const GroupedTensor *input, const GroupedTensor *activations
   if (use_colwise_scaling) {
     NVTE_CHECK(scales_colwise_ptr != nullptr, "Columnwise scaling tensor must be allocated");
   }
-
-  const size_t scale_stride_rowwise = use_rowwise_scaling ? output->scale_inv.shape[1] : 1;
-  const size_t scale_stride_colwise =
-      use_colwise_scaling ? output->columnwise_scale_inv.shape[1] : 1;
 
   const size_t dbias_rows = DIVUP(first_logical_dim, CHUNK_DIM_Y);
   const size_t dbias_cols = last_logical_dim;

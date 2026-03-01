@@ -450,12 +450,14 @@ enum NVTEGroupedTensorParam {
   kNVTEGroupedTensorOffsets =
       9, /*!< Tensor offsets for contiguous layout (device pointer to int64_t array) */
 <<<<<<< HEAD
+<<<<<<< HEAD
   kNVTEGroupedWithGEMMSwizzledScales =
       10, /*!< Whether scaling factors are in format expected by GEMM */
 =======
+=======
+>>>>>>> 341cc3df (fix merge)
   kNVTEGroupedWithGEMMSwizzledScales =
       10, /*!< Whether scaling factors are in format expected by GEMM */
->>>>>>> main
   kNVTENumGroupedTensorParams
 };
 
@@ -510,27 +512,6 @@ void nvte_set_grouped_tensor_param(NVTEGroupedTensor tensor, NVTEGroupedTensorPa
  */
 void nvte_get_grouped_tensor_param(const NVTEGroupedTensor tensor, NVTEGroupedTensorParam param,
                                    void *buf, size_t size_in_bytes, size_t *size_written);
-
-/*! \brief Set a parameter of the grouped tensor.
- *
- *  \param[in/out] tensor Grouped tensor.
- *  \param[in] param_name The parameter to be set.
- *  \param[in] param The value to be set (NVTEBasicTensor).
- */
-void nvte_set_grouped_tensor_param_v2(NVTEGroupedTensor tensor, NVTEGroupedTensorParam param_name,
-                                      const void *buf, size_t size_in_bytes);
-
-/* EXPERIMENTAL FEATURE AND SUBJECT TO CHANGE. */
-/*! \brief Get a value of the parameter of the grouped tensor.
- *
- *  \param[in] tensor Grouped tensor.
- *  \param[in] param_name The parameter to be queried.
- *
- *  \return NVTEBasicTensor containing the parameter data.
- */
-void nvte_get_grouped_tensor_param_v2(const NVTEGroupedTensor tensor,
-                                      NVTEGroupedTensorParam param_name, void *buf,
-                                      size_t size_in_bytes, size_t *size_written);
 
 /* EXPERIMENTAL FEATURE AND SUBJECT TO CHANGE. */
 /*! \brief Get the number of tensors in a grouped tensor.
@@ -995,6 +976,7 @@ class TensorWrapper {
  */
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 class GroupedTensorWrapper {
  public:
   /*! \brief Constructs new GroupedTensorWrapper.
@@ -1212,6 +1194,8 @@ class GroupedTensorWrapper {
 /*! \warning Deprecated */
 enum class Float8BlockScaleTensorFormat { GEMM_READY = 0, COMPACT = 1, INVALID };
 =======
+=======
+>>>>>>> 341cc3df (fix merge)
 class GroupedTensorWrapper {
  public:
   /*! \brief Constructs new GroupedTensorWrapper.
@@ -1437,7 +1421,6 @@ enum class Float8BlockScaleTensorFormat {
   COMPACT = 1,
   INVALID
 };
->>>>>>> main
 
 /*! \struct QuantizationConfigWrapper
  *  \brief C++ wrapper for NVTEQuantizationConfigWrapper.

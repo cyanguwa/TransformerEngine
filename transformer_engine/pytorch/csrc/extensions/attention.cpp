@@ -166,8 +166,6 @@ std::vector<py::object> fused_attn_fwd(
   TensorWrapper te_page_table_k, te_page_table_v;
   if (qkv_type == DType::kFloat8E4M3 || qkv_type == DType::kFloat8E5M2) {
     // FP8
-    // auto h = q_shape[q_shape.size() - 2];
-    // auto d = q_shape[q_shape.size() - 1];
     if (set_zero && (o_format == NVTE_QKV_Format::NVTE_THD)) {
       if ((h * d) % block_size == 0) {
         mha_fill(te_O, cu_seqlens_q.index({torch::indexing::Slice(-1, torch::indexing::None)}));
@@ -319,6 +317,7 @@ std::vector<py::object> fused_attn_fwd(
         attn_mask_type, softmax_type, window_size[0], window_size[1], bottom_right_diagonal,
         workspace.data(), at::cuda::getCurrentCUDAStream());
   });
+
   // destroy tensor wrappers, but not allocated memory
   nvte_tensor_pack_destroy(&nvte_aux_tensor_pack);
 
@@ -364,9 +363,6 @@ std::vector<py::object> fused_attn_bwd(
   std::vector<size_t> q_shape = convertShape(te_Q.shape());
   std::vector<size_t> k_shape = convertShape(te_K.shape());
   std::vector<size_t> v_shape = convertShape(te_V.shape());
-  // auto h_q = q_shape[q_shape.size() - 2];
-  // auto h_kv = k_shape[k_shape.size() - 2];
-  // auto d_qk = q_shape[q_shape.size() - 1];
   const DType fake_dtype_te = GetTransformerEngineDType(fake_dtype);
   size_t b = 0, h_q = 0, h_kv = 0, s_q = 0, s_kv = 0, d_qk = 0, d_v = 0, t_q = 0, t_kv = 0;
   std::vector<size_t> dQ_shape(4), dK_shape(4), dV_shape(4);

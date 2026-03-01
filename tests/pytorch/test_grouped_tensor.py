@@ -393,7 +393,7 @@ class TestGroupedTensor:
             device="cuda",
         )
         # Quantize using grouped API (handle both 2-arg and 3-arg bindings)
-        _ = tex.quantize_grouped(grouped_input, grouped_output)
+        _ = tex.group_quantize(grouped_input, grouped_output)
         # Build expected output by quantizing each tensor independently
         expected_data = []
         expected_scale_inv = []

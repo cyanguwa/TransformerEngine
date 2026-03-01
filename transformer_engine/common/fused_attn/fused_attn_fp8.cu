@@ -2084,7 +2084,6 @@ void fused_attn_fp8_bwd_impl_v1(
   bool is_dropout = (dropout_probability != 0.0f);
   auto bias_b = b;
   auto bias_h = h;
-  const auto cudnn_runtime_version = cudnnGetVersion();
   auto bias_sq = s_q;
   auto bias_skv = s_kv;
   NVTE_CHECK(~is_bias, "FP8 fused attention does not support pre/post_scale_bias yet!");

@@ -53,11 +53,7 @@ class GroupedTensor:
     def __init__(
         self,
         num_tensors: int,
-<<<<<<< HEAD
         shapes: List[Tuple[int, int]],
-=======
-        shape: Optional[List[Tuple[int, int]]] = None,
->>>>>>> main
         quantizer: Optional[Quantizer] = None,
         dtype: Optional[torch.dtype] = None,
         data: Optional[torch.Tensor] = None,
@@ -959,7 +955,7 @@ class GroupedTensor:
             dtype=dtype,
         )
 
-        _ = tex.quantize_grouped(grouped_input, grouped_output)
+        _ = tex.group_quantize(grouped_input, grouped_output)
         grouped_output.quantized_tensors = grouped_output.split_into_quantized_tensors()
 
         return grouped_output
