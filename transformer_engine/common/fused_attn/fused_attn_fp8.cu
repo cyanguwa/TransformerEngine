@@ -1672,6 +1672,8 @@ void fused_attn_fp8_fwd_impl_v1(
   bool is_dropout = (is_training && dropout_probability != 0.0f);
   auto bias_b = b;
   auto bias_h = h;
+  auto bias_sq = s_q;
+  auto bias_skv = s_kv;
   NVTE_CHECK(~is_bias, "FP8 fused attention does not support pre/post_scale_bias yet!");
   NVTE_CHECK(~is_alibi, "FP8 fused attention does not support ALiBi yet!");
   bool is_delayed_scaling = (scaling_mode == NVTE_DELAYED_TENSOR_SCALING) && (o_tensor_type == cudnn_frontend::DataType_t::FP8_E4M3 ||
@@ -1699,6 +1701,8 @@ void fused_attn_fp8_fwd_impl_v1(
                                0,
                                bias_b,
                                bias_h,
+                               bias_sq,
+                               bias_skv,
                                scaling_factor,
                                is_training,
                                dropout_probability,
@@ -1866,8 +1870,8 @@ void fused_attn_fp8_fwd_impl_v1(
       // if (is_bias) {
       //     bias = mha_graph->tensor(fe::graph::Tensor_attributes()
       //                     .set_name("bias")
-      //                     .set_dim({bias_b, bias_h, s_q, s_kv})
-      //                     .set_stride({bias_h * s_q * s_kv, s_q * s_kv, s_kv, 1}));
+      //                     .set_dim({bias_b, bias_h, bias_sq, bias_skv})
+      //                     .set_stride({bias_h * bias_sq * bias_skv, bias_sq * bias_skv, bias_skv, 1}));
       //     sdpa_options.set_bias(bias);
       // }
 
@@ -2061,6 +2065,9 @@ void fused_attn_fp8_bwd_impl_v1(
   bool is_dropout = (dropout_probability != 0.0f);
   auto bias_b = b;
   auto bias_h = h;
+  const auto cudnn_runtime_version = cudnnGetVersion();
+  auto bias_sq = s_q;
+  auto bias_skv = s_kv;
   NVTE_CHECK(~is_bias, "FP8 fused attention does not support pre/post_scale_bias yet!");
   NVTE_CHECK(~is_alibi, "FP8 fused attention does not support ALiBi yet!");
   bool is_delayed_scaling = (scaling_mode == NVTE_DELAYED_TENSOR_SCALING) && (dqkv_tensor_type == cudnn_frontend::DataType_t::FP8_E4M3 ||
@@ -2091,6 +2098,8 @@ void fused_attn_fp8_bwd_impl_v1(
                                0,
                                bias_b,
                                bias_h,
+                               bias_sq,
+                               bias_skv,
                                scaling_factor,
                                true,
                                dropout_probability,
@@ -2416,22 +2425,21 @@ void fused_attn_fp8_bwd_impl_v1(
       // if (is_bias) {
       //     bias = mha_graph->tensor(fe::graph::Tensor_attributes()
       //                     .set_name("bias")
-      //                     .set_dim({bias_b, bias_h, s_q, s_kv})
-      //                     .set_stride({bias_h * s_q * s_kv, s_q * s_kv, s_kv, 1}));
+      //                     .set_dim({bias_b, bias_h, bias_sq, bias_skv})
+      //                     .set_stride({bias_h * bias_sq * bias_skv, bias_sq * bias_skv, bias_skv, 1}));
       //     dBias = mha_graph->tensor(fe::graph::Tensor_attributes()
       //                     .set_name("dBias")
-      //                     .set_dim({bias_b, bias_h, s_q, s_kv})
-      //                     .set_stride({bias_h * s_q * s_kv, s_q * s_kv, s_kv, 1}));
+      //                     .set_dim({bias_b, bias_h, bias_sq, bias_skv})
+      //                     .set_stride({bias_h * bias_sq * bias_skv, bias_sq * bias_skv, bias_skv, 1}));
       //     sdpa_backward_options.set_bias(bias);
-      //     // shapes [1, 1, s, s], [b, 1, s, s], [b, h, s, s]
-      //     // are not supported for dbias calculation but they are
-      //     // supported for forward bias calculation
-      //     if ((bias_b == 1) && (bias_h == h)) {
-      //       sdpa_backward_options.set_dbias(dBias);
-      //     }
+      // bias shapes [1, 1, s, s], [b, 1, s, s], [b, h, s, s], [1, h, s, s] are supported for dbias calculation
+      // bias shape [1, 1, 1, s] is not supported for dbias calculation as of cuDNN 9.18
+      // if (!((bias_b == 1) && (bias_h == 1) && (bias_sq == 1))) {
+      //    sdpa_backward_options.set_dbias(dBias);
+      //  }
       // }
 
-      if (cudnn_runtime_version >= 92100) {
+      if (cudnn_runtime_version >= 91900) {
         sdpa_backward_options.set_deterministic_algorithm(deterministic);
       }
 

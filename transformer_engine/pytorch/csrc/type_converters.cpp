@@ -208,10 +208,12 @@ GroupedTensorWrapper GroupedTensorFromPyTorchGroupedTensor(py::handle tensor) {
   NVTEScalingMode scaling_mode = NVTE_DELAYED_TENSOR_SCALING;
   bool with_gemm_swizzled_scales = false;
   if (!tensor.attr("quantizer").is_none()) {
-    quantizer = tensor.attr("quantizer").cast<py::handle>();
-    scaling_mode = ScalingModeFromQuantizer(quantizer);
-    quantizer_dtype = quantizer.attr("dtype").cast<DType>();
-    with_gemm_swizzled_scales = quantizer.attr("optimize_for_gemm").cast<bool>();
+    quantizer = tensor.attr("quantizer");
+    if (!quantizer.is_none()) {
+      scaling_mode = ScalingModeFromQuantizer(quantizer);
+      quantizer_dtype = quantizer.attr("dtype").cast<DType>();
+      with_gemm_swizzled_scales = quantizer.attr("optimize_for_gemm").cast<bool>();
+    }
   }
   auto ret = GroupedTensorWrapper(num_tensors, logical_shape, scaling_mode);
 
