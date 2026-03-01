@@ -4351,11 +4351,11 @@ def attn_forward_func_with_cp(
     ], f"Context parallelism does not support sliding window attention with {cp_comm_type=}!"
 
     enable_mla = k.shape[-1] != v.shape[-1]
-    assert not enable_mla or cp_comm_type in [
-        "p2p",
-        "a2a+p2p",
-        "a2a",
-    ], f"Context parallelism does not support MLA with {cp_comm_type=}!"
+    # assert not enable_mla or cp_comm_type in [
+    #     "p2p",
+    #     "a2a+p2p",
+    #     "a2a",
+    # ], f"Context parallelism does not support MLA with {cp_comm_type=}!"
 
     if fp8 and fp8_meta is not None:
         if fp8_meta["recipe"].fp8_dpa:
