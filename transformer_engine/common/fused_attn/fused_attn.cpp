@@ -781,10 +781,6 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
   } else if (fused_attention_backend == NVTE_Fused_Attn_Backend::NVTE_FP8) {
     size_t i = 0;
     const Tensor *input_M = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[i++]);
-    const Tensor *input_ZInv = nullptr;
-    if (qkv_layout == NVTE_QKV_Layout::NVTE_T3HD) {
-      input_ZInv = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[i++]);
-    }
     const Tensor *input_rng_state = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[i++]);
     const Tensor *input_SoftmaxOffset = nullptr;
     if (softmax_type != NVTE_VANILLA_SOFTMAX) {
@@ -799,7 +795,7 @@ void nvte_fused_attn_bwd(const NVTETensor Q, const NVTETensor K, const NVTETenso
                        do_scale_inv_format, bias_type, attn_mask_type, softmax_type,
                        window_size_left, window_size_right, bottom_right_diagonal, deterministic,
                        input_Q, input_K, input_V, input_O, input_dO, input_dO_f16, input_M,
-                       input_ZInv, input_S, input_SoftmaxOffset, input_output_dP, output_dQ,
+                       input_S, input_SoftmaxOffset, input_output_dP, output_dQ,
                        output_dK, output_dV, output_dSoftmaxOffset, input_cu_seqlens_q,
                        input_cu_seqlens_kv, input_rng_state, wkspace, stream, handle);
   } else {
