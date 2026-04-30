@@ -22,7 +22,7 @@ void fused_attn_fp8_fwd_impl_v1(
     NVTE_QKV_Format o_format, NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type,
     NVTE_Softmax_Type softmax_type, int64_t window_size_left, int64_t window_size_right,
     bool bottom_right_diagonal, void* devPtrQ, void* devPtrK, void* devPtrV,
-    void* devPtrSoftmaxOffset, void* devPtrM, void* devPtrZInv, void* devPtrO, void* devPtrDescaleQ,
+    void* devPtrSoftmaxOffset, void* devPtrM, void* devPtrO, void* devPtrDescaleQ,
     void* devPtrDescaleK, void* devPtrDescaleV, void* devPtrDescaleS, void* devPtrScaleS,
     void* devPtrScaleO, void* devPtrAmaxO, void* devPtrAmaxS, void* devPtrcuSeqlensQ,
     void* devPtrcuSeqlensKV, void* devPtrDropoutSeed, void* devPtrDropoutOffset,
@@ -453,7 +453,7 @@ void fused_attn_fp8_bwd_impl_v1(
     NVTE_Bias_Type bias_type, NVTE_Mask_Type mask_type, NVTE_Softmax_Type softmax_type,
     int64_t window_size_left, int64_t window_size_right, bool bottom_right_diagonal,
     bool deterministic, void* devPtrQ, void* devPtrK, void* devPtrV, void* devPtrM,
-    void* devPtrZInv, void* devPtrO, void* devPtrdO, void* devPtrSoftmaxOffset, void* devPtrdQ,
+    void* devPtrO, void* devPtrdO, void* devPtrSoftmaxOffset, void* devPtrdQ,
     void* devPtrdK, void* devPtrdV, void* devPtrdSoftmaxOffset, void* devPtrDescaleQ,
     void* devPtrDescaleK, void* devPtrDescaleV, void* devPtrDescaleO, void* devPtrDescaledO,
     void* devPtrDescaleS, void* devPtrDescaledP, void* devPtrScaleS, void* devPtrScaledP,
@@ -1126,7 +1126,6 @@ void fused_attn_fp8_fwd(
     devPtrSoftmaxOffset = input_SoftmaxOffset->data.dptr;
   }
   void* devPtrM = nullptr;
-  void* devPtrZInv = nullptr;
   if (Aux_CTX_Tensors->size == 0) {
     int i = 0;
     Tensor* output_M = convertNVTETensorCheck(Aux_CTX_Tensors->tensors[i++]);
@@ -1178,7 +1177,7 @@ void fused_attn_fp8_fwd(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim_qk, head_dim_v,
         is_training, attn_scale, p_dropout, qkv_layout, o_format, bias_type, mask_type,
         softmax_type, window_size_left, window_size_right, bottom_right_diagonal, devPtrQ, devPtrK,
-        devPtrV, devPtrSoftmaxOffset, devPtrM, devPtrZInv, devPtrO, devPtrDescaleQ, devPtrDescaleK,
+        devPtrV, devPtrSoftmaxOffset, devPtrM, devPtrO, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleS, devPtrScaleS, devPtrScaleO, devPtrAmaxO, devPtrAmaxS,
         devPtrcuSeqlensQ, devPtrcuSeqlensKV, devPtrDropoutSeed, devPtrDropoutOffset,
         get_cudnn_fe_dtype(QKV_type), get_cudnn_fe_dtype(O_type), input_Q->scaling_mode,
@@ -1247,7 +1246,6 @@ void fused_attn_fp8_bwd(
   }
 
   void* devPtrM = input_M->data.dptr;
-  void* devPtrZInv = nullptr;
 
   void *devPtrScaleS = nullptr, *devPtrDescaleS = nullptr, *devPtrAmaxdP = nullptr,
        *devPtrScaledP = nullptr, *devPtrDescaledP = nullptr;
@@ -1301,7 +1299,7 @@ void fused_attn_fp8_bwd(
         batch, num_attn_heads, num_gqa_groups, max_seqlen_q, max_seqlen_kv, head_dim_qk, head_dim_v,
         attn_scale, p_dropout, qkv_layout, o_format, do_format, dqkv_layout, bias_type, mask_type,
         softmax_type, window_size_left, window_size_right, bottom_right_diagonal, deterministic,
-        devPtrQ, devPtrK, devPtrV, devPtrM, devPtrZInv, devPtrO, devPtrdO, devPtrSoftmaxOffset,
+        devPtrQ, devPtrK, devPtrV, devPtrM, devPtrO, devPtrdO, devPtrSoftmaxOffset,
         devPtrdQ, devPtrdK, devPtrdV, devPtrdSoftmaxOffset, devPtrDescaleQ, devPtrDescaleK,
         devPtrDescaleV, devPtrDescaleO, devPtrDescaledO, devPtrDescaleS, devPtrDescaledP,
         devPtrScaleS, devPtrScaledP, devPtrScaledQ, devPtrScaledK, devPtrScaledV, devPtrAmaxdP,
