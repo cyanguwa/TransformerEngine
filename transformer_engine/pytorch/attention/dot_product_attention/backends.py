@@ -1859,10 +1859,12 @@ class FusedAttnFunc(torch.autograd.Function):
 
 
 class FusedAttention(torch.nn.Module):
-    """Dot product attention, using cuDNN fused attention backend:
+    """Dot product attention using cuDNN attention:
 
     FusedAttnBackend["F16_arbitrary_seqlen"]
-       cuDNN based fused attention for FP16/BF16 and any sequence length.
+       cuDNN attention for FP16/BF16 with any sequence length.
+    FusedAttnBackend["FP8"]
+       cuDNN attention for FP8 with any sequence length.
     """
 
     def __init__(
