@@ -19,7 +19,7 @@ the exact same graph the execute path will reuse.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .config import FusedAttnConfig, _name
 
@@ -115,14 +115,16 @@ def generate_matrix_strides(
     raise ValueError(f"generate_matrix_strides: unsupported qkv_layout {name!r}")
 
 
-def qkvo_dims_strides(cfg: FusedAttnConfig):
+def qkvo_dims_strides(cfg: FusedAttnConfig, batch_size: Optional[int] = None):
     """Return ``{role: (dim, stride)}`` for Q, K, V, O from a derived config.
 
     Dense path only (no paged/ragged): matches the non-paged branch of
-    ``create_graph_f16_fwd``. Q/O use ``num_attn_heads`` and the query/value head
-    dims; K/V use ``num_gqa_groups``.
+    ``create_graph_f16_fwd`` / ``create_graph_f16_bwd``. Q/O use ``num_attn_heads``
+    and the query/value head dims; K/V use ``num_gqa_groups``. ``batch_size``
+    defaults to the forward graph batch (``graph_batch_size_fwd``); the backward
+    builder passes ``graph_batch_size_bwd``.
     """
-    b = int(cfg.graph_batch_size_fwd)
+    b = int(cfg.graph_batch_size_fwd if batch_size is None else batch_size)
     s_q = int(cfg.graph_max_seqlen_q)
     s_kv = int(cfg.graph_max_seqlen_kv)
     h = int(cfg.num_attn_heads)

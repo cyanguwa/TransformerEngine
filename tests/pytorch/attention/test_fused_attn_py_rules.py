@@ -302,6 +302,14 @@ class _FakeCudnnGraph:
         self.sdpa_kwargs = kw
         return _FakeCudnnTensor(name="O"), _FakeCudnnTensor(name="Stats")
 
+    def sdpa_backward(self, q, k, v, o, dO, stats, **kw):
+        self.sdpa_kwargs = kw
+        return (
+            _FakeCudnnTensor(name="dQ"),
+            _FakeCudnnTensor(name="dK"),
+            _FakeCudnnTensor(name="dV"),
+        )
+
     def validate(self):
         self.calls.append("validate")
 
@@ -410,6 +418,63 @@ def test_build_f16_fwd_graph_control_flow():
 
     # GQA + SBHD + head_dim_v != head_dim_qk must still build.
     assert build(qkv_layout="NVTE_SBHD_SBHD_SBHD", num_gqa_groups=2, head_dim_v=128)
+
+
+def test_build_f16_bwd_graph_control_flow():
+    """Exercise the backward builder (sdpa_backward + dBias/deterministic) with a mock."""
+    cudnn = _FakeCudnn()
+    rt = _fake_runtime()
+    base = dict(
+        qkv_layout="NVTE_BSHD_BSHD_BSHD",
+        batch_size=2,
+        num_attn_heads=8,
+        num_gqa_groups=8,
+        head_dim_qk=64,
+        head_dim_v=64,
+        max_seqlen_q=128,
+        max_seqlen_kv=128,
+        qkv_dtype="kNVTEBFloat16",
+        o_dtype="kNVTEBFloat16",
+    )
+
+    def build(**overrides):
+        cfg = config.FusedAttnConfig(**{**base, **overrides}).derive(rt)
+        return f16_builder.build_f16_bwd_graph(cudnn, handle=1234, cfg=cfg)
+
+    e = build()
+    assert {"Q", "K", "V", "O", "dO", "stats", "attn_scale", "dQ", "dK", "dV"} <= set(e.tensors)
+    assert e.workspace_size == 4096
+    assert cudnn.g.calls == ["validate", "bog", "cep", "cs", "bp"]
+    assert cudnn.g.sdpa_kwargs["use_deterministic_algorithm"] is False
+
+    assert build(deterministic=True) and cudnn.g.sdpa_kwargs["use_deterministic_algorithm"] is True
+    assert build(attn_mask_type="NVTE_CAUSAL_MASK") and cudnn.g.sdpa_kwargs[
+        "diagonal_band_right_bound"
+    ] == 0
+
+    full_bias = dict(
+        bias_type="NVTE_POST_SCALE_BIAS",
+        bias_batch_size=2,
+        bias_num_heads=8,
+        bias_seqlen_q=128,
+        bias_seqlen_kv=128,
+    )
+    e = build(**full_bias)
+    assert "dBias" in e.tensors and "dBias" in cudnn.g.sdpa_kwargs
+    # A fully broadcast [1, 1, 1, s_kv] bias has no computable dBias.
+    e = build(
+        bias_type="NVTE_POST_SCALE_BIAS",
+        bias_batch_size=1,
+        bias_num_heads=1,
+        bias_seqlen_q=1,
+        bias_seqlen_kv=128,
+    )
+    assert "bias" in e.tensors and "dBias" not in e.tensors and "dBias" not in cudnn.g.sdpa_kwargs
+
+    e = build(attn_mask_type="NVTE_PADDING_MASK")
+    assert cudnn.g.sdpa_kwargs.get("use_padding_mask") is True and "seq_q" in e.tensors
+    e = build(dropout=0.1)
+    assert "dropout" in cudnn.g.sdpa_kwargs and e.tensors.get("dropout_seed") is not None
 
 
 probe_mod = importlib.import_module("transformer_engine.common.fused_attn_py.probe")

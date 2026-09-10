@@ -202,14 +202,150 @@ def build_f16_fwd_graph(
     tensors["O"] = o
     tensors["Stats"] = stats
 
+    _finalize(cudnn, graph)
+    ws = max(graph.get_workspace_size(), 1)
+    return GraphEntry(graph=graph, tensors=tensors, workspace_size=ws)
+
+
+def _finalize(cudnn: Any, graph: Any) -> None:
+    """Run the cuDNN build+support+plan sequence (shared by fwd and bwd)."""
     graph.validate()
     graph.build_operation_graph()
     graph.create_execution_plans([cudnn.heur_mode.A, cudnn.heur_mode.FALLBACK])
     graph.check_support()
     graph.build_plans(cudnn.build_plan_policy.HEURISTICS_CHOICE)
-    workspace_size = max(graph.get_workspace_size(), 1)
-
-    return GraphEntry(graph=graph, tensors=tensors, workspace_size=workspace_size)
 
 
-__all__ = ["plan_f16_fwd_masking", "build_f16_fwd_graph"]
+def build_f16_bwd_graph(
+    cudnn: Any,
+    handle: Any,
+    cfg: FusedAttnConfig,
+    *,
+    cudnn_version: Optional[int] = None,
+) -> GraphEntry:
+    """Build the F16/BF16 backward SDPA graph. Mirrors ``create_graph_f16_bwd``.
+
+    Inputs Q/K/V/O/dO/stats + pass-by-value attn_scale; outputs dQ/dK/dV (and
+    dBias when bias is not fully broadcast). Dims/strides are derived from ``cfg``
+    with the backward graph batch (``graph_batch_size_bwd``). Returns a
+    :class:`GraphEntry` whose ``tensors`` maps role names ("Q","K","V","O","dO",
+    "stats","attn_scale","dQ","dK","dV", plus optional "bias","dBias","seq_q",
+    "seq_kv","dropout_seed","dropout_offset") to graph tensor objects.
+    """
+    cfg.check_derived()
+    _reject_unsupported(cfg)
+    if cudnn_version is None:
+        cudnn_version = cudnn.backend_version()
+
+    io_dtype = _io_data_type(cudnn, cfg.qkv_dtype)
+    b = int(cfg.graph_batch_size_bwd)
+    h = int(cfg.num_attn_heads)
+    s_q = int(cfg.graph_max_seqlen_q)
+    ds = qkvo_dims_strides(cfg, batch_size=b)
+
+    graph = cudnn.pygraph(
+        io_data_type=io_dtype,
+        intermediate_data_type=cudnn.data_type.FLOAT,
+        compute_data_type=cudnn.data_type.FLOAT,
+        handle=handle,
+    )
+
+    q = graph.tensor(name="Q", dim=list(ds["Q"][0]), stride=list(ds["Q"][1]))
+    k = graph.tensor(name="K", dim=list(ds["K"][0]), stride=list(ds["K"][1]))
+    v = graph.tensor(name="V", dim=list(ds["V"][0]), stride=list(ds["V"][1]))
+    # O and dO share the O layout.
+    o = graph.tensor(name="O", dim=list(ds["O"][0]), stride=list(ds["O"][1]))
+    d_o = graph.tensor(name="dO", dim=list(ds["O"][0]), stride=list(ds["O"][1]))
+    stats = graph.tensor(
+        name="stats",
+        dim=[b, h, s_q, 1],
+        stride=[h * s_q, s_q, 1, 1],
+        data_type=cudnn.data_type.FLOAT,
+    )
+    attn_scale = graph.tensor(
+        name="attn_scale",
+        dim=[1, 1, 1, 1],
+        stride=[1, 1, 1, 1],
+        data_type=cudnn.data_type.FLOAT,
+        is_pass_by_value=True,
+    )
+
+    tensors: Dict[str, Any] = {
+        "Q": q,
+        "K": k,
+        "V": v,
+        "O": o,
+        "dO": d_o,
+        "stats": stats,
+        "attn_scale": attn_scale,
+    }
+
+    masking = plan_f16_fwd_masking(cfg, cudnn_version)
+    bwd_kwargs: Dict[str, Any] = {
+        "name": "flash_attention_backward",
+        "attn_scale": attn_scale,
+        "diagonal_alignment": getattr(cudnn.diagonal_alignment, masking["diagonal_alignment"]),
+        "use_alibi_mask": masking["use_alibi_mask"],
+    }
+    if masking["diagonal_band_left_bound"] is not None:
+        bwd_kwargs["diagonal_band_left_bound"] = masking["diagonal_band_left_bound"]
+    if masking["diagonal_band_right_bound"] is not None:
+        bwd_kwargs["diagonal_band_right_bound"] = masking["diagonal_band_right_bound"]
+    if cudnn_version >= 90000:
+        bwd_kwargs["use_deterministic_algorithm"] = bool(cfg.deterministic)
+
+    if cfg.is_bias:
+        bias_b = int(cfg.bias_batch_size)
+        bias_h = int(cfg.bias_num_heads)
+        bias_sq = int(cfg.bias_seqlen_q)
+        bias_skv = int(cfg.bias_seqlen_kv)
+        bias_dim = [bias_b, bias_h, bias_sq, bias_skv]
+        bias_stride = [bias_h * bias_sq * bias_skv, bias_sq * bias_skv, bias_skv, 1]
+        bias = graph.tensor(name="bias", dim=bias_dim, stride=bias_stride)
+        bwd_kwargs["bias"] = bias
+        tensors["bias"] = bias
+        # dBias is computable unless the bias is fully broadcast over (b, h, s_q)
+        # (a [1, 1, 1, s_kv] bias has no dbias, as of cuDNN 9.18).
+        if not (bias_b == 1 and bias_h == 1 and bias_sq == 1):
+            d_bias = graph.tensor(name="dBias", dim=bias_dim, stride=bias_stride)
+            bwd_kwargs["dBias"] = d_bias
+            tensors["dBias"] = d_bias
+
+    if cfg.is_padding:
+        seq_q = graph.tensor(
+            name="seq_q", dim=[b, 1, 1, 1], stride=[1, 1, 1, 1], data_type=cudnn.data_type.INT32
+        )
+        seq_kv = graph.tensor(
+            name="seq_kv", dim=[b, 1, 1, 1], stride=[1, 1, 1, 1], data_type=cudnn.data_type.INT32
+        )
+        bwd_kwargs["use_padding_mask"] = True
+        bwd_kwargs["seq_len_q"] = seq_q
+        bwd_kwargs["seq_len_kv"] = seq_kv
+        tensors["seq_q"] = seq_q
+        tensors["seq_kv"] = seq_kv
+
+    if cfg.is_dropout:
+        seed = graph.tensor(
+            name="Seed", dim=[1, 1, 1, 1], stride=[1, 1, 1, 1], data_type=cudnn.data_type.INT64
+        )
+        offset = graph.tensor(
+            name="Offset", dim=[1, 1, 1, 1], stride=[1, 1, 1, 1], data_type=cudnn.data_type.INT64
+        )
+        bwd_kwargs["dropout"] = (float(cfg.dropout), seed, offset)
+        tensors["dropout_seed"] = seed
+        tensors["dropout_offset"] = offset
+
+    d_q, d_k, d_v = graph.sdpa_backward(q, k, v, o, d_o, stats, **bwd_kwargs)
+    d_q.set_output(True).set_dim(list(ds["Q"][0])).set_stride(list(ds["Q"][1]))
+    d_k.set_output(True).set_dim(list(ds["K"][0])).set_stride(list(ds["K"][1]))
+    d_v.set_output(True).set_dim(list(ds["V"][0])).set_stride(list(ds["V"][1]))
+    tensors["dQ"] = d_q
+    tensors["dK"] = d_k
+    tensors["dV"] = d_v
+
+    _finalize(cudnn, graph)
+    ws = max(graph.get_workspace_size(), 1)
+    return GraphEntry(graph=graph, tensors=tensors, workspace_size=ws)
+
+
+__all__ = ["plan_f16_fwd_masking", "build_f16_fwd_graph", "build_f16_bwd_graph"]
