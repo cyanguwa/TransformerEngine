@@ -230,6 +230,182 @@ def test_f16_builder_rejects_deferred_features():
             f16_builder._reject_unsupported(cfg)
 
 
+strides = importlib.import_module("transformer_engine.common.fused_attn_py.strides")
+
+
+def _contig(dim):
+    st = [1] * len(dim)
+    for i in range(len(dim) - 2, -1, -1):
+        st[i] = st[i + 1] * dim[i + 1]
+    return st
+
+
+def test_generate_matrix_strides_vs_flex_and_hand():
+    """strides.py must match generateMatrixStrides for separate + packed layouts."""
+    b, h, hg, s_q, s_kv, dqk, dv = 2, 4, 2, 8, 8, 16, 16
+    gen = strides.generate_matrix_strides
+
+    # Separate SBHD/BSHD checked against flex_attention._bhsd_dim_stride semantics.
+    def sbhd_gt(bb, hh, ss, dd):
+        st = _contig([ss, bb, hh, dd])
+        return (st[1], st[2], st[0], st[3])
+
+    def bshd_gt(bb, hh, ss, dd):
+        st = _contig([bb, ss, hh, dd])
+        return (st[0], st[2], st[1], st[3])
+
+    assert gen(b, h, s_q, s_kv, dqk, "NVTE_SBHD_SBHD_SBHD", "Q") == sbhd_gt(b, h, s_q, dqk)
+    assert gen(b, hg, s_q, s_kv, dqk, "NVTE_SBHD_SBHD_SBHD", "K") == sbhd_gt(b, hg, s_kv, dqk)
+    assert gen(b, h, s_q, s_kv, dv, "NVTE_BSHD_BSHD_BSHD", "Q") == bshd_gt(b, h, s_q, dv)
+    assert gen(b, hg, s_q, s_kv, dv, "NVTE_BSHD_BSHD_BSHD", "V") == bshd_gt(b, hg, s_kv, dv)
+
+    # Packed and BHSD, hand-computed against the C++ switch.
+    assert gen(b, h, s_q, s_kv, dqk, "NVTE_BS3HD", "Q") == (s_q * 3 * h * dqk, dqk, 3 * h * dqk, 1)
+    assert gen(b, h, s_q, s_kv, dqk, "NVTE_SB3HD", "Q") == (3 * h * dqk, dqk, b * 3 * h * dqk, 1)
+    assert gen(b, h, s_q, s_kv, dv, "NVTE_SB3HD", "O") == (h * dv, dv, b * h * dv, 1)
+    bhsd_q = gen(b, h, s_q, s_kv, dqk, "NVTE_BHSD_BHSD_BHSD", "Q")
+    assert bhsd_q == (h * s_q * dqk, s_q * dqk, dqk, 1)
+    # Hybrid: Q is SBHD, K is BSHD.
+    assert gen(b, h, s_q, s_kv, dqk, "NVTE_SBHD_BSHD_BSHD", "Q") == (h * dqk, dqk, b * h * dqk, 1)
+    hybrid_k = gen(b, hg, s_q, s_kv, dqk, "NVTE_SBHD_BSHD_BSHD", "K")
+    assert hybrid_k == (s_kv * hg * dqk, dqk, hg * dqk, 1)
+
+
+class _FakeCudnnTensor:
+    def __init__(self, name=None, **kw):
+        self.name = name
+
+    def set_output(self, v):
+        return self
+
+    def set_dim(self, d):
+        return self
+
+    def set_stride(self, s):
+        return self
+
+    def set_data_type(self, dt):
+        return self
+
+
+class _FakeCudnnGraph:
+    def __init__(self, **kw):
+        self.calls = []
+        self.sdpa_kwargs = None
+
+    def tensor(self, **kw):
+        return _FakeCudnnTensor(**kw)
+
+    def sdpa(self, q, k, v, **kw):
+        self.sdpa_kwargs = kw
+        return _FakeCudnnTensor(name="O"), _FakeCudnnTensor(name="Stats")
+
+    def validate(self):
+        self.calls.append("validate")
+
+    def build_operation_graph(self):
+        self.calls.append("bog")
+
+    def create_execution_plans(self, modes):
+        self.calls.append("cep")
+
+    def check_support(self):
+        self.calls.append("cs")
+
+    def build_plans(self, policy):
+        self.calls.append("bp")
+
+    def get_workspace_size(self):
+        return 4096
+
+
+class _FakeCudnn:
+    class data_type:  # noqa: N801
+        HALF = "HALF"
+        BFLOAT16 = "BF16"
+        FLOAT = "FLOAT"
+        INT32 = "INT32"
+        INT64 = "INT64"
+
+    class diagonal_alignment:  # noqa: N801
+        TOP_LEFT = "TL"
+        BOTTOM_RIGHT = "BR"
+
+    class heur_mode:  # noqa: N801
+        A = "A"
+        FALLBACK = "FB"
+
+    class build_plan_policy:  # noqa: N801
+        HEURISTICS_CHOICE = "HC"
+
+    def __init__(self):
+        self.g = None
+
+    def pygraph(self, **kw):
+        self.g = _FakeCudnnGraph(**kw)
+        return self.g
+
+    def backend_version(self):
+        return 91500
+
+
+def _fake_runtime():
+    return config.RuntimeInfo(
+        sm_arch=90, cudnn_version=91500, cudnn_frontend_version=10700, cudnn_build_version=91500
+    )
+
+
+def test_build_f16_fwd_graph_control_flow():
+    """Exercise the full builder path (tensor/sdpa/finalize) with a mock cudnn."""
+    cudnn = _FakeCudnn()
+    rt = _fake_runtime()
+    base = dict(
+        qkv_layout="NVTE_BSHD_BSHD_BSHD",
+        batch_size=2,
+        num_attn_heads=8,
+        num_gqa_groups=8,
+        head_dim_qk=64,
+        head_dim_v=64,
+        max_seqlen_q=128,
+        max_seqlen_kv=128,
+        qkv_dtype="kNVTEBFloat16",
+        o_dtype="kNVTEBFloat16",
+    )
+
+    def build(**overrides):
+        cfg = config.FusedAttnConfig(**{**base, **overrides}).derive(rt)
+        return f16_builder.build_f16_fwd_graph(cudnn, handle=1234, cfg=cfg)
+
+    e = build()
+    assert set(e.tensors) == {"Q", "K", "V", "attn_scale", "O", "Stats"}
+    assert e.workspace_size == 4096
+    assert cudnn.g.calls == ["validate", "bog", "cep", "cs", "bp"]
+    assert cudnn.g.sdpa_kwargs["generate_stats"] is True
+
+    assert build(attn_mask_type="NVTE_CAUSAL_MASK") and cudnn.g.sdpa_kwargs[
+        "diagonal_band_right_bound"
+    ] == 0
+
+    e = build(
+        bias_type="NVTE_POST_SCALE_BIAS",
+        bias_batch_size=2,
+        bias_num_heads=8,
+        bias_seqlen_q=128,
+        bias_seqlen_kv=128,
+    )
+    assert "bias" in e.tensors and "bias" in cudnn.g.sdpa_kwargs
+
+    e = build(attn_mask_type="NVTE_PADDING_MASK")
+    assert cudnn.g.sdpa_kwargs.get("use_padding_mask") is True
+    assert "seq_q" in e.tensors and "seq_kv" in e.tensors
+
+    e = build(dropout=0.1)
+    assert "dropout" in cudnn.g.sdpa_kwargs and e.tensors.get("dropout_seed") is not None
+
+    # GQA + SBHD + head_dim_v != head_dim_qk must still build.
+    assert build(qkv_layout="NVTE_SBHD_SBHD_SBHD", num_gqa_groups=2, head_dim_v=128)
+
+
 # ---------------------------------------------------------------------------
 # In-container tests: enum-name parity + dual oracle vs the C++ backend query
 # ---------------------------------------------------------------------------

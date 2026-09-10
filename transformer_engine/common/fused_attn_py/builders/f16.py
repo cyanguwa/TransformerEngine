@@ -31,25 +31,11 @@ cuDNN Python package.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from ..cache import GraphEntry
 from ..config import FusedAttnConfig, _canonical_dtype
-
-
-@dataclass(frozen=True)
-class TensorDesc:
-    """BHSD logical dim + stride for a graph tensor, as read from the real tensor.
-
-    cuDNN tensors are always logically ``[B, H, S, D]``; the physical layout
-    (BSHD/SBHD/packed/...) is expressed entirely through ``stride``. The glue
-    computes these from the framework tensor (cf. ``_bhsd_dim_stride`` in
-    ``flex_attention.py``), so the built graph matches the real data exactly.
-    """
-
-    dim: Tuple[int, int, int, int]
-    stride: Tuple[int, int, int, int]
+from ..strides import qkvo_dims_strides
 
 
 def _io_data_type(cudnn, dtype) -> Any:
@@ -111,21 +97,19 @@ def build_f16_fwd_graph(
     cudnn: Any,
     handle: Any,
     cfg: FusedAttnConfig,
-    q_desc: TensorDesc,
-    k_desc: TensorDesc,
-    v_desc: TensorDesc,
-    o_desc: TensorDesc,
     *,
-    bias_desc: Optional[TensorDesc] = None,
     cudnn_version: Optional[int] = None,
 ) -> GraphEntry:
     """Build the F16/BF16 forward SDPA graph. Mirrors ``create_graph_f16_fwd``.
 
     ``cudnn`` is the imported frontend module, ``handle`` a cuDNN handle bound to
-    the current stream. Returns a :class:`GraphEntry` whose ``tensors`` maps role
-    names ("Q","K","V","attn_scale","O","Stats", and optionally "bias","seq_q",
-    "seq_kv","dropout_seed","dropout_offset") to graph tensor objects for the
-    glue to bind into the variant pack.
+    the current stream. All tensor dims/strides are derived from ``cfg`` (via
+    ``strides.qkvo_dims_strides``), so the graph is a pure function of the
+    normalized config -- the same graph the support probe builds and the execute
+    path reuses under one ``make_cache_key``. Returns a :class:`GraphEntry` whose
+    ``tensors`` maps role names ("Q","K","V","attn_scale","O","Stats", and
+    optionally "bias","seq_q","seq_kv","dropout_seed","dropout_offset") to graph
+    tensor objects for the glue to bind into the variant pack.
     """
     cfg.check_derived()
     _reject_unsupported(cfg)
@@ -136,6 +120,7 @@ def build_f16_fwd_graph(
     b = int(cfg.graph_batch_size_fwd)
     h = int(cfg.num_attn_heads)
     s_q = int(cfg.graph_max_seqlen_q)
+    ds = qkvo_dims_strides(cfg)
 
     graph = cudnn.pygraph(
         io_data_type=io_dtype,
@@ -144,9 +129,9 @@ def build_f16_fwd_graph(
         handle=handle,
     )
 
-    q = graph.tensor(name="Q", dim=list(q_desc.dim), stride=list(q_desc.stride))
-    k = graph.tensor(name="K", dim=list(k_desc.dim), stride=list(k_desc.stride))
-    v = graph.tensor(name="V", dim=list(v_desc.dim), stride=list(v_desc.stride))
+    q = graph.tensor(name="Q", dim=list(ds["Q"][0]), stride=list(ds["Q"][1]))
+    k = graph.tensor(name="K", dim=list(ds["K"][0]), stride=list(ds["K"][1]))
+    v = graph.tensor(name="V", dim=list(ds["V"][0]), stride=list(ds["V"][1]))
     # attn_scale is a pass-by-value scalar so one cached graph serves every scale
     # (make_cache_key() normalizes attn_scale to 1.0).
     attn_scale = graph.tensor(
@@ -173,9 +158,13 @@ def build_f16_fwd_graph(
         sdpa_kwargs["diagonal_band_right_bound"] = masking["diagonal_band_right_bound"]
 
     if cfg.is_bias:
-        if bias_desc is None:
-            raise ValueError("cfg.is_bias is set but no bias_desc was provided.")
-        bias = graph.tensor(name="bias", dim=list(bias_desc.dim), stride=list(bias_desc.stride))
+        bias_b = int(cfg.bias_batch_size)
+        bias_h = int(cfg.bias_num_heads)
+        bias_sq = int(cfg.bias_seqlen_q)
+        bias_skv = int(cfg.bias_seqlen_kv)
+        bias_dim = [bias_b, bias_h, bias_sq, bias_skv]
+        bias_stride = [bias_h * bias_sq * bias_skv, bias_sq * bias_skv, bias_skv, 1]
+        bias = graph.tensor(name="bias", dim=bias_dim, stride=bias_stride)
         sdpa_kwargs["bias"] = bias
         tensors["bias"] = bias
 
@@ -206,7 +195,7 @@ def build_f16_fwd_graph(
 
     o, stats = graph.sdpa(q, k, v, **sdpa_kwargs)
 
-    o.set_output(True).set_dim(list(o_desc.dim)).set_stride(list(o_desc.stride))
+    o.set_output(True).set_dim(list(ds["O"][0])).set_stride(list(ds["O"][1]))
     stats.set_output(True).set_data_type(cudnn.data_type.FLOAT).set_dim([b, h, s_q, 1]).set_stride(
         [h * s_q, s_q, 1, 1]
     )
@@ -223,4 +212,4 @@ def build_f16_fwd_graph(
     return GraphEntry(graph=graph, tensors=tensors, workspace_size=workspace_size)
 
 
-__all__ = ["TensorDesc", "plan_f16_fwd_masking", "build_f16_fwd_graph"]
+__all__ = ["plan_f16_fwd_masking", "build_f16_fwd_graph"]
