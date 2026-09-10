@@ -35,6 +35,52 @@ from typing import Any, Dict, Optional
 from ..cache import GraphEntry
 from ..config import FusedAttnConfig, ScaleDType, _canonical_dtype
 from ..strides import paged_kv_dims_strides, qkvo_dims_strides, ragged_offset_multipliers
+from ..uids import FusedAttnUIDF16 as _U
+
+# Role -> stable UID for the F16/BF16 graphs. Roles are the keys used in the
+# ``GraphEntry.tensors`` map; forward uses "Stats", backward uses "stats" (both
+# map to the same LSE UID -- they are separate graphs, so no clash). Assigning
+# UIDs lets a serialized graph be executed from a plain {uid: ptr} variant pack.
+_ROLE_UID = {
+    "Q": _U.Q,
+    "K": _U.K,
+    "V": _U.V,
+    "O": _U.O,
+    "dO": _U.dO,
+    "dQ": _U.dQ,
+    "dK": _U.dK,
+    "dV": _U.dV,
+    "bias": _U.Bias,
+    "dBias": _U.dBias,
+    "Stats": _U.Stats,
+    "stats": _U.Stats,
+    "attn_scale": _U.AttnScale,
+    "seq_q": _U.SeqQ,
+    "seq_kv": _U.SeqKV,
+    "page_table_k": _U.PageTableK,
+    "page_table_v": _U.PageTableV,
+    "offset_q": _U.OffsetQ,
+    "offset_k": _U.OffsetK,
+    "offset_v": _U.OffsetV,
+    "offset_o": _U.OffsetO,
+    "offset_stats": _U.OffsetStats,
+    "dropout_seed": _U.DropoutSeed,
+    "dropout_offset": _U.DropoutOffset,
+}
+
+
+def _assign_uids(tensors: Dict[str, Any]) -> Dict[str, int]:
+    """Assign each graph tensor its stable UID and return the role->uid map.
+
+    Called once, just before finalizing, so every declared tensor (inputs and
+    outputs) carries a UID in the serialized graph.
+    """
+    uids: Dict[str, int] = {}
+    for role, tensor in tensors.items():
+        uid = int(_ROLE_UID[role])
+        tensor.set_uid(uid)
+        uids[role] = uid
+    return uids
 
 
 def _io_data_type(cudnn, dtype) -> Any:
@@ -278,9 +324,10 @@ def build_f16_fwd_graph(
     tensors["O"] = o
     tensors["Stats"] = stats
 
+    uids = _assign_uids(tensors)
     _finalize(cudnn, graph)
     ws = max(graph.get_workspace_size(), 1)
-    return GraphEntry(graph=graph, tensors=tensors, workspace_size=ws)
+    return GraphEntry(graph=graph, tensors=tensors, workspace_size=ws, uids=uids)
 
 
 def _finalize(cudnn: Any, graph: Any) -> None:
@@ -449,9 +496,10 @@ def build_f16_bwd_graph(
     tensors["dK"] = d_k
     tensors["dV"] = d_v
 
+    uids = _assign_uids(tensors)
     _finalize(cudnn, graph)
     ws = max(graph.get_workspace_size(), 1)
-    return GraphEntry(graph=graph, tensors=tensors, workspace_size=ws)
+    return GraphEntry(graph=graph, tensors=tensors, workspace_size=ws, uids=uids)
 
 
 __all__ = ["plan_f16_fwd_masking", "build_f16_fwd_graph", "build_f16_bwd_graph"]

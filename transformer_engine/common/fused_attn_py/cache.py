@@ -37,12 +37,16 @@ class GraphEntry:
     ``graph`` is the ``cudnn.pygraph``; ``tensors`` maps a stable role name (e.g.
     ``"Q"``, ``"O"``, ``"Stats"``) to the graph tensor object returned at build
     time; ``workspace_size`` is the byte size ``graph.get_workspace_size()``
-    reported (floored at 1, as cuDNN requires a non-empty workspace).
+    reported (floored at 1, as cuDNN requires a non-empty workspace). ``uids``
+    maps the same role names to the stable integer UID (``set_uid``) each tensor
+    carries in the graph, so a serialized graph can be executed by binding a
+    plain ``{uid: ptr}`` variant pack (the JAX blob / ``torch.library`` paths).
     """
 
     graph: Any
     tensors: Dict[str, Any] = field(default_factory=dict)
     workspace_size: int = 1
+    uids: Dict[str, int] = field(default_factory=dict)
 
 
 class GraphCache:

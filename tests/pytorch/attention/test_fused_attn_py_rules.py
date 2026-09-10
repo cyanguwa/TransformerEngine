@@ -276,6 +276,7 @@ class _FakeCudnnTensor:
         self.name = name
         self.ragged = None
         self.multiplier = None
+        self.uid = None
 
     def set_output(self, v):
         return self
@@ -295,6 +296,10 @@ class _FakeCudnnTensor:
 
     def set_ragged_offset_multiplier(self, m):
         self.multiplier = m
+        return self
+
+    def set_uid(self, u):
+        self.uid = u
         return self
 
 
@@ -339,6 +344,10 @@ class _FakeCudnnGraph:
 
     def get_workspace_size(self):
         return 4096
+
+    def serialize(self):
+        self.calls.append("serialize")
+        return b"fake-cudnn-graph-blob"
 
 
 class _FakeCudnn:
@@ -579,6 +588,53 @@ def test_stage4_thd_ragged_and_paged():
         f16_builder.build_f16_bwd_graph(
             cudnn, handle=1, cfg=config.FusedAttnConfig(**_PAGED).derive(_rt(12600))
         )
+
+
+serialize_mod = importlib.import_module("transformer_engine.common.fused_attn_py.serialize")
+uids_mod = importlib.import_module("transformer_engine.common.fused_attn_py.uids")
+
+
+def test_encode_cudnn_frontend_version():
+    enc = serialize_mod.encode_cudnn_frontend_version
+    assert enc("1.13.0") == 11300
+    assert enc("1.28.0+cu12") == 12800
+    assert enc("10.7.0-rc1") == 100700
+    with pytest.raises(RuntimeError):
+        enc("1.28")
+
+
+def test_uid_keying_and_serialize_plan():
+    """Every tensor gets its stable UID and serialize_entry yields a Plan."""
+    cudnn = _FakeCudnn()
+    rt = _fake_runtime()
+    U = uids_mod.FusedAttnUIDF16
+
+    # Forward: UIDs on Q/K/V/O/Stats/attn_scale; O+Stats are the outputs.
+    cfg = _bf16_cfg(rt)
+    e = f16_builder.build_f16_fwd_graph(cudnn, handle=1, cfg=cfg)
+    assert e.uids["Q"] == int(U.Q) and e.uids["Stats"] == int(U.Stats)
+    assert e.tensors["Q"].uid == int(U.Q)  # actually applied to the graph tensor
+    assert "serialize" not in cudnn.g.calls  # builder does not serialize
+
+    plan = serialize_mod.serialize_entry(cudnn, e, cudnn_frontend_version=12800)
+    assert plan.serialized_graph == b"fake-cudnn-graph-blob"
+    assert plan.workspace_size == e.workspace_size and plan.cudnn_frontend_version == 12800
+    assert set(plan.output_uids) == {int(U.O), int(U.Stats)}
+    assert int(U.Q) in plan.input_uids and int(U.Stats) not in plan.input_uids
+    assert plan.input_uids == sorted(plan.input_uids)
+    assert plan.graph_hash == serialize_mod.graph_hash(b"fake-cudnn-graph-blob")
+
+    # Backward: dQ/dK/dV are outputs, stats is an input.
+    eb = f16_builder.build_f16_bwd_graph(cudnn, handle=1, cfg=_bf16_cfg(rt))
+    planb = serialize_mod.serialize_entry(cudnn, eb, cudnn_frontend_version=12800)
+    assert {int(U.dQ), int(U.dK), int(U.dV)} <= set(planb.output_uids)
+    assert int(U.Stats) in planb.input_uids and int(U.dQ) not in planb.input_uids
+
+    # A GraphEntry without UIDs cannot be serialized.
+    from transformer_engine.common.fused_attn_py.cache import GraphEntry
+
+    with pytest.raises(ValueError):
+        serialize_mod.serialize_entry(cudnn, GraphEntry(graph=cudnn.g))
 
 
 probe_mod = importlib.import_module("transformer_engine.common.fused_attn_py.probe")
