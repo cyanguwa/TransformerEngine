@@ -59,6 +59,10 @@ cudnn_frontend::DataType_t get_cudnn_fe_dtype(const transformer_engine::DType t)
 
 void nvte_cudnn_handle_init() { auto _ = cudnnExecutionPlanManager::Instance().GetHandle(); }
 
+void *nvte_get_cudnn_handle() {
+  return reinterpret_cast<void *>(cudnnExecutionPlanManager::Instance().GetHandle());
+}
+
 namespace detail {
 
 void CreateCuDNNHandle(cudnnHandle_t* handle) { NVTE_CHECK_CUDNN(cudnnCreate(handle)); }
