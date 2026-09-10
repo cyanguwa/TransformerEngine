@@ -501,29 +501,35 @@ def test_make_cudnn_probe():
     rt = _fake_runtime()
     cache_mod = importlib.import_module("transformer_engine.common.fused_attn_py.cache")
 
-    # FP8 dtype and the backward pass are not built in Python yet => skipped ("").
+    # FP8 dtype is not built in Python yet => skipped ("") for either pass.
     fp8_cfg = _bf16_cfg(rt)
     fp8_cfg.qkv_dtype = "kNVTEFloat8E4M3"
     probe = probe_mod.make_cudnn_probe(cudnn, handle=1)
     assert probe(fp8_cfg, config.Pass.Fwd) == ""
-    assert probe(_bf16_cfg(rt), config.Pass.Bwd) == ""
+    assert probe(fp8_cfg, config.Pass.Bwd) == ""
 
-    # Forward success seeds the cache; a second probe is a cache hit (no rebuild).
+    # Both passes build and seed their own cache; a second probe is a cache hit.
     fwd_cache = cache_mod.GraphCache()
-    probe = probe_mod.make_cudnn_probe(cudnn, handle=1, fwd_cache=fwd_cache)
+    bwd_cache = cache_mod.GraphCache()
+    probe = probe_mod.make_cudnn_probe(
+        cudnn, handle=1, fwd_cache=fwd_cache, bwd_cache=bwd_cache
+    )
     cfg = _bf16_cfg(rt)
     _FakeCudnnGraph.fail_check_support = False
     try:
         assert probe(cfg, config.Pass.Fwd) == ""
         assert fwd_cache.get(cfg.make_cache_key(config.Pass.Fwd)) is not None
+        assert probe(cfg, config.Pass.Bwd) == ""
+        assert bwd_cache.get(cfg.make_cache_key(config.Pass.Bwd)) is not None
 
-        # cuDNN rejection is surfaced as a non-empty reason.
+        # cuDNN rejection is surfaced as a non-empty reason (both passes).
         _FakeCudnnGraph.fail_check_support = True
         cfg2 = _bf16_cfg(rt)
         cfg2.batch_size = 3  # different key so it isn't a cache hit
         cfg2.graph_batch_size_fwd = 3
-        reason = probe(cfg2, config.Pass.Fwd)
-        assert "unsupported" in reason
+        cfg2.graph_batch_size_bwd = 3
+        assert "unsupported" in probe(cfg2, config.Pass.Fwd)
+        assert "unsupported" in probe(cfg2, config.Pass.Bwd)
     finally:
         _FakeCudnnGraph.fail_check_support = False
 
