@@ -16,11 +16,11 @@ module supplies the framework-specific runtime the core needs:
   bind the variant pack from the builder's role->tensor map, and run
   ``graph.execute``.
 
-Scope: forward only (the F16 backward builder is Stage 3, at which point this
-becomes a ``torch.autograd.Function`` / ``torch.library`` op). Dispatch wiring
-into ``FusedAttnFunc`` is intentionally left out here so it can be placed
-alongside the ``FusedAttentionParams`` work without churn -- callers reach this
-path explicitly via :func:`fused_attn_fwd_f16`.
+Scope: F16/BF16 forward + backward (exposed as a ``torch.autograd.Function`` via
+:func:`fused_attn_py_f16`), including THD ragged offsets and paged-KV forward.
+Dispatch wiring into ``FusedAttnFunc`` is intentionally left out here so it can be
+placed alongside the ``FusedAttentionParams`` work without churn -- callers reach
+this path explicitly via :func:`fused_attn_fwd_f16` / :func:`fused_attn_bwd_f16`.
 
 Everything cuDNN/torch-specific is imported lazily so this module can be
 imported (and its gate queried) without a GPU or the cuDNN Python package.
@@ -109,6 +109,8 @@ def fused_attn_fwd_f16(
     seq_len_kv=None,
     dropout_seed=None,
     dropout_offset=None,
+    ragged_offsets: Optional[Dict[str, Any]] = None,
+    page_tables: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Any]:
     """Run the F16/BF16 forward SDPA through the Python cuDNN graph path.
 
@@ -116,7 +118,10 @@ def fused_attn_fwd_f16(
     ``cfg.qkv_layout`` (their strides therefore match ``qkvo_dims_strides``).
     Returns ``(o, stats)`` where ``stats`` is the softmax LSE ``(B, H, S_q, 1)``.
     Optional tensors are required exactly when the matching ``cfg`` flag is set
-    (``is_bias`` / ``is_padding`` / ``is_dropout``).
+    (``is_bias`` / ``is_padding`` / ``is_dropout``). ``ragged_offsets`` (THD) maps
+    ``"offset_q"``/``"offset_k"``/``"offset_v"``/``"offset_o"``/``"offset_stats"``
+    to their int offset tensors; ``page_tables`` (paged KV) maps
+    ``"page_table_k"``/``"page_table_v"``.
     """
     import torch
 
@@ -154,6 +159,7 @@ def fused_attn_fwd_f16(
         _require(dropout_offset, "dropout_offset")
         variant_pack[t["dropout_seed"]] = dropout_seed
         variant_pack[t["dropout_offset"]] = dropout_offset
+    _bind_extra(variant_pack, t, ragged_offsets, page_tables)
 
     workspace = torch.empty(entry.workspace_size, dtype=torch.uint8, device=q.device)
     entry.graph.execute(variant_pack, workspace, handle=handle)
@@ -175,12 +181,15 @@ def fused_attn_bwd_f16(
     seq_len_kv=None,
     dropout_seed=None,
     dropout_offset=None,
+    ragged_offsets: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Any, Any, Optional[Any]]:
     """Run the F16/BF16 backward SDPA. Returns ``(dQ, dK, dV, dBias)``.
 
     ``dBias`` is ``None`` unless the graph emits it (bias not fully broadcast).
     Gradient tensors are allocated ``empty_like`` their inputs, so they carry the
-    same layout the graph's dQ/dK/dV expect.
+    same layout the graph's dQ/dK/dV expect. ``ragged_offsets`` (THD) supplies the
+    int offset tensors keyed as in :func:`fused_attn_fwd_f16` (paged KV never runs
+    backward, so there are no page tables here).
     """
     import torch
 
@@ -222,6 +231,7 @@ def fused_attn_bwd_f16(
         _require(dropout_offset, "dropout_offset")
         variant_pack[t["dropout_seed"]] = dropout_seed
         variant_pack[t["dropout_offset"]] = dropout_offset
+    _bind_extra(variant_pack, t, ragged_offsets, None)
 
     workspace = torch.empty(entry.workspace_size, dtype=torch.uint8, device=q.device)
     entry.graph.execute(variant_pack, workspace, handle=handle)
@@ -316,6 +326,21 @@ def fused_attn_py_f16(
 def _require(value: Optional[Any], name: str) -> None:
     if value is None:
         raise ValueError(f"fused_attn_fwd_f16: cfg requires '{name}' but it was not provided.")
+
+
+def _bind_extra(variant_pack, t, ragged_offsets, page_tables) -> None:
+    """Bind THD ragged-offset and paged-KV page-table tensors into the variant pack.
+
+    Each role is bound only if the built graph declares it (in ``t``); a missing
+    tensor for a declared role is a caller error, surfaced via :func:`_require`.
+    """
+    for group in (ragged_offsets, page_tables):
+        if not group:
+            continue
+        for role, graph_tensor in t.items():
+            if role in group:
+                _require(group[role], role)
+                variant_pack[graph_tensor] = group[role]
 
 
 __all__ = [
