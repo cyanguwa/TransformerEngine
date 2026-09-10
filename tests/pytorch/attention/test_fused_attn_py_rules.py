@@ -175,6 +175,61 @@ def test_select_backend_pure_gating():
     assert not v2.supported and "pre-scale bias" in v2.reason
 
 
+f16_builder = importlib.import_module("transformer_engine.common.fused_attn_py.builders.f16")
+
+
+def test_plan_f16_fwd_masking():
+    """Pure mask/window planning must mirror create_graph_f16_fwd (CPU-only)."""
+
+    def cfg(**kw):
+        c = config.FusedAttnConfig()
+        for key, val in kw.items():
+            setattr(c, key, val)
+        return c
+
+    # Top-left causal: right bound 0, no left bound.
+    p = f16_builder.plan_f16_fwd_masking(cfg(is_causal=True, bottom_right_diagonal=False), 90600)
+    assert p == {
+        "diagonal_alignment": "TOP_LEFT",
+        "diagonal_band_left_bound": None,
+        "diagonal_band_right_bound": 0,
+        "use_alibi_mask": False,
+    }
+
+    # Bottom-right causal.
+    p = f16_builder.plan_f16_fwd_masking(
+        cfg(is_causal_bottom_right=True, bottom_right_diagonal=True), 90600
+    )
+    assert p["diagonal_alignment"] == "BOTTOM_RIGHT" and p["diagonal_band_right_bound"] == 0
+
+    # Sliding window: left = window_left + 1, right = window_right (cuDNN 9.6+).
+    p = f16_builder.plan_f16_fwd_masking(
+        cfg(window_size_left=128, window_size_right=64, bottom_right_diagonal=True), 90600
+    )
+    assert p["diagonal_band_left_bound"] == 129 and p["diagonal_band_right_bound"] == 64
+
+    # Right bound needs cuDNN 9.6+; at 9.2 it is dropped while left is kept.
+    p = f16_builder.plan_f16_fwd_masking(
+        cfg(window_size_left=128, window_size_right=64, bottom_right_diagonal=True), 90200
+    )
+    assert p["diagonal_band_left_bound"] == 129 and p["diagonal_band_right_bound"] is None
+
+    # ALiBi rides along with causal (right bound 0).
+    p = f16_builder.plan_f16_fwd_masking(cfg(is_alibi=True, is_causal=True), 90600)
+    assert p["use_alibi_mask"] is True and p["diagonal_band_right_bound"] == 0
+
+
+def test_f16_builder_rejects_deferred_features():
+    """Deferred features must fail loud, not silently build a wrong graph."""
+    import pytest as _pytest
+
+    for field in ("is_paged_kv", "is_ragged_q", "is_softmax_offset", "return_max_logit"):
+        cfg = config.FusedAttnConfig()
+        setattr(cfg, field, True)
+        with _pytest.raises(NotImplementedError):
+            f16_builder._reject_unsupported(cfg)
+
+
 # ---------------------------------------------------------------------------
 # In-container tests: enum-name parity + dual oracle vs the C++ backend query
 # ---------------------------------------------------------------------------
