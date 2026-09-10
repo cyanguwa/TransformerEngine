@@ -15,9 +15,10 @@ into ``rules`` as a ``ProbeFn``.
 execute path reuses the very graph the probe built (they key on the same
 ``make_cache_key`` because the graph is a pure function of ``cfg``).
 
-Coverage tracks the builders: F16/BF16 forward is probed for real; F16 backward
-(Stage 3) and FP8/MXFP8 (Stages 6/7) are not yet built in Python, so their probe
-returns ``""`` (treated as supported) and defers to the C++ path / later stages.
+Coverage tracks the builders: F16/BF16 forward and backward -- including THD
+ragged and paged-KV forward -- are probed for real; FP8/MXFP8 (Stages 6/7) are
+not yet built in Python, so their probe returns ``""`` (treated as supported)
+and defers to the C++ path / later stages.
 """
 
 from __future__ import annotations

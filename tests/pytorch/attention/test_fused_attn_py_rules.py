@@ -274,6 +274,8 @@ def test_generate_matrix_strides_vs_flex_and_hand():
 class _FakeCudnnTensor:
     def __init__(self, name=None, **kw):
         self.name = name
+        self.ragged = None
+        self.multiplier = None
 
     def set_output(self, v):
         return self
@@ -285,6 +287,14 @@ class _FakeCudnnTensor:
         return self
 
     def set_data_type(self, dt):
+        return self
+
+    def set_ragged_offset(self, o):
+        self.ragged = o
+        return self
+
+    def set_ragged_offset_multiplier(self, m):
+        self.multiplier = m
         return self
 
 
@@ -351,6 +361,11 @@ class _FakeCudnn:
 
     class build_plan_policy:  # noqa: N801
         HEURISTICS_CHOICE = "HC"
+
+    class attention_implementation:  # noqa: N801
+        AUTO = "AUTO"
+        COMPOSITE = "COMPOSITE"
+        UNIFIED = "UNIFIED"
 
     def __init__(self):
         self.g = None
@@ -475,6 +490,95 @@ def test_build_f16_bwd_graph_control_flow():
     assert cudnn.g.sdpa_kwargs.get("use_padding_mask") is True and "seq_q" in e.tensors
     e = build(dropout=0.1)
     assert "dropout" in cudnn.g.sdpa_kwargs and e.tensors.get("dropout_seed") is not None
+
+
+def _rt(cudnn_fe):
+    """Runtime with sm90 + cuDNN 9.25; ``cudnn_fe`` toggles cu_seqlens-direct."""
+    return config.RuntimeInfo(
+        sm_arch=90, cudnn_version=92500, cudnn_frontend_version=cudnn_fe, cudnn_build_version=92500
+    )
+
+
+_THD = dict(
+    qkv_layout="NVTE_THD_THD_THD",
+    batch_size=2,
+    num_attn_heads=8,
+    num_gqa_groups=8,
+    head_dim_qk=64,
+    head_dim_v=64,
+    max_seqlen_q=128,
+    max_seqlen_kv=128,
+    qkv_dtype="kNVTEBFloat16",
+    o_dtype="kNVTEBFloat16",
+    attn_mask_type="NVTE_PADDING_MASK",
+    num_tokens_q=200,
+    num_tokens_kv=200,
+)
+
+_PAGED = dict(
+    qkv_layout="NVTE_Paged_KV_BSHD_BSHD_BSHD",
+    batch_size=2,
+    num_attn_heads=8,
+    num_gqa_groups=8,
+    head_dim_qk=64,
+    head_dim_v=64,
+    max_seqlen_q=1,
+    max_seqlen_kv=256,
+    qkv_dtype="kNVTEBFloat16",
+    o_dtype="kNVTEBFloat16",
+    attn_mask_type="NVTE_PADDING_MASK",
+    num_pages_k=32,
+    num_pages_v=32,
+    page_size_k=16,
+    page_size_v=16,
+    max_pages_per_seq_k=16,
+    max_pages_per_seq_v=16,
+)
+
+
+def test_stage4_thd_ragged_and_paged():
+    """THD ragged (both sub-paths) + paged KV forward/backward with a mock cudnn."""
+    cudnn = _FakeCudnn()
+    _RAGGED = {"offset_q", "offset_k", "offset_v", "offset_o", "offset_stats"}
+
+    # THD forward, cu_seqlens-direct (FE 12600): offsets + multipliers + UNIFIED.
+    c = config.FusedAttnConfig(**_THD).derive(_rt(12600))
+    assert c.uses_cu_seqlens_directly and c.is_ragged_q and c.is_ragged_kv
+    e = f16_builder.build_f16_fwd_graph(cudnn, handle=1, cfg=c)
+    assert _RAGGED <= set(e.tensors)
+    assert cudnn.g.sdpa_kwargs["cu_seq_len_q"] is e.tensors["seq_q"]
+    assert cudnn.g.sdpa_kwargs["implementation"] == "UNIFIED"
+    assert e.tensors["Q"].multiplier is not None
+    assert e.tensors["Stats"].ragged is e.tensors["offset_stats"]
+
+    # THD forward, materialized offsets (old FE): no multiplier, seq_len (not cu).
+    c = config.FusedAttnConfig(**_THD).derive(_rt(12000))
+    assert not c.uses_cu_seqlens_directly
+    e = f16_builder.build_f16_fwd_graph(cudnn, handle=1, cfg=c)
+    assert cudnn.g.sdpa_kwargs.get("seq_len_q") is e.tensors["seq_q"]
+    assert "implementation" not in cudnn.g.sdpa_kwargs and e.tensors["Q"].multiplier is None
+
+    # Paged KV forward: page tables + max_seq_len_kv, K/V dims from num_pages.
+    c = config.FusedAttnConfig(**_PAGED).derive(_rt(12600))
+    assert c.is_paged_kv
+    e = f16_builder.build_f16_fwd_graph(cudnn, handle=1, cfg=c)
+    assert {"page_table_k", "page_table_v"} <= set(e.tensors)
+    assert cudnn.g.sdpa_kwargs["paged_attention_max_seq_len_kv"] == c.graph_max_seqlen_kv
+
+    # THD backward: wide offsets, no multiplier, max_total_seq_len_* set.
+    c = config.FusedAttnConfig(**_THD).derive(_rt(12600))
+    e = f16_builder.build_f16_bwd_graph(cudnn, handle=1, cfg=c)
+    assert _RAGGED <= set(e.tensors)
+    assert e.tensors["dQ"].ragged is e.tensors["offset_q"]
+    assert e.tensors["Q"].multiplier is None
+    assert cudnn.g.sdpa_kwargs["max_total_seq_len_q"] == c.graph_max_seqlen_q
+    assert cudnn.g.sdpa_kwargs["max_total_seq_len_kv"] == c.graph_max_seqlen_kv
+
+    # Paged KV is forward-only: the backward builder must reject it.
+    with pytest.raises(NotImplementedError):
+        f16_builder.build_f16_bwd_graph(
+            cudnn, handle=1, cfg=config.FusedAttnConfig(**_PAGED).derive(_rt(12600))
+        )
 
 
 probe_mod = importlib.import_module("transformer_engine.common.fused_attn_py.probe")

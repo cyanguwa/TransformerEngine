@@ -12,16 +12,15 @@ map (:class:`~transformer_engine.common.fused_attn_py.cache.GraphEntry`), which
 the framework glue binds into the variant pack -- the same pattern the in-repo
 ``flex_attention.py`` uses.
 
-Scope of this stage (Stage 2): the dense path -- BSHD/SBHD/BHSD and packed
-QKV layouts, with post-scale bias, ALiBi, causal / bottom-right / sliding-window
-masking, materialized-``seq_len`` padding (the non-``cu_seqlens``-direct path),
-dropout, and GQA. Deferred to later stages and guarded with a clear
+Scope: BSHD/SBHD/BHSD and packed QKV layouts, with post-scale bias, ALiBi,
+causal / bottom-right / sliding-window masking, padding (both materialized
+``seq_len`` and ``cu_seqlens``-direct), dropout, GQA, THD ragged offsets, and
+(forward only) paged KV. Still deferred and guarded with a clear
 ``NotImplementedError``:
 
-* paged KV (``cfg.is_paged_kv``)                       -- Stage 4
-* THD ragged offsets / ``cu_seqlens``-direct            -- Stage 4
 * sink token / learnable softmax (``cfg.is_softmax_offset``)
 * ``return_max_logit`` (logit-max output)
+* paged KV in the backward pass (backward never runs paged; it is inference-only)
 
 The masking/window option planning is factored into
 :func:`plan_f16_fwd_masking`, a pure function that needs no ``cudnn`` and is
@@ -34,8 +33,8 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from ..cache import GraphEntry
-from ..config import FusedAttnConfig, _canonical_dtype
-from ..strides import qkvo_dims_strides
+from ..config import FusedAttnConfig, ScaleDType, _canonical_dtype
+from ..strides import paged_kv_dims_strides, qkvo_dims_strides, ragged_offset_multipliers
 
 
 def _io_data_type(cudnn, dtype) -> Any:
@@ -46,6 +45,18 @@ def _io_data_type(cudnn, dtype) -> Any:
     if name == "BFLOAT16":
         return cudnn.data_type.BFLOAT16
     raise ValueError(f"F16 fused-attention builder requires FP16/BF16, got {name}.")
+
+
+def _ragged_dtype(cudnn, scale_dtype: ScaleDType) -> Any:
+    """Map a ragged-offset ``ScaleDType`` (INT32/INT64) to a ``cudnn.data_type``."""
+    return cudnn.data_type.INT64 if scale_dtype is ScaleDType.INT64 else cudnn.data_type.INT32
+
+
+def _offset_tensor(graph, cudnn, name: str, b: int, dtype: Any):
+    """A ragged-offset / cu_seqlen tensor of shape (b+1, 1, 1, 1)."""
+    return graph.tensor(
+        name=name, dim=[b + 1, 1, 1, 1], stride=[1, 1, 1, 1], data_type=dtype
+    )
 
 
 def plan_f16_fwd_masking(cfg: FusedAttnConfig, cudnn_version: int) -> Dict[str, Any]:
@@ -74,14 +85,11 @@ def plan_f16_fwd_masking(cfg: FusedAttnConfig, cudnn_version: int) -> Dict[str, 
     }
 
 
-def _reject_unsupported(cfg: FusedAttnConfig) -> None:
-    if cfg.is_paged_kv:
+def _reject_unsupported(cfg: FusedAttnConfig, *, allow_paged: bool) -> None:
+    if cfg.is_paged_kv and not allow_paged:
         raise NotImplementedError(
-            "fused_attn_py F16 builder: paged KV is not supported yet (Stage 4)."
-        )
-    if cfg.is_ragged_q or cfg.is_ragged_kv or cfg.uses_cu_seqlens_directly:
-        raise NotImplementedError(
-            "fused_attn_py F16 builder: THD / cu_seqlens-direct is not supported yet (Stage 4)."
+            "fused_attn_py F16 builder: paged KV is forward-only (inference); the backward "
+            "graph does not support it."
         )
     if cfg.is_softmax_offset:
         raise NotImplementedError(
@@ -108,11 +116,12 @@ def build_f16_fwd_graph(
     normalized config -- the same graph the support probe builds and the execute
     path reuses under one ``make_cache_key``. Returns a :class:`GraphEntry` whose
     ``tensors`` maps role names ("Q","K","V","attn_scale","O","Stats", and
-    optionally "bias","seq_q","seq_kv","dropout_seed","dropout_offset") to graph
-    tensor objects for the glue to bind into the variant pack.
+    optionally "bias","seq_q","seq_kv","dropout_seed","dropout_offset",
+    "page_table_k","page_table_v","offset_q","offset_k","offset_v","offset_o",
+    "offset_stats") to graph tensor objects for the glue to bind.
     """
     cfg.check_derived()
-    _reject_unsupported(cfg)
+    _reject_unsupported(cfg, allow_paged=True)
     if cudnn_version is None:
         cudnn_version = cudnn.backend_version()
 
@@ -120,7 +129,11 @@ def build_f16_fwd_graph(
     b = int(cfg.graph_batch_size_fwd)
     h = int(cfg.num_attn_heads)
     s_q = int(cfg.graph_max_seqlen_q)
+    s_kv = int(cfg.graph_max_seqlen_kv)
     ds = qkvo_dims_strides(cfg)
+    ragged_dtype = _ragged_dtype(cudnn, cfg.ragged_offset_type_fwd)
+    mults = ragged_offset_multipliers(cfg)
+    cu_direct = cfg.uses_cu_seqlens_directly
 
     graph = cudnn.pygraph(
         io_data_type=io_dtype,
@@ -129,9 +142,34 @@ def build_f16_fwd_graph(
         handle=handle,
     )
 
+    tensors: Dict[str, Any] = {}
+
     q = graph.tensor(name="Q", dim=list(ds["Q"][0]), stride=list(ds["Q"][1]))
-    k = graph.tensor(name="K", dim=list(ds["K"][0]), stride=list(ds["K"][1]))
-    v = graph.tensor(name="V", dim=list(ds["V"][0]), stride=list(ds["V"][1]))
+    if cfg.is_ragged_q:
+        offset_q = _offset_tensor(graph, cudnn, "offset_q", b, ragged_dtype)
+        q.set_ragged_offset(offset_q)
+        if cu_direct:
+            q.set_ragged_offset_multiplier(mults.q)
+        tensors["offset_q"] = offset_q
+
+    if cfg.is_paged_kv:
+        paged = paged_kv_dims_strides(cfg)
+        k = graph.tensor(name="K", dim=list(paged["K"][0]), stride=list(paged["K"][1]))
+        v = graph.tensor(name="V", dim=list(paged["V"][0]), stride=list(paged["V"][1]))
+    else:
+        k = graph.tensor(name="K", dim=list(ds["K"][0]), stride=list(ds["K"][1]))
+        v = graph.tensor(name="V", dim=list(ds["V"][0]), stride=list(ds["V"][1]))
+        if cfg.is_ragged_kv:
+            offset_k = _offset_tensor(graph, cudnn, "offset_k", b, ragged_dtype)
+            offset_v = _offset_tensor(graph, cudnn, "offset_v", b, ragged_dtype)
+            k.set_ragged_offset(offset_k)
+            v.set_ragged_offset(offset_v)
+            if cu_direct:
+                k.set_ragged_offset_multiplier(mults.k)
+                v.set_ragged_offset_multiplier(mults.v)
+            tensors["offset_k"] = offset_k
+            tensors["offset_v"] = offset_v
+
     # attn_scale is a pass-by-value scalar so one cached graph serves every scale
     # (make_cache_key() normalizes attn_scale to 1.0).
     attn_scale = graph.tensor(
@@ -141,8 +179,7 @@ def build_f16_fwd_graph(
         data_type=cudnn.data_type.FLOAT,
         is_pass_by_value=True,
     )
-
-    tensors: Dict[str, Any] = {"Q": q, "K": k, "V": v, "attn_scale": attn_scale}
+    tensors.update({"Q": q, "K": k, "V": v, "attn_scale": attn_scale})
 
     masking = plan_f16_fwd_masking(cfg, cudnn_version)
     sdpa_kwargs: Dict[str, Any] = {
@@ -169,18 +206,44 @@ def build_f16_fwd_graph(
         tensors["bias"] = bias
 
     if cfg.is_padding:
-        # Non-cu_seqlens-direct path: materialized per-batch actual seqlens.
+        # seq_q/seq_kv hold materialized actual seqlens (b), or (b+1) cu_seqlens on
+        # the cu_seqlens-direct path (which pins the UNIFIED engine).
+        seq_len = b + 1 if cu_direct else b
         seq_q = graph.tensor(
-            name="seq_q", dim=[b, 1, 1, 1], stride=[1, 1, 1, 1], data_type=cudnn.data_type.INT32
+            name="seq_q", dim=[seq_len, 1, 1, 1], stride=[1, 1, 1, 1],
+            data_type=cudnn.data_type.INT32,
         )
         seq_kv = graph.tensor(
-            name="seq_kv", dim=[b, 1, 1, 1], stride=[1, 1, 1, 1], data_type=cudnn.data_type.INT32
+            name="seq_kv", dim=[seq_len, 1, 1, 1], stride=[1, 1, 1, 1],
+            data_type=cudnn.data_type.INT32,
         )
         sdpa_kwargs["use_padding_mask"] = True
-        sdpa_kwargs["seq_len_q"] = seq_q
-        sdpa_kwargs["seq_len_kv"] = seq_kv
+        if cu_direct:
+            sdpa_kwargs["cu_seq_len_q"] = seq_q
+            sdpa_kwargs["cu_seq_len_kv"] = seq_kv
+            sdpa_kwargs["implementation"] = cudnn.attention_implementation.UNIFIED
+        else:
+            sdpa_kwargs["seq_len_q"] = seq_q
+            sdpa_kwargs["seq_len_kv"] = seq_kv
         tensors["seq_q"] = seq_q
         tensors["seq_kv"] = seq_kv
+
+    if cfg.is_paged_kv:
+        mppk = int(cfg.max_pages_per_seq_k)
+        mppv = int(cfg.max_pages_per_seq_v)
+        page_table_k = graph.tensor(
+            name="page_table_k", dim=[b, 1, mppk, 1], stride=[mppk, mppv, 1, 1],
+            data_type=cudnn.data_type.INT32,
+        )
+        page_table_v = graph.tensor(
+            name="page_table_v", dim=[b, 1, mppv, 1], stride=[mppv, mppv, 1, 1],
+            data_type=cudnn.data_type.INT32,
+        )
+        sdpa_kwargs["paged_attention_k_table"] = page_table_k
+        sdpa_kwargs["paged_attention_v_table"] = page_table_v
+        sdpa_kwargs["paged_attention_max_seq_len_kv"] = s_kv
+        tensors["page_table_k"] = page_table_k
+        tensors["page_table_v"] = page_table_v
 
     if cfg.is_dropout:
         seed = graph.tensor(
@@ -196,9 +259,22 @@ def build_f16_fwd_graph(
     o, stats = graph.sdpa(q, k, v, **sdpa_kwargs)
 
     o.set_output(True).set_dim(list(ds["O"][0])).set_stride(list(ds["O"][1]))
-    stats.set_output(True).set_data_type(cudnn.data_type.FLOAT).set_dim([b, h, s_q, 1]).set_stride(
-        [h * s_q, s_q, 1, 1]
-    )
+    if cfg.is_ragged_q:
+        offset_o = _offset_tensor(graph, cudnn, "offset_o", b, ragged_dtype)
+        o.set_ragged_offset(offset_o)
+        if cu_direct:
+            o.set_ragged_offset_multiplier(mults.o)
+        tensors["offset_o"] = offset_o
+
+    stats.set_output(True).set_data_type(cudnn.data_type.FLOAT).set_dim([b, h, s_q, 1])
+    if cfg.uses_ragged_stats:
+        offset_stats = _offset_tensor(graph, cudnn, "offset_stats", b, ragged_dtype)
+        stats.set_stride([h * s_q, 1, h, 1]).set_ragged_offset(offset_stats)
+        if cu_direct:
+            stats.set_ragged_offset_multiplier(mults.stats)
+        tensors["offset_stats"] = offset_stats
+    else:
+        stats.set_stride([h * s_q, s_q, 1, 1])
     tensors["O"] = o
     tensors["Stats"] = stats
 
@@ -233,7 +309,7 @@ def build_f16_bwd_graph(
     "seq_kv","dropout_seed","dropout_offset") to graph tensor objects.
     """
     cfg.check_derived()
-    _reject_unsupported(cfg)
+    _reject_unsupported(cfg, allow_paged=False)
     if cudnn_version is None:
         cudnn_version = cudnn.backend_version()
 
@@ -241,7 +317,11 @@ def build_f16_bwd_graph(
     b = int(cfg.graph_batch_size_bwd)
     h = int(cfg.num_attn_heads)
     s_q = int(cfg.graph_max_seqlen_q)
+    s_kv = int(cfg.graph_max_seqlen_kv)
     ds = qkvo_dims_strides(cfg, batch_size=b)
+    # Backward always uses wide ragged offsets and no multiplier (multipliers are
+    # a UNIFIED-forward-only feature).
+    ragged_dtype = _ragged_dtype(cudnn, cfg.ragged_offset_type_bwd)
 
     graph = cudnn.pygraph(
         io_data_type=io_dtype,
@@ -250,18 +330,40 @@ def build_f16_bwd_graph(
         handle=handle,
     )
 
+    tensors: Dict[str, Any] = {}
+
     q = graph.tensor(name="Q", dim=list(ds["Q"][0]), stride=list(ds["Q"][1]))
     k = graph.tensor(name="K", dim=list(ds["K"][0]), stride=list(ds["K"][1]))
     v = graph.tensor(name="V", dim=list(ds["V"][0]), stride=list(ds["V"][1]))
     # O and dO share the O layout.
     o = graph.tensor(name="O", dim=list(ds["O"][0]), stride=list(ds["O"][1]))
     d_o = graph.tensor(name="dO", dim=list(ds["O"][0]), stride=list(ds["O"][1]))
-    stats = graph.tensor(
-        name="stats",
-        dim=[b, h, s_q, 1],
-        stride=[h * s_q, s_q, 1, 1],
-        data_type=cudnn.data_type.FLOAT,
-    )
+
+    offset_q = offset_k = offset_v = None
+    if cfg.is_ragged_q:
+        offset_q = _offset_tensor(graph, cudnn, "offset_q", b, ragged_dtype)
+        offset_o = _offset_tensor(graph, cudnn, "offset_o", b, ragged_dtype)
+        q.set_ragged_offset(offset_q)
+        o.set_ragged_offset(offset_o)
+        d_o.set_ragged_offset(offset_o)
+        tensors["offset_q"] = offset_q
+        tensors["offset_o"] = offset_o
+    if cfg.is_ragged_kv:
+        offset_k = _offset_tensor(graph, cudnn, "offset_k", b, ragged_dtype)
+        offset_v = _offset_tensor(graph, cudnn, "offset_v", b, ragged_dtype)
+        k.set_ragged_offset(offset_k)
+        v.set_ragged_offset(offset_v)
+        tensors["offset_k"] = offset_k
+        tensors["offset_v"] = offset_v
+
+    stats = graph.tensor(name="stats", dim=[b, h, s_q, 1], data_type=cudnn.data_type.FLOAT)
+    if cfg.uses_ragged_stats:
+        offset_stats = _offset_tensor(graph, cudnn, "offset_stats", b, ragged_dtype)
+        stats.set_stride([h * s_q, 1, h, 1]).set_ragged_offset(offset_stats)
+        tensors["offset_stats"] = offset_stats
+    else:
+        stats.set_stride([h * s_q, s_q, 1, 1])
+
     attn_scale = graph.tensor(
         name="attn_scale",
         dim=[1, 1, 1, 1],
@@ -270,15 +372,9 @@ def build_f16_bwd_graph(
         is_pass_by_value=True,
     )
 
-    tensors: Dict[str, Any] = {
-        "Q": q,
-        "K": k,
-        "V": v,
-        "O": o,
-        "dO": d_o,
-        "stats": stats,
-        "attn_scale": attn_scale,
-    }
+    tensors.update(
+        {"Q": q, "K": k, "V": v, "O": o, "dO": d_o, "stats": stats, "attn_scale": attn_scale}
+    )
 
     masking = plan_f16_fwd_masking(cfg, cudnn_version)
     bwd_kwargs: Dict[str, Any] = {
@@ -293,6 +389,11 @@ def build_f16_bwd_graph(
         bwd_kwargs["diagonal_band_right_bound"] = masking["diagonal_band_right_bound"]
     if cudnn_version >= 90000:
         bwd_kwargs["use_deterministic_algorithm"] = bool(cfg.deterministic)
+    # Ragged workspace bounds (mirrors set_max_total_seq_len_* in the C++ builder).
+    if cfg.uses_ragged_stats:
+        bwd_kwargs["max_total_seq_len_q"] = s_q
+    if cfg.is_ragged_kv and cfg.uses_ragged_graph:
+        bwd_kwargs["max_total_seq_len_kv"] = s_kv
 
     if cfg.is_bias:
         bias_b = int(cfg.bias_batch_size)
@@ -339,6 +440,11 @@ def build_f16_bwd_graph(
     d_q.set_output(True).set_dim(list(ds["Q"][0])).set_stride(list(ds["Q"][1]))
     d_k.set_output(True).set_dim(list(ds["K"][0])).set_stride(list(ds["K"][1]))
     d_v.set_output(True).set_dim(list(ds["V"][0])).set_stride(list(ds["V"][1]))
+    if cfg.is_ragged_q:
+        d_q.set_ragged_offset(offset_q)
+    if cfg.is_ragged_kv:
+        d_k.set_ragged_offset(offset_k)
+        d_v.set_ragged_offset(offset_v)
     tensors["dQ"] = d_q
     tensors["dK"] = d_k
     tensors["dV"] = d_v
