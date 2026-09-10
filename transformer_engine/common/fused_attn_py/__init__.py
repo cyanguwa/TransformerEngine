@@ -38,6 +38,7 @@ from .config import (
     RuntimeInfo,
 )
 from .rules import Verdict, select_fused_attn_backend
+from .cache import GraphEntry, GraphCache, build_and_probe
 
 __all__ = [
     "FusedAttnUIDF16",
@@ -50,4 +51,7 @@ __all__ = [
     "RuntimeInfo",
     "Verdict",
     "select_fused_attn_backend",
+    "GraphEntry",
+    "GraphCache",
+    "build_and_probe",
 ]
