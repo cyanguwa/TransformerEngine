@@ -289,6 +289,8 @@ class _FakeCudnnTensor:
 
 
 class _FakeCudnnGraph:
+    fail_check_support = False
+
     def __init__(self, **kw):
         self.calls = []
         self.sdpa_kwargs = None
@@ -311,6 +313,8 @@ class _FakeCudnnGraph:
 
     def check_support(self):
         self.calls.append("cs")
+        if type(self).fail_check_support:
+            raise _FakeCudnn.cudnnGraphNotSupportedError("mock: unsupported by cuDNN")
 
     def build_plans(self, policy):
         self.calls.append("bp")
@@ -320,6 +324,8 @@ class _FakeCudnnGraph:
 
 
 class _FakeCudnn:
+    cudnnGraphNotSupportedError = type("cudnnGraphNotSupportedError", (Exception,), {})
+
     class data_type:  # noqa: N801
         HALF = "HALF"
         BFLOAT16 = "BF16"
@@ -404,6 +410,57 @@ def test_build_f16_fwd_graph_control_flow():
 
     # GQA + SBHD + head_dim_v != head_dim_qk must still build.
     assert build(qkv_layout="NVTE_SBHD_SBHD_SBHD", num_gqa_groups=2, head_dim_v=128)
+
+
+probe_mod = importlib.import_module("transformer_engine.common.fused_attn_py.probe")
+
+
+def _bf16_cfg(rt):
+    return config.FusedAttnConfig(
+        qkv_layout="NVTE_BSHD_BSHD_BSHD",
+        batch_size=2,
+        num_attn_heads=8,
+        num_gqa_groups=8,
+        head_dim_qk=64,
+        head_dim_v=64,
+        max_seqlen_q=128,
+        max_seqlen_kv=128,
+        qkv_dtype="kNVTEBFloat16",
+        o_dtype="kNVTEBFloat16",
+    ).derive(rt)
+
+
+def test_make_cudnn_probe():
+    """The probe returns '' on a successful build and the reason on rejection."""
+    cudnn = _FakeCudnn()
+    rt = _fake_runtime()
+    cache_mod = importlib.import_module("transformer_engine.common.fused_attn_py.cache")
+
+    # FP8 dtype and the backward pass are not built in Python yet => skipped ("").
+    fp8_cfg = _bf16_cfg(rt)
+    fp8_cfg.qkv_dtype = "kNVTEFloat8E4M3"
+    probe = probe_mod.make_cudnn_probe(cudnn, handle=1)
+    assert probe(fp8_cfg, config.Pass.Fwd) == ""
+    assert probe(_bf16_cfg(rt), config.Pass.Bwd) == ""
+
+    # Forward success seeds the cache; a second probe is a cache hit (no rebuild).
+    fwd_cache = cache_mod.GraphCache()
+    probe = probe_mod.make_cudnn_probe(cudnn, handle=1, fwd_cache=fwd_cache)
+    cfg = _bf16_cfg(rt)
+    _FakeCudnnGraph.fail_check_support = False
+    try:
+        assert probe(cfg, config.Pass.Fwd) == ""
+        assert fwd_cache.get(cfg.make_cache_key(config.Pass.Fwd)) is not None
+
+        # cuDNN rejection is surfaced as a non-empty reason.
+        _FakeCudnnGraph.fail_check_support = True
+        cfg2 = _bf16_cfg(rt)
+        cfg2.batch_size = 3  # different key so it isn't a cache hit
+        cfg2.graph_batch_size_fwd = 3
+        reason = probe(cfg2, config.Pass.Fwd)
+        assert "unsupported" in reason
+    finally:
+        _FakeCudnnGraph.fail_check_support = False
 
 
 # ---------------------------------------------------------------------------
