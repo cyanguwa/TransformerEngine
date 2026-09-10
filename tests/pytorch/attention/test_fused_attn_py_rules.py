@@ -505,6 +505,21 @@ def test_enum_name_parity():
 torch = pytest.importorskip("torch", reason="torch required for dual-oracle test")
 
 
+def test_fused_attn_py_gate(monkeypatch):
+    """NVTE_FUSED_ATTN_PY opt-in parsing (glue import needs the pytorch package)."""
+    glue = importlib.import_module(
+        "transformer_engine.pytorch.attention.dot_product_attention.fused_attn_py"
+    )
+    for off in ("0", "", "false", "False"):
+        monkeypatch.setenv("NVTE_FUSED_ATTN_PY", off)
+        assert glue.fused_attn_py_enabled() is False
+    for on in ("1", "true", "yes"):
+        monkeypatch.setenv("NVTE_FUSED_ATTN_PY", on)
+        assert glue.fused_attn_py_enabled() is True
+    monkeypatch.delenv("NVTE_FUSED_ATTN_PY", raising=False)
+    assert glue.fused_attn_py_enabled() is False
+
+
 def _init_kwargs(cls, spec):
     """Filter a spec dict down to the constructor-settable fields of a dataclass."""
     import dataclasses
