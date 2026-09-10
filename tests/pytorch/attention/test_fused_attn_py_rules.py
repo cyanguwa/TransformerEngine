@@ -616,17 +616,29 @@ def test_uid_keying_and_serialize_plan():
     assert e.tensors["Q"].uid == int(U.Q)  # actually applied to the graph tensor
     assert "serialize" not in cudnn.g.calls  # builder does not serialize
 
-    plan = serialize_mod.serialize_entry(cudnn, e, cudnn_frontend_version=12800)
+    scalars = {"attn_scale": serialize_mod.pack_scalar_f32(0.125)}
+    plan = serialize_mod.serialize_entry(
+        cudnn, e, cudnn_frontend_version=12800, scalar_values=scalars
+    )
     assert plan.serialized_graph == b"fake-cudnn-graph-blob"
     assert plan.workspace_size == e.workspace_size and plan.cudnn_frontend_version == 12800
     assert set(plan.output_uids) == {int(U.O), int(U.Stats)}
     assert int(U.Q) in plan.input_uids and int(U.Stats) not in plan.input_uids
     assert plan.input_uids == sorted(plan.input_uids)
+    # attn_scale is a pass-by-value scalar: in scalar_uids, never in input_uids.
+    assert plan.scalar_uids == [int(U.AttnScale)] and int(U.AttnScale) not in plan.input_uids
+    assert plan.scalar_sizes == [4] and len(plan.scalar_values) == 16
     assert plan.graph_hash == serialize_mod.graph_hash(b"fake-cudnn-graph-blob")
+
+    # A declared scalar with no supplied value is an error.
+    with pytest.raises(ValueError):
+        serialize_mod.serialize_entry(cudnn, e, cudnn_frontend_version=12800)
 
     # Backward: dQ/dK/dV are outputs, stats is an input.
     eb = f16_builder.build_f16_bwd_graph(cudnn, handle=1, cfg=_bf16_cfg(rt))
-    planb = serialize_mod.serialize_entry(cudnn, eb, cudnn_frontend_version=12800)
+    planb = serialize_mod.serialize_entry(
+        cudnn, eb, cudnn_frontend_version=12800, scalar_values=scalars
+    )
     assert {int(U.dQ), int(U.dK), int(U.dV)} <= set(planb.output_uids)
     assert int(U.Stats) in planb.input_uids and int(U.dQ) not in planb.input_uids
 
@@ -635,6 +647,37 @@ def test_uid_keying_and_serialize_plan():
 
     with pytest.raises(ValueError):
         serialize_mod.serialize_entry(cudnn, GraphEntry(graph=cudnn.g))
+
+
+def test_build_plan_fwd_and_bwd():
+    """build_plan wires builder -> serialize_entry for both passes."""
+    cudnn = _FakeCudnn()
+    rt = _fake_runtime()
+    U = uids_mod.FusedAttnUIDF16
+
+    fwd = serialize_mod.build_plan(
+        cudnn, _bf16_cfg(rt), config.Pass.Fwd, attn_scale=0.125, cudnn_frontend_version=12800
+    )
+    assert fwd.serialized_graph == b"fake-cudnn-graph-blob"
+    assert fwd.scalar_uids == [int(U.AttnScale)]
+    assert set(fwd.output_uids) == {int(U.O), int(U.Stats)}
+
+    bwd = serialize_mod.build_plan(
+        cudnn, _bf16_cfg(rt), config.Pass.Bwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert {int(U.dQ), int(U.dK), int(U.dV)} <= set(bwd.output_uids)
+    assert int(U.Stats) in bwd.input_uids
+
+    # Operands must be ordered to match input_uids (the executor zips positionally).
+    inv = {uid: role for role, uid in fwd.role_uids.items()}
+    buffers = {inv[uid]: f"buf-{inv[uid]}" for uid in fwd.input_uids}
+    operands = serialize_mod.ordered_input_operands(fwd, buffers)
+    assert operands == [f"buf-{inv[uid]}" for uid in fwd.input_uids]
+    assert operands[0] == "buf-Q"  # Q has the smallest UID, so it is first
+    # A missing input buffer is an error; scalars are not operands.
+    with pytest.raises(ValueError):
+        serialize_mod.ordered_input_operands(fwd, {"Q": "x"})
+    assert int(U.AttnScale) not in fwd.input_uids
 
 
 probe_mod = importlib.import_module("transformer_engine.common.fused_attn_py.probe")
