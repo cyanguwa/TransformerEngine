@@ -29,5 +29,25 @@ sweep of configs, so the two never silently diverge.
 """
 
 from .uids import FusedAttnUIDF16, FusedAttnUIDFP8
+from .config import (
+    FusedAttnConfig,
+    FusedAttnBackend,
+    QKVFormat,
+    QKVLayoutGroup,
+    Pass,
+    RuntimeInfo,
+)
+from .rules import Verdict, select_fused_attn_backend
 
-__all__ = ["FusedAttnUIDF16", "FusedAttnUIDFP8"]
+__all__ = [
+    "FusedAttnUIDF16",
+    "FusedAttnUIDFP8",
+    "FusedAttnConfig",
+    "FusedAttnBackend",
+    "QKVFormat",
+    "QKVLayoutGroup",
+    "Pass",
+    "RuntimeInfo",
+    "Verdict",
+    "select_fused_attn_backend",
+]
