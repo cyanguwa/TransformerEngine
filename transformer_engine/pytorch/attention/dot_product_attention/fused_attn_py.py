@@ -33,15 +33,20 @@ import os
 from typing import Any, Dict, Optional, Tuple
 
 from transformer_engine.common.fused_attn_py import GraphCache
-from transformer_engine.common.fused_attn_py.builders.f16 import build_f16_fwd_graph
+from transformer_engine.common.fused_attn_py.builders.f16 import (
+    build_f16_bwd_graph,
+    build_f16_fwd_graph,
+)
 from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass
 from transformer_engine.common.fused_attn_py.strides import qkvo_dims_strides
 
-# Process-wide forward graph cache, shared with the support probe so a graph the
-# probe built is reused here rather than rebuilt.
+# Process-wide graph caches, shared with the support probe so a graph the probe
+# built is reused here rather than rebuilt.
 FWD_GRAPH_CACHE = GraphCache()
+BWD_GRAPH_CACHE = GraphCache()
 
 _CUDNN_HANDLES: Dict[Any, Any] = {}
+_F16_AUTOGRAD_FN = None
 
 
 def fused_attn_py_enabled() -> bool:
@@ -82,9 +87,14 @@ def _get_fwd_graph(cudnn, handle, cfg: FusedAttnConfig):
     """Build or fetch the cached F16 forward graph for this config."""
     cfg.check_derived()
     key = cfg.make_cache_key(Pass.Fwd)
-    return FWD_GRAPH_CACHE.get_or_build(
-        key, lambda: build_f16_fwd_graph(cudnn, handle, cfg)
-    )
+    return FWD_GRAPH_CACHE.get_or_build(key, lambda: build_f16_fwd_graph(cudnn, handle, cfg))
+
+
+def _get_bwd_graph(cudnn, handle, cfg: FusedAttnConfig):
+    """Build or fetch the cached F16 backward graph for this config."""
+    cfg.check_derived()
+    key = cfg.make_cache_key(Pass.Bwd)
+    return BWD_GRAPH_CACHE.get_or_build(key, lambda: build_f16_bwd_graph(cudnn, handle, cfg))
 
 
 def fused_attn_fwd_f16(
@@ -150,9 +160,169 @@ def fused_attn_fwd_f16(
     return o, stats
 
 
+def fused_attn_bwd_f16(
+    cfg: FusedAttnConfig,
+    q,
+    k,
+    v,
+    o,
+    d_o,
+    stats,
+    *,
+    attn_scale: float,
+    bias=None,
+    seq_len_q=None,
+    seq_len_kv=None,
+    dropout_seed=None,
+    dropout_offset=None,
+) -> Tuple[Any, Any, Any, Optional[Any]]:
+    """Run the F16/BF16 backward SDPA. Returns ``(dQ, dK, dV, dBias)``.
+
+    ``dBias`` is ``None`` unless the graph emits it (bias not fully broadcast).
+    Gradient tensors are allocated ``empty_like`` their inputs, so they carry the
+    same layout the graph's dQ/dK/dV expect.
+    """
+    import torch
+
+    cudnn = _import_cudnn()
+    handle = _get_cudnn_handle(q.device)
+    entry = _get_bwd_graph(cudnn, handle, cfg)
+
+    d_q = torch.empty_like(q)
+    d_k = torch.empty_like(k)
+    d_v = torch.empty_like(v)
+    scale = torch.full((1, 1, 1, 1), float(attn_scale), dtype=torch.float32, device=q.device)
+    t = entry.tensors
+    variant_pack: Dict[Any, Any] = {
+        t["Q"]: q,
+        t["K"]: k,
+        t["V"]: v,
+        t["O"]: o,
+        t["dO"]: d_o,
+        t["stats"]: stats,
+        t["attn_scale"]: scale,
+        t["dQ"]: d_q,
+        t["dK"]: d_k,
+        t["dV"]: d_v,
+    }
+    d_bias = None
+    if cfg.is_bias:
+        _require(bias, "bias")
+        variant_pack[t["bias"]] = bias
+        if "dBias" in t:
+            d_bias = torch.empty_like(bias)
+            variant_pack[t["dBias"]] = d_bias
+    if cfg.is_padding:
+        _require(seq_len_q, "seq_len_q")
+        _require(seq_len_kv, "seq_len_kv")
+        variant_pack[t["seq_q"]] = seq_len_q
+        variant_pack[t["seq_kv"]] = seq_len_kv
+    if cfg.is_dropout:
+        _require(dropout_seed, "dropout_seed")
+        _require(dropout_offset, "dropout_offset")
+        variant_pack[t["dropout_seed"]] = dropout_seed
+        variant_pack[t["dropout_offset"]] = dropout_offset
+
+    workspace = torch.empty(entry.workspace_size, dtype=torch.uint8, device=q.device)
+    entry.graph.execute(variant_pack, workspace, handle=handle)
+    return d_q, d_k, d_v, d_bias
+
+
+def _f16_autograd_fn():
+    """Lazily build and cache the F16 autograd.Function (needs torch at call time)."""
+    global _F16_AUTOGRAD_FN
+    if _F16_AUTOGRAD_FN is not None:
+        return _F16_AUTOGRAD_FN
+
+    import torch
+
+    class _FusedAttnPyF16Func(torch.autograd.Function):
+        """cuDNN Python-graph F16/BF16 fused attention (forward + backward)."""
+
+        @staticmethod
+        def forward(
+            ctx, cfg, attn_scale, q, k, v, bias, seq_len_q, seq_len_kv, dropout_seed, dropout_offset
+        ):
+            # pylint: disable=missing-function-docstring
+            o, stats = fused_attn_fwd_f16(
+                cfg,
+                q,
+                k,
+                v,
+                attn_scale=attn_scale,
+                bias=bias,
+                seq_len_q=seq_len_q,
+                seq_len_kv=seq_len_kv,
+                dropout_seed=dropout_seed,
+                dropout_offset=dropout_offset,
+            )
+            ctx.cfg = cfg
+            ctx.attn_scale = attn_scale
+            ctx.save_for_backward(
+                q, k, v, o, stats, bias, seq_len_q, seq_len_kv, dropout_seed, dropout_offset
+            )
+            return o
+
+        @staticmethod
+        def backward(ctx, d_o):
+            # pylint: disable=missing-function-docstring
+            (q, k, v, o, stats, bias, seq_len_q, seq_len_kv, seed, offset) = ctx.saved_tensors
+            d_q, d_k, d_v, d_bias = fused_attn_bwd_f16(
+                ctx.cfg,
+                q,
+                k,
+                v,
+                o,
+                d_o.contiguous(),
+                stats,
+                attn_scale=ctx.attn_scale,
+                bias=bias,
+                seq_len_q=seq_len_q,
+                seq_len_kv=seq_len_kv,
+                dropout_seed=seed,
+                dropout_offset=offset,
+            )
+            # Grad order matches forward's inputs:
+            # (cfg, attn_scale, q, k, v, bias, seq_len_q, seq_len_kv, seed, offset).
+            return None, None, d_q, d_k, d_v, d_bias, None, None, None, None
+
+    _F16_AUTOGRAD_FN = _FusedAttnPyF16Func
+    return _F16_AUTOGRAD_FN
+
+
+def fused_attn_py_f16(
+    cfg: FusedAttnConfig,
+    q,
+    k,
+    v,
+    *,
+    attn_scale: float,
+    bias=None,
+    seq_len_q=None,
+    seq_len_kv=None,
+    dropout_seed=None,
+    dropout_offset=None,
+):
+    """Autograd-aware F16/BF16 fused attention through the Python cuDNN path.
+
+    Returns the attention output ``o``; gradients flow to ``q``, ``k``, ``v`` (and
+    ``bias`` when ``cfg.is_bias`` and a ``dBias`` is emitted).
+    """
+    return _f16_autograd_fn().apply(
+        cfg, attn_scale, q, k, v, bias, seq_len_q, seq_len_kv, dropout_seed, dropout_offset
+    )
+
+
 def _require(value: Optional[Any], name: str) -> None:
     if value is None:
         raise ValueError(f"fused_attn_fwd_f16: cfg requires '{name}' but it was not provided.")
 
 
-__all__ = ["fused_attn_py_enabled", "fused_attn_fwd_f16", "FWD_GRAPH_CACHE"]
+__all__ = [
+    "fused_attn_py_enabled",
+    "fused_attn_fwd_f16",
+    "fused_attn_bwd_f16",
+    "fused_attn_py_f16",
+    "FWD_GRAPH_CACHE",
+    "BWD_GRAPH_CACHE",
+]
