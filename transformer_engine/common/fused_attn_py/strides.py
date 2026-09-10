@@ -19,9 +19,9 @@ the exact same graph the execute path will reuse.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import NamedTuple, Optional, Tuple
 
-from .config import FusedAttnConfig, _name
+from .config import FusedAttnConfig, QKVLayoutGroup, _name, get_qkv_layout_group
 
 # Dim indices in the BHSD logical layout.
 _BATCH, _HEAD, _SEQ, _HID = 0, 1, 2, 3
@@ -140,4 +140,65 @@ def qkvo_dims_strides(cfg: FusedAttnConfig, batch_size: Optional[int] = None):
     }
 
 
-__all__ = ["generate_matrix_strides", "qkvo_dims_strides"]
+def paged_kv_dims_strides(cfg: FusedAttnConfig):
+    """Return ``{"K": (dim, stride), "V": (dim, stride)}`` for the paged KV containers.
+
+    Mirrors the ``is_paged_kv`` branch of ``create_graph_f16_fwd``: K/V live in
+    page containers dimensioned by ``num_pages`` / ``page_size`` (not batch /
+    seqlen), and their strides come from ``generateMatrixStrides`` called with
+    ``num_pages`` as the batch and the page sizes as the seq extents.
+    """
+    hg = int(cfg.num_gqa_groups)
+    d_qk = int(cfg.head_dim_qk)
+    d_v = int(cfg.head_dim_v)
+    npk = int(cfg.num_pages_k)
+    npv = int(cfg.num_pages_v)
+    psk = int(cfg.page_size_k)
+    psv = int(cfg.page_size_v)
+    layout = cfg.qkv_layout
+    return {
+        "K": ((npk, hg, psk, d_qk), generate_matrix_strides(npk, hg, psk, psv, d_qk, layout, "K")),
+        "V": ((npv, hg, psv, d_v), generate_matrix_strides(npv, hg, psk, psv, d_v, layout, "V")),
+    }
+
+
+class RaggedOffsetMultipliers(NamedTuple):
+    """Per-tensor ragged-offset multipliers (port of the C++ struct).
+
+    On the ``cu_seqlens``-direct path a token-unit ``cu_seqlens`` tensor is bound
+    directly as the ragged offset; the multiplier recovers element offsets. For
+    interleaved QKV (``3HD``/``H3D``) the K/V offsets scale the Q-side cu_seqlens
+    (``kv_from_q``).
+    """
+
+    q: int
+    k: int
+    v: int
+    o: int
+    stats: int
+    kv_from_q: bool
+
+
+def ragged_offset_multipliers(cfg: FusedAttnConfig) -> RaggedOffsetMultipliers:
+    """Port of ``RaggedOffsetMultipliers`` (utils.h)."""
+    h = int(cfg.num_attn_heads)
+    hg = int(cfg.num_gqa_groups)
+    d_qk = int(cfg.head_dim_qk)
+    d_v = int(cfg.head_dim_v)
+    q, k, v, o, stats, kv_from_q = h * d_qk, hg * d_qk, hg * d_v, h * d_v, h, False
+    group = get_qkv_layout_group(cfg.qkv_layout)
+    if group in (QKVLayoutGroup.THREE_HD, QKVLayoutGroup.H3D):
+        q = k = v = 3 * h * d_qk
+        kv_from_q = True
+    elif group in (QKVLayoutGroup.HD_2HD, QKVLayoutGroup.HD_H2D):
+        k = v = 2 * hg * d_qk
+    return RaggedOffsetMultipliers(q, k, v, o, stats, kv_from_q)
+
+
+__all__ = [
+    "generate_matrix_strides",
+    "qkvo_dims_strides",
+    "paged_kv_dims_strides",
+    "ragged_offset_multipliers",
+    "RaggedOffsetMultipliers",
+]
