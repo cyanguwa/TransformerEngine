@@ -195,10 +195,85 @@ def ragged_offset_multipliers(cfg: FusedAttnConfig) -> RaggedOffsetMultipliers:
     return RaggedOffsetMultipliers(q, k, v, o, stats, kv_from_q)
 
 
+# ---------------------------------------------------------------------------
+# Format-based strides + MXFP8 padding. Ported from generateMatrixStridesWithFormat
+# and pad_s_d_for_mxfp8 (utils.h) -- used only by the MXFP8 (block-scaling) FP8
+# graph builders, which lay out their block-scale tensors by QKV *format*.
+# ---------------------------------------------------------------------------
+def _ceil_div(x: int, y: int) -> int:
+    """Port of ``DIVUP``: integer ceiling division."""
+    return (x + y - 1) // y
+
+
+def _round_up_to_multiple(n: int, m: int) -> int:
+    """Port of ``DIVUP_TO_MULTIPLE``: smallest multiple of ``m`` that is >= ``n``."""
+    return _ceil_div(n, m) * m
+
+
+def generate_matrix_strides_with_format(b: int, h: int, s: int, d: int, fmt: object) -> _Stride:
+    """Port of ``generateMatrixStridesWithFormat`` (utils.h).
+
+    Strides for a logical ``[b, h, s, d]`` tensor under a QKV *format* (as opposed
+    to a full layout). ``fmt`` is a ``QKVFormat`` enum or name; BSHD and THD share
+    a layout. Returns the ``(b, h, s, d)`` stride tuple.
+    """
+    name = _name(fmt)
+    if name in ("BSHD", "THD"):
+        return (s * h * d, d, h * d, 1)
+    if name == "SBHD":
+        return (h * d, d, b * h * d, 1)
+    if name == "BHSD":
+        return (h * s * d, s * d, d, 1)
+    raise ValueError(f"generate_matrix_strides_with_format: unsupported format {name!r}")
+
+
+class MXFP8PaddedSizes(NamedTuple):
+    """Padded seqlen/head-dim sizes for MXFP8. Port of ``MXFP8PaddedSizes`` (utils.h)."""
+
+    s_q_padded: int
+    s_kv_padded: int
+    s_q_scale: int
+    s_kv_scale: int
+    s_q_scale_padded: int
+    s_kv_scale_padded: int
+    d_qk_padded: int
+    d_v_padded: int
+    d_qk_scale: int
+    d_v_scale: int
+    d_qk_scale_padded: int
+    d_v_scale_padded: int
+
+
+def pad_s_d_for_mxfp8(s_q: int, s_kv: int, d_qk: int, d_v: int) -> MXFP8PaddedSizes:
+    """Port of ``pad_s_d_for_mxfp8`` (utils.h): MXFP8 block (32) + tile padding."""
+    block_size = 32
+    s_q_scale = _ceil_div(s_q, block_size)
+    s_kv_scale = _ceil_div(s_kv, block_size)
+    d_qk_scale = _ceil_div(d_qk, block_size)
+    d_v_scale = _ceil_div(d_v, block_size)
+    return MXFP8PaddedSizes(
+        s_q_padded=_round_up_to_multiple(s_q, 128),
+        s_kv_padded=_round_up_to_multiple(s_kv, 128),
+        s_q_scale=s_q_scale,
+        s_kv_scale=s_kv_scale,
+        s_q_scale_padded=_round_up_to_multiple(s_q_scale, 4),
+        s_kv_scale_padded=_round_up_to_multiple(s_kv_scale, 4),
+        d_qk_padded=_round_up_to_multiple(d_qk, 128),
+        d_v_padded=_round_up_to_multiple(d_v, 128),
+        d_qk_scale=d_qk_scale,
+        d_v_scale=d_v_scale,
+        d_qk_scale_padded=_round_up_to_multiple(d_qk_scale, 4),
+        d_v_scale_padded=_round_up_to_multiple(d_v_scale, 4),
+    )
+
+
 __all__ = [
     "generate_matrix_strides",
+    "generate_matrix_strides_with_format",
     "qkvo_dims_strides",
     "paged_kv_dims_strides",
     "ragged_offset_multipliers",
     "RaggedOffsetMultipliers",
+    "pad_s_d_for_mxfp8",
+    "MXFP8PaddedSizes",
 ]

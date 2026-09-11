@@ -616,6 +616,23 @@ def test_stage4_thd_ragged_and_paged():
         )
 
 
+def test_mxfp8_stride_primitives():
+    """pad_s_d_for_mxfp8 + generate_matrix_strides_with_format match the C++ ports."""
+    p = strides.pad_s_d_for_mxfp8(128, 128, 64, 64)
+    assert p.s_q_padded == 128 and p.s_q_scale == 4 and p.s_q_scale_padded == 4
+    assert p.d_qk_padded == 128 and p.d_qk_scale == 2 and p.d_qk_scale_padded == 4
+    p2 = strides.pad_s_d_for_mxfp8(100, 200, 80, 48)
+    assert p2.s_q_padded == 128 and p2.s_kv_padded == 256
+    assert p2.s_kv_scale == 7 and p2.s_kv_scale_padded == 8  # ceil(200/32)=7 -> mult4 = 8
+    assert p2.d_qk_scale == 3 and p2.d_qk_scale_padded == 4  # ceil(80/32)=3 -> 4
+    fmt = strides.generate_matrix_strides_with_format
+    assert fmt(2, 8, 128, 64, "BSHD") == (65536, 64, 512, 1)
+    assert fmt(2, 8, 128, 64, "THD") == (65536, 64, 512, 1)  # THD shares BSHD
+    assert fmt(2, 8, 128, 64, "SBHD") == (512, 64, 1024, 1)
+    assert fmt(2, 8, 128, 64, "BHSD") == (65536, 8192, 64, 1)
+    assert fmt(2, 8, 128, 64, config.QKVFormat.BSHD) == (65536, 64, 512, 1)  # enum accepted
+
+
 fp8_builder = importlib.import_module("transformer_engine.common.fused_attn_py.builders.fp8")
 
 
