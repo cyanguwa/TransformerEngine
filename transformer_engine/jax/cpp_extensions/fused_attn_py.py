@@ -32,7 +32,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 
 from transformer_engine.common.fused_attn_py import Plan, build_plan
-from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass
+from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass, RuntimeInfo
 from transformer_engine.common.fused_attn_py.serialize import ordered_input_operands
 
 # The C++ FFI handler symbols registered in jax/csrc/extensions/pybind.cpp.
@@ -53,6 +53,52 @@ def _import_cudnn():
             "The Python fused-attention blob path needs the cuDNN frontend package. "
             "Install it with: pip install nvidia-cudnn-frontend"
         ) from exc
+
+
+def _parse_sm_arch(compute_capability: str) -> int:
+    """Turn a device compute capability like ``"9.0"`` into ``sm_arch`` 90."""
+    major, _, minor = str(compute_capability).partition(".")
+    return int(major) * 10 + (int(minor) if minor else 0)
+
+
+def make_runtime_info(cudnn: Any, *, device: Any = None) -> RuntimeInfo:
+    """Collect the device/library facts ``FusedAttnConfig.derive()`` needs on JAX.
+
+    ``sm_arch`` comes from the target device's compute capability, the cuDNN
+    backend version from ``cudnn.backend_version()``, and the frontend versions
+    from the Python package (``cudnn.__version__``) and the C++ build
+    (``transformer_engine_jax.get_cudnn_frontend_version()``). Mirrors what the
+    C++ ``derive()`` reads from ``cudnnGetVersion`` / ``cuda::sm_arch``.
+    """
+    import jax
+
+    import transformer_engine_jax
+
+    from transformer_engine.common.fused_attn_py.serialize import encode_cudnn_frontend_version
+
+    if device is None:
+        device = jax.local_devices()[0]
+    sm_arch = _parse_sm_arch(device.compute_capability)
+    cudnn_version = int(cudnn.backend_version())
+    fe_python = encode_cudnn_frontend_version(getattr(cudnn, "__version__"))
+    fe_cpp = int(transformer_engine_jax.get_cudnn_frontend_version())
+    return RuntimeInfo(
+        sm_arch=sm_arch,
+        cudnn_version=cudnn_version,
+        cudnn_frontend_version=fe_python,
+        cudnn_build_version=fe_cpp,
+    )
+
+
+def config_from_jax_params(params: Any, runtime: RuntimeInfo, **overrides) -> FusedAttnConfig:
+    """Adapt a JAX ``FusedAttnParams`` into a derived neutral ``FusedAttnConfig``.
+
+    ``FusedAttnParams`` (jax/cpp_extensions/attention.py) already mirrors the C++
+    ``FusedAttnConfig`` field order with ``NVTE_*`` enums, so the neutral config
+    copies the same-named fields and normalizes the enums by name. ``overrides``
+    forwards fields the JAX param object does not carry (e.g. paged-KV dims).
+    """
+    return FusedAttnConfig.from_params(params, **overrides).derive(runtime)
 
 
 def plan_ffi_attrs(plan: Plan) -> Dict[str, Any]:
@@ -154,6 +200,8 @@ def fused_attn_blob_bwd(
 
 __all__ = [
     "fused_attn_py_enabled",
+    "make_runtime_info",
+    "config_from_jax_params",
     "plan_ffi_attrs",
     "ordered_input_operands",
     "fused_attn_blob_fwd",
