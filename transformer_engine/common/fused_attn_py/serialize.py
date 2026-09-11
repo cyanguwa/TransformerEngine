@@ -155,13 +155,18 @@ def serialize_entry(
         raise ValueError("serialize_entry: GraphEntry has no UIDs; build with UID keying first.")
     scalar_values = scalar_values or {}
 
+    # Prefer the builder-declared output set (pass-correct: "O"/"Stats" are
+    # outputs in the forward graph but inputs in the backward graph); fall back to
+    # the name-based heuristic for builders that don't declare it.
+    output_roles = entry.output_roles or _OUTPUT_ROLES
+
     inputs: List[int] = []
     outputs: List[int] = []
     scalar_roles: List[Tuple[int, str]] = []
     for role, uid in entry.uids.items():
         if role in _SCALAR_ROLES:
             scalar_roles.append((int(uid), role))
-        elif role in _OUTPUT_ROLES:
+        elif role in output_roles:
             outputs.append(int(uid))
         else:
             inputs.append(int(uid))
@@ -237,13 +242,10 @@ def build_plan(
     # Imported here (not at module load) to keep the cudnn-free import surface of
     # serialize.py minimal; builders only pull in the neutral config/strides/uids.
     if cfg.is_tensor_scaling or cfg.is_mxfp8:
-        from .builders.fp8 import build_fp8_fwd_graph
+        from .builders.fp8 import build_fp8_bwd_graph, build_fp8_fwd_graph
 
-        if pass_ is not Pass.Fwd:
-            raise NotImplementedError(
-                "fused_attn_py: FP8 backward Plan is not wired yet (Stage 6 is FP8 forward only)."
-            )
-        entry = build_fp8_fwd_graph(cudnn, handle, cfg, cudnn_version=cudnn_version)
+        fp8_builder = build_fp8_fwd_graph if pass_ is Pass.Fwd else build_fp8_bwd_graph
+        entry = fp8_builder(cudnn, handle, cfg, cudnn_version=cudnn_version)
     else:
         from .builders.f16 import build_f16_bwd_graph, build_f16_fwd_graph
 

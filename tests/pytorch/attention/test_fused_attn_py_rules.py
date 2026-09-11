@@ -328,6 +328,18 @@ class _FakeCudnnGraph:
             _FakeCudnnTensor(name="Amax_o"),
         )
 
+    def sdpa_fp8_backward(self, q, k, v, o, dO, stats, *scales, **kw):
+        self.sdpa_kwargs = kw
+        return (
+            _FakeCudnnTensor(name="dQ"),
+            _FakeCudnnTensor(name="dK"),
+            _FakeCudnnTensor(name="dV"),
+            _FakeCudnnTensor(name="Amax_dQ"),
+            _FakeCudnnTensor(name="Amax_dK"),
+            _FakeCudnnTensor(name="Amax_dV"),
+            _FakeCudnnTensor(name="Amax_dP"),
+        )
+
     def sdpa_backward(self, q, k, v, o, dO, stats, **kw):
         self.sdpa_kwargs = kw
         return (
@@ -647,15 +659,46 @@ def test_stage6_fp8_fwd_builder():
     e = fp8_builder.build_fp8_fwd_graph(cudnn, handle=1, cfg=c)
     assert "ScaleO" not in e.tensors and "DescaleS" in e.tensors
 
-    # MXFP8 and FP8 backward are deferred; both must raise cleanly.
+    # MXFP8 is still deferred (both passes must raise cleanly).
     with pytest.raises(NotImplementedError):
         fp8_builder.build_fp8_fwd_graph(
             cudnn, handle=1, cfg=_fp8_cfg(_rt(12800), scaling_mode="NVTE_MXFP8_1D_SCALING")
         )
     with pytest.raises(NotImplementedError):
-        serialize_mod.build_plan(
-            cudnn, _fp8_cfg(_rt(12800)), config.Pass.Bwd, attn_scale=1.0
+        fp8_builder.build_fp8_bwd_graph(
+            cudnn, handle=1, cfg=_fp8_cfg(_rt(12800), scaling_mode="NVTE_MXFP8_1D_SCALING")
         )
+
+
+def test_stage6_fp8_bwd_builder():
+    """FP8 backward builder: descale/scale set, amax outputs, input/output split."""
+    cudnn = _FakeCudnn()
+    U = uids_mod.FusedAttnUIDFP8
+
+    # Delayed scaling (FP8 grads): real Scale_dQ/dK/dV + Descale_O inputs.
+    c = _fp8_cfg(_rt(12800))
+    assert c.is_delayed_scaling_bwd
+    e = fp8_builder.build_fp8_bwd_graph(cudnn, handle=1, cfg=c)
+    assert {"Q", "K", "V", "O", "dO", "stats"} <= set(e.tensors)  # O/stats are inputs
+    assert {"dQ", "dK", "dV", "AmaxdQ", "AmaxdK", "AmaxdV", "AmaxdP"} <= set(e.tensors)
+    assert {"ScaledQ", "ScaledK", "ScaledV", "DescaleO", "DescaledO", "DescaledP"} <= set(e.tensors)
+    # Builder declares its outputs; O/Stats (shared names) must NOT be outputs.
+    assert e.output_roles == {"dQ", "dK", "dV", "AmaxdQ", "AmaxdK", "AmaxdV", "AmaxdP"}
+
+    # Current scaling (F16 grads): Scale_dQ/dK/dV and Descale_O are 1.0 constants.
+    c = _fp8_cfg(_rt(12800), o_dtype="kNVTEBFloat16", dqkv_dtype="kNVTEBFloat16")
+    assert c.is_current_scaling_bwd
+    e = fp8_builder.build_fp8_bwd_graph(cudnn, handle=1, cfg=c)
+    assert not ({"ScaledQ", "ScaledK", "ScaledV", "DescaleO"} & set(e.tensors))
+
+    # build_plan(Bwd) now serializes the FP8 backward Plan: O/stats stay *inputs*
+    # (not misclassified as outputs) and the amaxes are outputs.
+    plan = serialize_mod.build_plan(
+        cudnn, _fp8_cfg(_rt(12800)), config.Pass.Bwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert {int(U.dQ), int(U.dK), int(U.dV), int(U.AmaxdP)} <= set(plan.output_uids)
+    assert {int(U.O), int(U.Stats), int(U.dO)} <= set(plan.input_uids)
+    assert int(U.O) not in plan.output_uids
 
 
 def test_stage6_fp8_plan_roles():

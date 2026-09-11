@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Hashable, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Hashable, Optional, Tuple
 
 
 @dataclass
@@ -41,12 +41,20 @@ class GraphEntry:
     maps the same role names to the stable integer UID (``set_uid``) each tensor
     carries in the graph, so a serialized graph can be executed by binding a
     plain ``{uid: ptr}`` variant pack (the JAX blob / ``torch.library`` paths).
+
+    ``output_roles``, when non-empty, is the exact set of role names the builder
+    marked as graph *outputs* (``set_output(True)``). Serialization uses it to
+    split inputs from outputs instead of guessing from role names -- necessary
+    because the same role (e.g. ``"O"``/``"Stats"``) is an output in the forward
+    graph but an input in the backward graph. Builders that leave it empty fall
+    back to the name-based heuristic in ``serialize``.
     """
 
     graph: Any
     tensors: Dict[str, Any] = field(default_factory=dict)
     workspace_size: int = 1
     uids: Dict[str, int] = field(default_factory=dict)
+    output_roles: FrozenSet[str] = field(default_factory=frozenset)
 
 
 class GraphCache:
