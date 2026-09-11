@@ -759,6 +759,29 @@ def test_stage7_mxfp8_fwd_builder():
     assert {int(U.DescaleQ), int(U.DescaleK), int(U.DescaleV)} <= set(plan.input_uids)
 
 
+def test_stage7_mxfp8_bwd_builder():
+    """MXFP8 backward: transpose/f16 helpers + block descales in, only dQ/dK/dV out."""
+    cudnn = _FakeCudnn()
+    U = uids_mod.FusedAttnUIDFP8
+    c = _mxfp8_cfg(_rt(12800))
+    e = fp8_builder.build_fp8_bwd_graph(cudnn, handle=1, cfg=c)
+    assert {"Qt", "Kt", "dOt", "dOf16"} <= set(e.tensors)
+    assert {
+        "DescaleQ", "DescaleQt", "DescaleK", "DescaleKt", "DescaleV", "DescaledO", "DescaledOt"
+    } <= set(e.tensors)
+    # None of the tensor-scaling-only tensors / surfaced amaxes for MXFP8.
+    assert not ({"DescaleS", "ScaleS", "ScaledP", "DescaledP", "AmaxdQ", "AmaxdP"} & set(e.tensors))
+    assert e.output_roles == frozenset({"dQ", "dK", "dV"})
+    plan = serialize_mod.build_plan(
+        cudnn, _mxfp8_cfg(_rt(12800)), config.Pass.Bwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert set(plan.output_uids) == {int(U.dQ), int(U.dK), int(U.dV)}  # grads only
+    assert {
+        int(U.O), int(U.Stats), int(U.dO), int(U.Qt), int(U.Kt), int(U.dOf16), int(U.dOt),
+        int(U.DescaleQt), int(U.DescaleKt), int(U.DescaledOt),
+    } <= set(plan.input_uids)
+
+
 def test_stage6_fp8_plan_roles():
     """serialize_entry splits FP8 roles: amaxes are outputs, descales are inputs."""
     cudnn = _FakeCudnn()

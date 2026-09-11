@@ -4,24 +4,29 @@
 
 """FP8 fused-attention graph builders (cuDNN Python API).
 
-Port of ``create_graph_fp8_fwd`` in ``common/fused_attn/fused_attn_fp8.cu`` onto
-the cuDNN Python graph API (``graph.sdpa_fp8``). Like the F16 builders, tensors
+Port of ``create_graph_fp8_fwd`` / ``create_graph_fp8_bwd`` in
+``common/fused_attn/fused_attn_fp8.cu`` onto the cuDNN Python graph API
+(``graph.sdpa_fp8`` / ``graph.sdpa_fp8_backward``). Like the F16 builders, tensors
 are keyed by stable UID (:class:`FusedAttnUIDFP8`) so a serialized graph runs
 from a plain ``{uid: ptr}`` variant pack.
 
-Scope of this module: the **tensor-scaling** forward and backward paths --
-delayed scaling (FP8 grads/output, real scale tensors) and current scaling (F16
-grads/output, constant ``1.0`` scales), with the same masking / padding /
-THD-ragged / dropout structure as F16. FP8 carries the extra descale/scale
-inputs and the amax outputs (forward: amax_s/amax_o; backward: amax_dQ/dK/dV
-plus amax_dP for tensor scaling).
+Scope of this module -- both FP8 scaling families:
+
+* **Tensor scaling** -- delayed scaling (FP8 grads/output, real scale tensors)
+  and current scaling (F16 grads/output, constant ``1.0`` scales). Carries scalar
+  descale/scale inputs and the amax outputs (forward: amax_s/amax_o; backward:
+  amax_dQ/dK/dV + amax_dP).
+* **MXFP8** block scaling (``cfg.is_mxfp8``) -- FP8_E8M0 block-scale descales laid
+  out by QKV format via ``generateMatrixStridesWithFormat`` / ``pad_s_d_for_mxfp8``
+  (see ``strides.py``); backward also carries the transpose / f16 helper tensors
+  (Q_t, K_t, dO_t, dO_f16). The amaxes are computed but not surfaced (C++
+  ``set_output(!is_mxfp8)``): forward emits O/Stats, backward emits dQ/dK/dV only.
+
+All paths share the masking / padding / THD-ragged / dropout structure of F16.
 
 Deferred with a clear ``NotImplementedError`` (mirrors what the C++ builder
 supports but is out of scope here):
 
-* MXFP8 block scaling (``cfg.is_mxfp8``) -- needs the FP8_E8M0 block-scale
-  tensors + ``generateMatrixStridesWithFormat`` / ``pad_s_d_for_mxfp8`` port
-  (Stage 7).
 * post-scale bias / ALiBi (commented out in the C++ FP8 builder) and sink-token
   / learnable softmax (``cfg.is_softmax_offset``).
 
@@ -82,6 +87,14 @@ _ROLE_UID = {
     "AmaxdQ": _U.AmaxdQ,
     "AmaxdK": _U.AmaxdK,
     "AmaxdV": _U.AmaxdV,
+    # MXFP8 transpose / f16 helper tensors (backward-only)
+    "Qt": _U.Qt,
+    "Kt": _U.Kt,
+    "dOf16": _U.dOf16,
+    "dOt": _U.dOt,
+    "DescaleQt": _U.DescaleQt,
+    "DescaleKt": _U.DescaleKt,
+    "DescaledOt": _U.DescaledOt,
     # Sequence lengths / ragged offsets / dropout (shared)
     "seq_q": _U.SeqQ,
     "seq_kv": _U.SeqKV,
@@ -398,29 +411,40 @@ def build_fp8_bwd_graph(
     *,
     cudnn_version: Optional[int] = None,
 ) -> GraphEntry:
-    """Build the FP8 backward SDPA graph (tensor scaling). Mirrors ``create_graph_fp8_bwd``.
+    """Build the FP8 backward SDPA graph. Mirrors ``create_graph_fp8_bwd``.
 
-    Inputs: Q/K/V (FP8), O, dO, Stats, pass-by-value attn_scale, and the tensor
-    descales (Q/K/V/O/dO/S/dP) and scales (S). ``Descale_o`` is a baked-in 1.0
-    constant when current scaling keeps O in F16; the output scales
-    (Scale_dQ/dK/dV/dP) are real inputs for delayed scaling but constants for
-    current scaling. Outputs: dQ/dK/dV plus the amaxes (amax_dQ/dK/dV and, for
-    tensor scaling, amax_dP). Returns a :class:`GraphEntry` whose ``output_roles``
-    are declared explicitly (so the shared "O"/"Stats" names, inputs here, are
-    not mistaken for outputs at serialize time).
+    Two FP8 scaling modes:
+
+    * **Tensor scaling** -- Q/K/V (FP8), O, dO, Stats, attn_scale, scalar descales
+      (Q/K/V/O/dO/S/dP) and scales (S). ``Descale_o`` is a 1.0 constant when
+      current scaling keeps O in F16; the output scales (Scale_dQ/dK/dV/dP) are
+      real inputs for delayed scaling but 1.0 constants for current scaling.
+      Outputs dQ/dK/dV + amax_dQ/dK/dV + amax_dP.
+    * **MXFP8** -- additionally carries the transpose / f16 helpers (Q_t, K_t,
+      dO_t, dO_f16) and FP8_E8M0 block-scale descales (Q/Q_t/K/K_t/V/dO/dO_t) laid
+      out by QKV format. Outputs dQ/dK/dV only (amaxes computed but not surfaced,
+      mirroring the C++ ``set_output(!is_mxfp8)``); no amax_dP.
+
+    Returns a :class:`GraphEntry` whose ``output_roles`` are declared explicitly
+    (the shared "O"/"Stats" names are *inputs* here, not outputs).
     """
     cfg.check_derived()
     _reject_unsupported_fp8(cfg)
     if cudnn_version is None:
         cudnn_version = cudnn.backend_version()
 
+    is_mxfp8 = cfg.is_mxfp8
     qkv_dtype = _fp8_data_type(cudnn, cfg.qkv_dtype)
     o_dtype = _o_data_type(cudnn, cfg.o_dtype)
     do_dtype = _o_data_type(cudnn, cfg.do_dtype)
     dqkv_dtype = _o_data_type(cudnn, cfg.dqkv_dtype)
     b = int(cfg.graph_batch_size_bwd)
     h = int(cfg.num_attn_heads)
+    hg = int(cfg.num_gqa_groups)
     s_q = int(cfg.graph_max_seqlen_q)
+    s_kv = int(cfg.graph_max_seqlen_kv)
+    d_qk = int(cfg.head_dim_qk)
+    d_v = int(cfg.head_dim_v)
     ds = qkvo_dims_strides(cfg, batch_size=b)
     ragged_dtype = _ragged_dtype(cudnn, cfg.ragged_offset_type_bwd)
     is_delayed = cfg.is_delayed_scaling_bwd
@@ -474,54 +498,125 @@ def build_fp8_bwd_graph(
         is_pass_by_value=True,
     )
 
-    # Descales for inputs / softmax / dP; Descale_o is a 1.0 constant when current
-    # scaling keeps O in F16. Output scales are real inputs for delayed scaling
-    # but 1.0 constants for current scaling.
-    descale_q = _scalar(graph, "Descale_q", cudnn)
-    descale_k = _scalar(graph, "Descale_k", cudnn)
-    descale_v = _scalar(graph, "Descale_v", cudnn)
-    descale_s = _scalar(graph, "Descale_s", cudnn)
-    descale_dp = _scalar(graph, "Descale_dP", cudnn)
-    descale_do = _scalar(graph, "Descale_dO", cudnn)
-    scale_s = _scalar(graph, "Scale_s", cudnn)
-    scale_dp = _scalar(graph, "Scale_dP", cudnn)
-    o_in_f16 = cfg.is_o_in_f16
-    if is_current and o_in_f16:
-        descale_o = graph.tensor(1.0)
-    else:
-        descale_o = _scalar(graph, "Descale_O", cudnn)
-    if is_delayed:
-        scale_dq = _scalar(graph, "Scale_dQ", cudnn)
-        scale_dk = _scalar(graph, "Scale_dK", cudnn)
-        scale_dv = _scalar(graph, "Scale_dV", cudnn)
-    else:
-        scale_dq = graph.tensor(1.0)
-        scale_dk = graph.tensor(1.0)
-        scale_dv = graph.tensor(1.0)
+    tensors.update({"Q": q, "K": k, "V": v, "O": o, "dO": d_o, "stats": stats})
+    tensors["attn_scale"] = attn_scale
 
-    tensors.update(
-        {
-            "Q": q,
-            "K": k,
-            "V": v,
-            "O": o,
-            "dO": d_o,
-            "stats": stats,
-            "attn_scale": attn_scale,
-            "DescaleQ": descale_q,
-            "DescaleK": descale_k,
-            "DescaleV": descale_v,
-            "DescaleS": descale_s,
-            "DescaledP": descale_dp,
-            "DescaledO": descale_do,
-            "ScaleS": scale_s,
-            "ScaledP": scale_dp,
-        }
-    )
-    if not (is_current and o_in_f16):
-        tensors["DescaleO"] = descale_o
-    if is_delayed:
-        tensors.update({"ScaledQ": scale_dq, "ScaledK": scale_dk, "ScaledV": scale_dv})
+    if is_mxfp8:
+        # Transpose / f16 helpers (laid out by QKV format) and FP8_E8M0 block
+        # descales for Q/Q_t/K/K_t/V/dO/dO_t.
+        pad = pad_s_d_for_mxfp8(s_q, s_kv, d_qk, d_v)
+        q_fmt, kv_fmt = cfg.q_format, cfg.kv_format
+        # dO shares O's format; fall back to the query format when the framework
+        # left do_format unset (it normally populates it).
+        do_fmt = cfg.do_format
+        if _name(do_fmt) in ("", "NVTE_QKV_Format_NOT_SET"):
+            do_fmt = q_fmt
+        q_sfmt = _scale_inv_format(cfg, q_fmt)
+        kv_sfmt = _scale_inv_format(cfg, kv_fmt)
+        do_sfmt = cfg.do_scale_inv_format
+        if _name(do_sfmt) in ("", "NVTE_QKV_Format_NOT_SET"):
+            do_sfmt = do_fmt
+        fmt = generate_matrix_strides_with_format
+        q_t = graph.tensor(
+            name="Q_t", dim=[b, h, s_q, d_qk], stride=list(fmt(b, h, s_q, d_qk, q_fmt)),
+            data_type=qkv_dtype,
+        )
+        k_t = graph.tensor(
+            name="K_t", dim=[b, hg, s_kv, d_qk], stride=list(fmt(b, hg, s_kv, d_qk, kv_fmt)),
+            data_type=qkv_dtype,
+        )
+        d_o_t = graph.tensor(
+            name="dO_t", dim=[b, h, s_q, d_v], stride=list(fmt(b, h, s_q, d_v, do_fmt)),
+            data_type=do_dtype,
+        )
+        d_o_f16 = graph.tensor(
+            name="dO_f16", dim=[b, h, s_q, d_v], stride=list(fmt(b, h, s_q, d_v, do_fmt)),
+            data_type=o_dtype,
+        )
+        descale_q = _block_scale(
+            graph, cudnn, "Descale_q", [b, h, pad.s_q_padded, pad.d_qk_scale_padded],
+            fmt(b, h, pad.s_q_padded, pad.d_qk_scale_padded, q_sfmt),
+        )
+        descale_q_t = _block_scale(
+            graph, cudnn, "Descale_q_t", [b, h, pad.s_q_scale_padded, pad.d_qk_padded],
+            fmt(b, h, pad.s_q_scale_padded, pad.d_qk_padded, q_sfmt),
+        )
+        descale_k = _block_scale(
+            graph, cudnn, "Descale_k", [b, hg, pad.s_kv_padded, pad.d_qk_scale_padded],
+            fmt(b, hg, pad.s_kv_padded, pad.d_qk_scale_padded, kv_sfmt),
+        )
+        descale_k_t = _block_scale(
+            graph, cudnn, "Descale_k_t", [b, hg, pad.s_kv_scale_padded, pad.d_qk_padded],
+            fmt(b, hg, pad.s_kv_scale_padded, pad.d_qk_padded, kv_sfmt),
+        )
+        descale_v = _block_scale(
+            graph, cudnn, "Descale_v", [b, hg, pad.s_kv_padded, pad.d_v_scale_padded],
+            fmt(b, hg, pad.s_kv_padded, pad.d_v_scale_padded, kv_sfmt),
+        )
+        descale_do = _block_scale(
+            graph, cudnn, "Descale_dO", [b, h, pad.s_q_padded, pad.d_v_scale_padded],
+            fmt(b, h, pad.s_q_padded, pad.d_v_scale_padded, do_sfmt),
+        )
+        descale_do_t = _block_scale(
+            graph, cudnn, "Descale_dO_t", [b, h, pad.s_q_scale_padded, pad.d_v_padded],
+            fmt(b, h, pad.s_q_scale_padded, pad.d_v_padded, do_sfmt),
+        )
+        tensors.update(
+            {
+                "Qt": q_t,
+                "Kt": k_t,
+                "dOt": d_o_t,
+                "dOf16": d_o_f16,
+                "DescaleQ": descale_q,
+                "DescaleQt": descale_q_t,
+                "DescaleK": descale_k,
+                "DescaleKt": descale_k_t,
+                "DescaleV": descale_v,
+                "DescaledO": descale_do,
+                "DescaledOt": descale_do_t,
+            }
+        )
+    else:
+        # Scalar descales for inputs / softmax / dP; Descale_o is a 1.0 constant
+        # when current scaling keeps O in F16. Output scales are real inputs for
+        # delayed scaling but 1.0 constants for current scaling.
+        descale_q = _scalar(graph, "Descale_q", cudnn)
+        descale_k = _scalar(graph, "Descale_k", cudnn)
+        descale_v = _scalar(graph, "Descale_v", cudnn)
+        descale_s = _scalar(graph, "Descale_s", cudnn)
+        descale_dp = _scalar(graph, "Descale_dP", cudnn)
+        descale_do = _scalar(graph, "Descale_dO", cudnn)
+        scale_s = _scalar(graph, "Scale_s", cudnn)
+        scale_dp = _scalar(graph, "Scale_dP", cudnn)
+        o_in_f16 = cfg.is_o_in_f16
+        if is_current and o_in_f16:
+            descale_o = graph.tensor(1.0)
+        else:
+            descale_o = _scalar(graph, "Descale_O", cudnn)
+        if is_delayed:
+            scale_dq = _scalar(graph, "Scale_dQ", cudnn)
+            scale_dk = _scalar(graph, "Scale_dK", cudnn)
+            scale_dv = _scalar(graph, "Scale_dV", cudnn)
+        else:
+            scale_dq = graph.tensor(1.0)
+            scale_dk = graph.tensor(1.0)
+            scale_dv = graph.tensor(1.0)
+        tensors.update(
+            {
+                "DescaleQ": descale_q,
+                "DescaleK": descale_k,
+                "DescaleV": descale_v,
+                "DescaleS": descale_s,
+                "DescaledP": descale_dp,
+                "DescaledO": descale_do,
+                "ScaleS": scale_s,
+                "ScaledP": scale_dp,
+            }
+        )
+        if not (is_current and o_in_f16):
+            tensors["DescaleO"] = descale_o
+        if is_delayed:
+            tensors.update({"ScaledQ": scale_dq, "ScaledK": scale_dk, "ScaledV": scale_dv})
 
     masking = plan_f16_fwd_masking(cfg, cudnn_version)
     bwd_kwargs: Dict[str, Any] = {
@@ -561,12 +656,22 @@ def build_fp8_bwd_graph(
         tensors["dropout_seed"] = seed
         tensors["dropout_offset"] = offset
 
-    d_q, d_k, d_v, amax_dq, amax_dk, amax_dv, amax_dp = graph.sdpa_fp8_backward(
-        q, k, v, o, d_o, stats,
-        descale_q, descale_k, descale_v, descale_o, descale_do, descale_s, descale_dp,
-        scale_s, scale_dq, scale_dk, scale_dv, scale_dp,
-        **bwd_kwargs,
-    )
+    if is_mxfp8:
+        outputs = graph.sdpa_fp8_backward(
+            q, q_t, k, k_t, v, o, d_o_f16, d_o, d_o_t, stats,
+            descale_q, descale_q_t, descale_k, descale_k_t, descale_v, descale_do, descale_do_t,
+            **bwd_kwargs,
+        )
+        d_q, d_k, d_v = outputs[0], outputs[1], outputs[2]
+        amax_dq, amax_dk, amax_dv = outputs[3], outputs[4], outputs[5]
+        amax_dp = None
+    else:
+        d_q, d_k, d_v, amax_dq, amax_dk, amax_dv, amax_dp = graph.sdpa_fp8_backward(
+            q, k, v, o, d_o, stats,
+            descale_q, descale_k, descale_v, descale_o, descale_do, descale_s, descale_dp,
+            scale_s, scale_dq, scale_dk, scale_dv, scale_dp,
+            **bwd_kwargs,
+        )
 
     d_q.set_output(True).set_dim(list(ds["Q"][0])).set_stride(list(ds["Q"][1])).set_data_type(
         dqkv_dtype
@@ -583,24 +688,24 @@ def build_fp8_bwd_graph(
         d_k.set_ragged_offset(offset_k)
         d_v.set_ragged_offset(offset_v)
 
-    for amax in (amax_dq, amax_dk, amax_dv, amax_dp):
-        amax.set_output(True).set_dim([1, 1, 1, 1]).set_stride([1, 1, 1, 1]).set_data_type(
+    # amaxes are real outputs only for tensor scaling (C++ set_output(!is_mxfp8));
+    # amax_dP exists for tensor scaling only.
+    grad_amaxes = (amax_dq, amax_dk, amax_dv) if is_mxfp8 else (amax_dq, amax_dk, amax_dv, amax_dp)
+    for amax in grad_amaxes:
+        amax.set_output(not is_mxfp8).set_dim([1, 1, 1, 1]).set_stride([1, 1, 1, 1]).set_data_type(
             cudnn.data_type.FLOAT
         )
 
-    tensors.update(
-        {
-            "dQ": d_q,
-            "dK": d_k,
-            "dV": d_v,
-            "AmaxdQ": amax_dq,
-            "AmaxdK": amax_dk,
-            "AmaxdV": amax_dv,
-            "AmaxdP": amax_dp,
-        }
-    )
+    tensors.update({"dQ": d_q, "dK": d_k, "dV": d_v})
+    if is_mxfp8:
+        # Grad amaxes are computed but not surfaced for MXFP8 -> not bound / no UID.
+        output_roles = frozenset({"dQ", "dK", "dV"})
+    else:
+        tensors.update(
+            {"AmaxdQ": amax_dq, "AmaxdK": amax_dk, "AmaxdV": amax_dv, "AmaxdP": amax_dp}
+        )
+        output_roles = frozenset({"dQ", "dK", "dV", "AmaxdQ", "AmaxdK", "AmaxdV", "AmaxdP"})
 
-    output_roles = frozenset({"dQ", "dK", "dV", "AmaxdQ", "AmaxdK", "AmaxdV", "AmaxdP"})
     uids = _assign_uids(tensors)
     _finalize(cudnn, graph)
     ws = max(graph.get_workspace_size(), 1)
