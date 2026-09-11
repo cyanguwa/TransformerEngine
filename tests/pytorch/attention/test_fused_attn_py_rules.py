@@ -680,6 +680,41 @@ def test_build_plan_fwd_and_bwd():
     assert int(U.AttnScale) not in fwd.input_uids
 
 
+class _FakeParams:
+    """A duck-typed stand-in for JAX FusedAttnParams / PyTorch FusedAttentionParams."""
+
+    def __init__(self, **kw):
+        for name, value in kw.items():
+            setattr(self, name, value)
+
+
+def test_config_from_params_duck_typed():
+    """FusedAttnConfig.from_params copies same-named fields; overrides win."""
+    rt = _fake_runtime()
+    params = _FakeParams(
+        qkv_layout="NVTE_BSHD_BSHD_BSHD",
+        batch_size=4,
+        num_attn_heads=8,
+        num_gqa_groups=8,
+        head_dim_qk=64,
+        head_dim_v=64,
+        max_seqlen_q=128,
+        max_seqlen_kv=128,
+        qkv_dtype="kNVTEBFloat16",
+        o_dtype="kNVTEBFloat16",
+        attn_mask_type="NVTE_CAUSAL_MASK",
+        # An attribute the config does not have must be ignored, not crash.
+        cp_axis="dp",
+    )
+    cfg = config.FusedAttnConfig.from_params(params, num_pages_k=16)
+    assert cfg.batch_size == 4 and cfg.head_dim_qk == 64
+    assert cfg.num_pages_k == 16  # override wins over (absent) params attr
+    assert cfg.max_seqlen_kv == 128 and cfg.dropout == 0.0  # untouched default
+    # Enums normalize by name at derive() time, so a bare NVTE string works.
+    derived = cfg.derive(rt)
+    assert derived.is_causal and derived.is_derived
+
+
 probe_mod = importlib.import_module("transformer_engine.common.fused_attn_py.probe")
 
 

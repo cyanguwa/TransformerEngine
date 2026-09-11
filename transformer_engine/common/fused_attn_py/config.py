@@ -32,7 +32,7 @@ itself live with the Python graph builders (stages 2+).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Optional, Tuple
 
@@ -457,6 +457,29 @@ class FusedAttnConfig:
     # bottom_right_diagonal is an input but derive() may flip it, so track it.
 
     # ------------------------------------------------------------------
+    @classmethod
+    def from_params(cls, params: object, **overrides) -> "FusedAttnConfig":
+        """Build an (underived) config from any object exposing the same fields.
+
+        Duck-typed and framework-neutral: for each *input* field of this config
+        (the ones that mirror the C++ ``FusedAttnConfig`` struct), copy the
+        same-named attribute off ``params`` if present, else keep the default.
+        ``overrides`` win over ``params`` (e.g. paged-KV dims a framework's param
+        object does not carry). Enum/dtype values are normalized by name at
+        ``derive()`` time, so passing framework ``NVTE_*`` enums or bare strings
+        both work. This is how the PyTorch ``FusedAttentionParams`` and the JAX
+        ``FusedAttnParams`` (both C++-struct mirrors) feed the neutral core.
+        """
+        kwargs = {}
+        for f in fields(cls):
+            if not f.init:
+                continue
+            if f.name in overrides:
+                kwargs[f.name] = overrides[f.name]
+            elif hasattr(params, f.name):
+                kwargs[f.name] = getattr(params, f.name)
+        return cls(**kwargs)
+
     def derive(self, runtime: RuntimeInfo) -> "FusedAttnConfig":
         """Port of ``FusedAttnConfig::derive()`` (config_and_params.cpp)."""
         if self.is_derived:
