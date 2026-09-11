@@ -33,11 +33,18 @@ import numpy as np
 
 from transformer_engine.common.fused_attn_py import Plan, build_plan
 from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass, RuntimeInfo
-from transformer_engine.common.fused_attn_py.serialize import ordered_input_operands
+from transformer_engine.common.fused_attn_py.serialize import (
+    ordered_input_operands,
+    plan_output_roles,
+)
 
-# The C++ FFI handler symbols registered in jax/csrc/extensions/pybind.cpp.
+# The C++ FFI handler symbols registered in jax/csrc/extensions/pybind.cpp. The
+# F16/BF16 path reuses the fixed-arity score_mod handlers; the FP8 path uses the
+# variadic-result handlers so it can carry the extra amax outputs.
 _FWD_FFI = "te_fused_attn_score_mod_forward_ffi"
 _BWD_FFI = "te_fused_attn_score_mod_backward_ffi"
+_FP8_FWD_FFI = "te_fused_attn_fp8_forward_ffi"
+_FP8_BWD_FFI = "te_fused_attn_fp8_backward_ffi"
 
 
 def fused_attn_py_enabled() -> bool:
@@ -198,6 +205,113 @@ def fused_attn_blob_bwd(
     return dq, dk, dv
 
 
+def _fp8_result_shapes(plan: Plan, shape_by_role: Dict[str, Any]) -> Tuple[list, list]:
+    """Ordered (ascending output-UID) result ``ShapeDtypeStruct``s for an FP8 plan.
+
+    Non-amax outputs (O/Stats or dQ/dK/dV) take their shape from ``shape_by_role``;
+    amax outputs are scalar ``(1,)`` float32. Returns ``(ordered_shapes, roles)``
+    where ``roles[i]`` names ``ordered_shapes[i]`` so the caller can map the FFI
+    result tuple back to a role-keyed dict. The order matches
+    :func:`plan_output_roles`, which is what the C++ handler zips against.
+    """
+    import jax
+    import jax.numpy as jnp
+
+    ordered = []
+    roles = []
+    for role, is_amax in plan_output_roles(plan):
+        if is_amax:
+            ordered.append(jax.ShapeDtypeStruct((1,), jnp.float32))
+        elif role in shape_by_role:
+            ordered.append(shape_by_role[role])
+        else:
+            raise ValueError(f"fused_attn_blob_fp8: missing output shape for role '{role}'.")
+        roles.append(role)
+    return ordered, roles
+
+
+def fused_attn_blob_fp8_fwd(
+    cfg: FusedAttnConfig,
+    buffers: Dict[str, Any],
+    shape_by_role: Dict[str, Any],
+    *,
+    attn_scale: float,
+    cudnn_version: int | None = None,
+    cudnn_frontend_version: int | None = None,
+) -> Dict[str, Any]:
+    """Lower an FP8/MXFP8 forward through the variadic-result blob FFI.
+
+    ``buffers`` maps input role names (``"Q"``/``"K"``/``"V"`` plus the FP8
+    descale/scale tensors and any seq/offset/dropout roles the graph declares) to
+    JAX arrays; ``shape_by_role`` supplies the non-amax output shapes as
+    ``jax.ShapeDtypeStruct``s (``{"O": ..., "Stats": ...}``). Returns a role-keyed
+    dict of outputs -- ``O``, ``Stats`` and, for tensor scaling, the surfaced
+    amaxes (MXFP8 surfaces none). The result ordering complexity (amaxes interleave
+    with O/Stats by UID) is handled by :func:`plan_output_roles`.
+    """
+    import jax
+    import jax.numpy as jnp
+    from jax import ffi
+
+    cfg.check_derived()
+    cudnn = _import_cudnn()
+    plan = build_plan(
+        cudnn,
+        cfg,
+        Pass.Fwd,
+        attn_scale=attn_scale,
+        cudnn_version=cudnn_version,
+        cudnn_frontend_version=cudnn_frontend_version,
+    )
+    operands = ordered_input_operands(plan, buffers)
+    result_shapes, roles = _fp8_result_shapes(plan, shape_by_role)
+    workspace = jax.ShapeDtypeStruct((plan.workspace_size,), jnp.uint8)
+    results = ffi.ffi_call(_FP8_FWD_FFI, (*result_shapes, workspace))(
+        *operands, **plan_ffi_attrs(plan)
+    )
+    return dict(zip(roles, results[:-1]))
+
+
+def fused_attn_blob_fp8_bwd(
+    cfg: FusedAttnConfig,
+    buffers: Dict[str, Any],
+    shape_by_role: Dict[str, Any],
+    *,
+    attn_scale: float,
+    cudnn_version: int | None = None,
+    cudnn_frontend_version: int | None = None,
+) -> Dict[str, Any]:
+    """Lower an FP8/MXFP8 backward through the variadic-result blob FFI.
+
+    ``buffers`` must include the backward inputs (``"Q"``/``"K"``/``"V"``/``"O"``/
+    ``"dO"``/``"stats"`` plus the FP8 descale/scale tensors, MXFP8 transpose/f16
+    helpers, and any seq/offset/dropout roles). ``shape_by_role`` supplies the grad
+    shapes (``{"dQ": ..., "dK": ..., "dV": ...}``). Returns a role-keyed dict of
+    ``dQ``/``dK``/``dV`` plus, for tensor scaling, the surfaced grad amaxes.
+    """
+    import jax
+    import jax.numpy as jnp
+    from jax import ffi
+
+    cfg.check_derived()
+    cudnn = _import_cudnn()
+    plan = build_plan(
+        cudnn,
+        cfg,
+        Pass.Bwd,
+        attn_scale=attn_scale,
+        cudnn_version=cudnn_version,
+        cudnn_frontend_version=cudnn_frontend_version,
+    )
+    operands = ordered_input_operands(plan, buffers)
+    result_shapes, roles = _fp8_result_shapes(plan, shape_by_role)
+    workspace = jax.ShapeDtypeStruct((plan.workspace_size,), jnp.uint8)
+    results = ffi.ffi_call(_FP8_BWD_FFI, (*result_shapes, workspace))(
+        *operands, **plan_ffi_attrs(plan)
+    )
+    return dict(zip(roles, results[:-1]))
+
+
 __all__ = [
     "fused_attn_py_enabled",
     "make_runtime_info",
@@ -206,4 +320,6 @@ __all__ = [
     "ordered_input_operands",
     "fused_attn_blob_fwd",
     "fused_attn_blob_bwd",
+    "fused_attn_blob_fp8_fwd",
+    "fused_attn_blob_fp8_bwd",
 ]

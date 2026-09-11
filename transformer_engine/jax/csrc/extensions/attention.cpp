@@ -1098,6 +1098,29 @@ void AppendRemainingBuffers(Variadic_Buffer_Type args, std::vector<void *> *ptrs
   }
 }
 
+// Split a variadic result list into graph output pointers and the trailing
+// workspace pointer. The FP8 serialized-graph handlers use RemainingRets so a
+// single handler can emit any number of graph outputs (O/Stats/dQ/dK/dV plus a
+// variable set of amax scalars) followed by the workspace; the last result is
+// always the workspace. The graph outputs are zipped positionally against the
+// ascending-sorted output_uids by ExecuteScoreModGraph, so the Python lowering
+// must emit result buffers in ascending-output-uid order, workspace last.
+void SplitSerializedGraphRets(Variadic_Result_Type rets, std::vector<void *> *output_ptrs,
+                              void **workspace) {
+  NVTE_CHECK(rets.size() >= 1,
+             "Serialized-graph FP8 FFI expects at least a workspace result buffer.");
+  const size_t n_out = rets.size() - 1;
+  output_ptrs->reserve(n_out);
+  for (size_t i = 0; i < n_out; ++i) {
+    auto maybe = rets.get<Result_Type>(i);
+    NVTE_CHECK(!maybe.has_error(), "Failed to decode FP8 serialized-graph output buffer.");
+    output_ptrs->push_back(maybe.value()->untyped_data());
+  }
+  auto ws = rets.get<Result_Type>(rets.size() - 1);
+  NVTE_CHECK(!ws.has_error(), "Failed to decode FP8 serialized-graph workspace buffer.");
+  *workspace = ws.value()->untyped_data();
+}
+
 }  // namespace
 
 Error_Type FusedAttnScoreModForwardFFI(cudaStream_t stream, Buffer_Type q_buf, Buffer_Type k_buf,
@@ -1156,6 +1179,66 @@ XLA_FFI_DEFINE_HANDLER_SYMBOL(FusedAttnScoreModBackwardHandler, FusedAttnScoreMo
                                   .Ret<Buffer_Type>()      // dk
                                   .Ret<Buffer_Type>()      // dv
                                   .Ret<Buffer_Type>()      // workspace
+                                  .Attrs());
+
+// FP8 serialized-graph handlers. These share the generic ExecuteScoreModGraph
+// executor with the F16 score_mod handlers but use RemainingRets, because FP8
+// graphs emit a variable number of amax outputs the fixed-arity F16 handlers
+// cannot carry (tensor scaling: forward O/Stats + amax_o/amax_s; backward
+// dQ/dK/dV + amax_dQ/dK/dV + amax_dP; MXFP8 surfaces no amaxes). Q/K/V (and, for
+// backward, O/dO/Stats) are the leading fixed operands; every other descale /
+// scale / offset / seq / dropout operand flows through RemainingArgs in
+// ascending-UID order, exactly like the F16 handlers.
+Error_Type FusedAttnFp8ForwardFFI(cudaStream_t stream, Buffer_Type q_buf, Buffer_Type k_buf,
+                                  Buffer_Type v_buf, Variadic_Buffer_Type fp8_args,
+                                  Variadic_Result_Type rets, Dictionary attrs) {
+  std::vector<void *> input_ptrs = {q_buf.untyped_data(), k_buf.untyped_data(),
+                                    v_buf.untyped_data()};
+  AppendRemainingBuffers(fp8_args, &input_ptrs);
+
+  std::vector<void *> output_ptrs;
+  void *workspace = nullptr;
+  SplitSerializedGraphRets(rets, &output_ptrs, &workspace);
+  return ExecuteScoreModGraph(stream, attrs, input_ptrs, output_ptrs, workspace);
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(FusedAttnFp8ForwardHandler, FusedAttnFp8ForwardFFI,
+                              FFI::Bind()
+                                  .Ctx<FFI_Stream_Type>()  // stream
+                                  .Arg<Buffer_Type>()      // q
+                                  .Arg<Buffer_Type>()      // k
+                                  .Arg<Buffer_Type>()      // v
+                                  .RemainingArgs()         // fp8 descale/scale/seq/offset operands
+                                  .RemainingRets()         // O, Stats, amax..., workspace (last)
+                                  .Attrs());
+
+Error_Type FusedAttnFp8BackwardFFI(cudaStream_t stream, Buffer_Type q_buf, Buffer_Type k_buf,
+                                   Buffer_Type v_buf, Buffer_Type output_buf,
+                                   Buffer_Type doutput_buf, Buffer_Type stats_buf,
+                                   Variadic_Buffer_Type fp8_args, Variadic_Result_Type rets,
+                                   Dictionary attrs) {
+  std::vector<void *> input_ptrs = {q_buf.untyped_data(),       k_buf.untyped_data(),
+                                    v_buf.untyped_data(),       output_buf.untyped_data(),
+                                    doutput_buf.untyped_data(), stats_buf.untyped_data()};
+  AppendRemainingBuffers(fp8_args, &input_ptrs);
+
+  std::vector<void *> output_ptrs;
+  void *workspace = nullptr;
+  SplitSerializedGraphRets(rets, &output_ptrs, &workspace);
+  return ExecuteScoreModGraph(stream, attrs, input_ptrs, output_ptrs, workspace);
+}
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(FusedAttnFp8BackwardHandler, FusedAttnFp8BackwardFFI,
+                              FFI::Bind()
+                                  .Ctx<FFI_Stream_Type>()  // stream
+                                  .Arg<Buffer_Type>()      // q
+                                  .Arg<Buffer_Type>()      // k
+                                  .Arg<Buffer_Type>()      // v
+                                  .Arg<Buffer_Type>()      // output
+                                  .Arg<Buffer_Type>()      // doutput
+                                  .Arg<Buffer_Type>()      // stats
+                                  .RemainingArgs()         // fp8 descale/scale/seq/offset operands
+                                  .RemainingRets()         // dQ, dK, dV, amax..., workspace (last)
                                   .Attrs());
 
 }  // namespace jax

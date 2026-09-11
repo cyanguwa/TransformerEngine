@@ -759,6 +759,43 @@ def test_stage7_mxfp8_fwd_builder():
     assert {int(U.DescaleQ), int(U.DescaleK), int(U.DescaleV)} <= set(plan.input_uids)
 
 
+def test_fp8_plan_output_roles_ordering():
+    """plan_output_roles lists outputs in ascending-UID order, flagging amax scalars.
+
+    This is the ordering the C++ FP8 FFI handlers (SplitSerializedGraphRets) zip
+    result buffers against, so the framework bridges must emit result shapes in
+    exactly this order. amax_dP (UID 27) must sort before amax_dQ (UID 28).
+    """
+    cudnn = _FakeCudnn()
+    por = serialize_mod.plan_output_roles
+    # Tensor scaling: amaxes interleave by UID after O/Stats and dQ/dK/dV.
+    pf = serialize_mod.build_plan(
+        cudnn, _fp8_cfg(_rt(12800)), config.Pass.Fwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert por(pf) == [("O", False), ("Stats", False), ("AmaxO", True), ("AmaxS", True)]
+    pb = serialize_mod.build_plan(
+        cudnn, _fp8_cfg(_rt(12800)), config.Pass.Bwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert por(pb) == [
+        ("dQ", False),
+        ("dK", False),
+        ("dV", False),
+        ("AmaxdP", True),
+        ("AmaxdQ", True),
+        ("AmaxdK", True),
+        ("AmaxdV", True),
+    ]
+    # MXFP8 surfaces no amaxes.
+    mf = serialize_mod.build_plan(
+        cudnn, _mxfp8_cfg(_rt(12800)), config.Pass.Fwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert por(mf) == [("O", False), ("Stats", False)]
+    mb = serialize_mod.build_plan(
+        cudnn, _mxfp8_cfg(_rt(12800)), config.Pass.Bwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert por(mb) == [("dQ", False), ("dK", False), ("dV", False)]
+
+
 def test_stage7_mxfp8_bwd_builder():
     """MXFP8 backward: transpose/f16 helpers + block descales in, only dQ/dK/dV out."""
     cudnn = _FakeCudnn()

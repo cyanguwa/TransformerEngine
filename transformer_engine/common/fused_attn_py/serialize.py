@@ -56,6 +56,11 @@ _OUTPUT_ROLES = frozenset(
 # packed rows), never in input_uids. Mirrors the score_mod scalar mechanism.
 _SCALAR_ROLES = frozenset({"attn_scale"})
 
+# FP8 amax outputs are scalar ``(1,)`` float32; every other output carries a real
+# tensor shape. Used by the framework bridges to size the variadic FP8 result
+# list (see :func:`plan_output_roles`).
+_AMAX_ROLES = frozenset({"AmaxS", "AmaxO", "AmaxdP", "AmaxdQ", "AmaxdK", "AmaxdV"})
+
 # cuDNN caps a pass-by-value scalar at 16 bytes (one packed row).
 _SCALAR_ROW_BYTES = 16
 
@@ -216,6 +221,21 @@ def ordered_input_operands(plan: "Plan", buffers: Dict[str, Any]) -> List[Any]:
     return operands
 
 
+def plan_output_roles(plan: "Plan") -> List[Tuple[str, bool]]:
+    """Return ``[(role, is_amax_scalar), ...]`` in ``plan.output_uids`` (ascending) order.
+
+    The serialized-graph executor zips result buffers positionally against the
+    ascending ``output_uids``, so a framework bridge must emit its result shapes in
+    exactly this order -- amax scalars interleave with O/Stats/dQ/dK/dV by UID
+    (e.g. ``AmaxdP=27`` sorts *before* ``AmaxdQ=28``). ``is_amax_scalar`` marks the
+    scalar ``(1,)`` float32 amax outputs; every other output takes its real tensor
+    shape from the caller. F16 plans simply return ``[("O", False), ("Stats", False)]``
+    (forward) or the three grads (backward), so this is safe for both paths.
+    """
+    uid_to_role = {uid: role for role, uid in plan.role_uids.items()}
+    return [(uid_to_role[uid], uid_to_role[uid] in _AMAX_ROLES) for uid in plan.output_uids]
+
+
 def build_plan(
     cudnn: Any,
     cfg: FusedAttnConfig,
@@ -264,6 +284,7 @@ __all__ = [
     "serialize_entry",
     "build_plan",
     "ordered_input_operands",
+    "plan_output_roles",
     "encode_cudnn_frontend_version",
     "graph_hash",
     "pack_scalar_f32",
