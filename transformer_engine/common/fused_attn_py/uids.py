@@ -124,6 +124,10 @@ class FusedAttnUIDFP8(IntEnum):
     # Learnable softmax offset (sink attention)
     SoftmaxOffset = 47
     dSoftmaxOffset = 48
+    # Host scalar (attention scale), passed through the variant pack. Unlike the
+    # C++ path (which keys attn_scale by shared_ptr), the Python builder binds it
+    # by UID, so the FP8 graph needs one too.
+    AttnScale = 49
 
 
 __all__ = ["FusedAttnUIDF16", "FusedAttnUIDFP8"]
