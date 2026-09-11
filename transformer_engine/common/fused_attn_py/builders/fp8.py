@@ -36,8 +36,13 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from ..cache import GraphEntry
-from ..config import FusedAttnConfig, _canonical_dtype
-from ..strides import qkvo_dims_strides, ragged_offset_multipliers
+from ..config import FusedAttnConfig, _canonical_dtype, _name
+from ..strides import (
+    generate_matrix_strides_with_format,
+    pad_s_d_for_mxfp8,
+    qkvo_dims_strides,
+    ragged_offset_multipliers,
+)
 from ..uids import FusedAttnUIDFP8 as _U
 from .f16 import _finalize, _offset_tensor, _ragged_dtype, plan_f16_fwd_masking
 
@@ -131,13 +136,26 @@ def _scalar(graph, name: str, cudnn) -> Any:
     )
 
 
+def _block_scale(graph, cudnn, name: str, dim, stride) -> Any:
+    """An MXFP8 block-scale tensor: FP8_E8M0 with F8_128x4 reordering."""
+    return graph.tensor(
+        name=name,
+        dim=list(dim),
+        stride=list(stride),
+        data_type=cudnn.data_type.FP8_E8M0,
+        reordering_type=cudnn.tensor_reordering.F8_128x4,
+    )
+
+
+def _scale_inv_format(cfg: FusedAttnConfig, fallback):
+    """qkv_scale_inv_format when set, else the given q/kv format (matches C++)."""
+    if _name(cfg.qkv_scale_inv_format) in ("", "NVTE_QKV_Format_NOT_SET"):
+        return fallback
+    return cfg.qkv_scale_inv_format
+
+
 def _reject_unsupported_fp8(cfg: FusedAttnConfig) -> None:
-    if cfg.is_mxfp8:
-        raise NotImplementedError(
-            "fused_attn_py FP8 builder: MXFP8 block scaling is deferred to Stage 7 "
-            "(needs the FP8_E8M0 block-scale tensors + format-stride/padding port)."
-        )
-    if not cfg.is_tensor_scaling:
+    if not (cfg.is_tensor_scaling or cfg.is_mxfp8):
         raise NotImplementedError(
             "fused_attn_py FP8 builder: only delayed/current tensor scaling and MXFP8 are "
             "FP8 scaling modes; got a config that is neither."
@@ -164,24 +182,35 @@ def build_fp8_fwd_graph(
     *,
     cudnn_version: Optional[int] = None,
 ) -> GraphEntry:
-    """Build the FP8 forward SDPA graph (tensor scaling). Mirrors ``create_graph_fp8_fwd``.
+    """Build the FP8 forward SDPA graph. Mirrors ``create_graph_fp8_fwd``.
 
-    Inputs: Q/K/V (FP8), Descale_q/k/v/s, Scale_s, Scale_o (delayed scaling only;
-    current scaling uses a constant 1.0), pass-by-value attn_scale, plus optional
-    padding seq lengths, THD ragged offsets, and dropout RNG state. Outputs:
-    O (FP8 for delayed, F16 for current), Stats, Amax_s, Amax_o. Dims/strides come
-    from ``cfg`` via ``strides.qkvo_dims_strides``. Returns a :class:`GraphEntry`.
+    Two FP8 scaling modes:
+
+    * **Tensor scaling** -- Q/K/V (FP8) + scalar Descale_q/k/v/s, Scale_s, Scale_o
+      (a real input for delayed scaling / FP8 output; a baked-in 1.0 constant for
+      current scaling / F16 output); outputs O, Stats, Amax_s, Amax_o.
+    * **MXFP8** (block scaling) -- Q/K/V (FP8) + FP8_E8M0 block-scale Descale_q/k/v
+      laid out by QKV format; outputs O and Stats only (the amax is computed but
+      not surfaced, matching the C++ ``set_output(!is_mxfp8)``).
+
+    Both share the pass-by-value attn_scale and the padding / THD-ragged / dropout
+    machinery. Returns a :class:`GraphEntry`.
     """
     cfg.check_derived()
     _reject_unsupported_fp8(cfg)
     if cudnn_version is None:
         cudnn_version = cudnn.backend_version()
 
+    is_mxfp8 = cfg.is_mxfp8
     qkv_dtype = _fp8_data_type(cudnn, cfg.qkv_dtype)
     o_dtype = _o_data_type(cudnn, cfg.o_dtype)
     b = int(cfg.graph_batch_size_fwd)
     h = int(cfg.num_attn_heads)
+    hg = int(cfg.num_gqa_groups)
     s_q = int(cfg.graph_max_seqlen_q)
+    s_kv = int(cfg.graph_max_seqlen_kv)
+    d_qk = int(cfg.head_dim_qk)
+    d_v = int(cfg.head_dim_v)
     ds = qkvo_dims_strides(cfg)
     ragged_dtype = _ragged_dtype(cudnn, cfg.ragged_offset_type_fwd)
     mults = ragged_offset_multipliers(cfg)
@@ -226,31 +255,50 @@ def build_fp8_fwd_graph(
         is_pass_by_value=True,
     )
 
-    # Descales for the inputs and the softmax numerator; scale for S. Scale_o is a
-    # real input for delayed scaling (FP8 output) but a baked-in 1.0 constant for
-    # current scaling (F16 output).
-    descale_q = _scalar(graph, "Descale_q", cudnn)
-    descale_k = _scalar(graph, "Descale_k", cudnn)
-    descale_v = _scalar(graph, "Descale_v", cudnn)
-    descale_s = _scalar(graph, "Descale_s", cudnn)
-    scale_s = _scalar(graph, "Scale_s", cudnn)
-    scale_o = _scalar(graph, "Scale_o", cudnn) if is_delayed else graph.tensor(1.0)
-
-    tensors.update(
-        {
-            "Q": q,
-            "K": k,
-            "V": v,
-            "attn_scale": attn_scale,
-            "DescaleQ": descale_q,
-            "DescaleK": descale_k,
-            "DescaleV": descale_v,
-            "DescaleS": descale_s,
-            "ScaleS": scale_s,
-        }
-    )
-    if is_delayed:
-        tensors["ScaleO"] = scale_o
+    tensors.update({"Q": q, "K": k, "V": v, "attn_scale": attn_scale})
+    if is_mxfp8:
+        # Block-scale descales (FP8_E8M0), laid out by QKV format and MXFP8 padding.
+        pad = pad_s_d_for_mxfp8(s_q, s_kv, d_qk, d_v)
+        q_fmt = _scale_inv_format(cfg, cfg.q_format)
+        kv_fmt = _scale_inv_format(cfg, cfg.kv_format)
+        descale_q = _block_scale(
+            graph, cudnn, "Descale_q", [b, h, pad.s_q_padded, pad.d_qk_scale_padded],
+            generate_matrix_strides_with_format(b, h, pad.s_q_padded, pad.d_qk_scale_padded, q_fmt),
+        )
+        descale_k = _block_scale(
+            graph, cudnn, "Descale_k", [b, hg, pad.s_kv_padded, pad.d_qk_scale_padded],
+            generate_matrix_strides_with_format(
+                b, hg, pad.s_kv_padded, pad.d_qk_scale_padded, kv_fmt
+            ),
+        )
+        descale_v = _block_scale(
+            graph, cudnn, "Descale_v", [b, hg, pad.s_kv_scale_padded, pad.d_v_padded],
+            generate_matrix_strides_with_format(
+                b, hg, pad.s_kv_scale_padded, pad.d_v_padded, kv_fmt
+            ),
+        )
+        tensors.update({"DescaleQ": descale_q, "DescaleK": descale_k, "DescaleV": descale_v})
+    else:
+        # Scalar descales for the inputs and softmax numerator; scale for S. Scale_o
+        # is a real input for delayed scaling (FP8 output) but a 1.0 constant for
+        # current scaling (F16 output).
+        descale_q = _scalar(graph, "Descale_q", cudnn)
+        descale_k = _scalar(graph, "Descale_k", cudnn)
+        descale_v = _scalar(graph, "Descale_v", cudnn)
+        descale_s = _scalar(graph, "Descale_s", cudnn)
+        scale_s = _scalar(graph, "Scale_s", cudnn)
+        scale_o = _scalar(graph, "Scale_o", cudnn) if is_delayed else graph.tensor(1.0)
+        tensors.update(
+            {
+                "DescaleQ": descale_q,
+                "DescaleK": descale_k,
+                "DescaleV": descale_v,
+                "DescaleS": descale_s,
+                "ScaleS": scale_s,
+            }
+        )
+        if is_delayed:
+            tensors["ScaleO"] = scale_o
 
     masking = plan_f16_fwd_masking(cfg, cudnn_version)
     sdpa_kwargs: Dict[str, Any] = {
@@ -296,9 +344,14 @@ def build_fp8_fwd_graph(
         tensors["dropout_seed"] = seed
         tensors["dropout_offset"] = offset
 
-    o, stats, amax_s, amax_o = graph.sdpa_fp8(
-        q, k, v, descale_q, descale_k, descale_v, descale_s, scale_s, scale_o, **sdpa_kwargs
-    )
+    if is_mxfp8:
+        outputs = graph.sdpa_fp8(q, k, v, descale_q, descale_k, descale_v, **sdpa_kwargs)
+        o, stats, amax_o = outputs[0], outputs[1], outputs[2]
+        amax_s = None
+    else:
+        o, stats, amax_s, amax_o = graph.sdpa_fp8(
+            q, k, v, descale_q, descale_k, descale_v, descale_s, scale_s, scale_o, **sdpa_kwargs
+        )
 
     o.set_output(True).set_dim(list(ds["O"][0])).set_stride(list(ds["O"][1])).set_data_type(o_dtype)
     if cfg.is_ragged_q:
@@ -308,12 +361,15 @@ def build_fp8_fwd_graph(
             o.set_ragged_offset_multiplier(mults.o)
         tensors["offset_o"] = offset_o
 
-    amax_s.set_output(True).set_dim([1, 1, 1, 1]).set_stride([1, 1, 1, 1]).set_data_type(
+    # amax_o is a real output only for tensor scaling (C++ set_output(!is_mxfp8));
+    # amax_s exists for tensor scaling only.
+    amax_o.set_output(not is_mxfp8).set_dim([1, 1, 1, 1]).set_stride([1, 1, 1, 1]).set_data_type(
         cudnn.data_type.FLOAT
     )
-    amax_o.set_output(True).set_dim([1, 1, 1, 1]).set_stride([1, 1, 1, 1]).set_data_type(
-        cudnn.data_type.FLOAT
-    )
+    if not is_mxfp8:
+        amax_s.set_output(True).set_dim([1, 1, 1, 1]).set_stride([1, 1, 1, 1]).set_data_type(
+            cudnn.data_type.FLOAT
+        )
 
     stats.set_output(True).set_data_type(cudnn.data_type.FLOAT).set_dim([b, h, s_q, 1])
     if cfg.uses_ragged_stats:
@@ -325,7 +381,9 @@ def build_fp8_fwd_graph(
     else:
         stats.set_stride([h * s_q, s_q, 1, 1])
 
-    tensors.update({"O": o, "Stats": stats, "AmaxS": amax_s, "AmaxO": amax_o})
+    tensors.update({"O": o, "Stats": stats})
+    if not is_mxfp8:
+        tensors.update({"AmaxS": amax_s, "AmaxO": amax_o})
 
     uids = _assign_uids(tensors)
     _finalize(cudnn, graph)

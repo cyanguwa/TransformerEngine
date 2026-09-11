@@ -218,6 +218,10 @@ def generate_matrix_strides_with_format(b: int, h: int, s: int, d: int, fmt: obj
     a layout. Returns the ``(b, h, s, d)`` stride tuple.
     """
     name = _name(fmt)
+    # Accept both the neutral QKVFormat (member name "BSHD") and a framework
+    # NVTE_QKV_Format enum / string (name "NVTE_BSHD").
+    if name.startswith("NVTE_"):
+        name = name[len("NVTE_") :]
     if name in ("BSHD", "THD"):
         return (s * h * d, d, h * d, 1)
     if name == "SBHD":

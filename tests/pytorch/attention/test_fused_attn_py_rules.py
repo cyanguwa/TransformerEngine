@@ -402,6 +402,9 @@ class _FakeCudnn:
         COMPOSITE = "COMPOSITE"
         UNIFIED = "UNIFIED"
 
+    class tensor_reordering:  # noqa: N801
+        F8_128x4 = "F8_128x4"
+
     def __init__(self):
         self.g = None
 
@@ -716,6 +719,44 @@ def test_stage6_fp8_bwd_builder():
     assert {int(U.dQ), int(U.dK), int(U.dV), int(U.AmaxdP)} <= set(plan.output_uids)
     assert {int(U.O), int(U.Stats), int(U.dO)} <= set(plan.input_uids)
     assert int(U.O) not in plan.output_uids
+
+
+def _mxfp8_cfg(rt, **over):
+    base = dict(
+        qkv_layout="NVTE_BSHD_BSHD_BSHD",
+        batch_size=2,
+        num_attn_heads=8,
+        num_gqa_groups=8,
+        head_dim_qk=64,
+        head_dim_v=64,
+        max_seqlen_q=128,
+        max_seqlen_kv=128,
+        qkv_dtype="kNVTEFloat8E4M3",
+        o_dtype="kNVTEBFloat16",
+        do_dtype="kNVTEBFloat16",
+        dqkv_dtype="kNVTEBFloat16",
+        scaling_mode="NVTE_MXFP8_1D_SCALING",
+    )
+    base.update(over)
+    return config.FusedAttnConfig(**base).derive(rt)
+
+
+def test_stage7_mxfp8_fwd_builder():
+    """MXFP8 forward: FP8_E8M0 block descales in, O/Stats out, amax not surfaced."""
+    cudnn = _FakeCudnn()
+    U = uids_mod.FusedAttnUIDFP8
+    c = _mxfp8_cfg(_rt(12800))
+    assert c.is_mxfp8 and not c.is_tensor_scaling
+    e = fp8_builder.build_fp8_fwd_graph(cudnn, handle=1, cfg=c)
+    assert {"DescaleQ", "DescaleK", "DescaleV", "O", "Stats"} <= set(e.tensors)
+    # No scalar descale_s / scale_s / scale_o and no surfaced amaxes for MXFP8.
+    assert not ({"DescaleS", "ScaleS", "ScaleO", "AmaxS", "AmaxO"} & set(e.tensors))
+    plan = serialize_mod.build_plan(
+        cudnn, _mxfp8_cfg(_rt(12800)), config.Pass.Fwd, attn_scale=1.0, cudnn_frontend_version=12800
+    )
+    assert {int(U.O), int(U.Stats)} <= set(plan.output_uids)
+    assert int(U.AmaxO) not in plan.output_uids and int(U.AmaxS) not in plan.output_uids
+    assert {int(U.DescaleQ), int(U.DescaleK), int(U.DescaleV)} <= set(plan.input_uids)
 
 
 def test_stage6_fp8_plan_roles():
