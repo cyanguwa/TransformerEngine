@@ -17,10 +17,13 @@ module supplies the framework-specific runtime the core needs:
   ``graph.execute``.
 
 Scope: F16/BF16 forward + backward (exposed as a ``torch.autograd.Function`` via
-:func:`fused_attn_py_f16`), including THD ragged offsets and paged-KV forward.
-Dispatch wiring into ``FusedAttnFunc`` is intentionally left out here so it can be
-placed alongside the ``FusedAttentionParams`` work without churn -- callers reach
-this path explicitly via :func:`fused_attn_fwd_f16` / :func:`fused_attn_bwd_f16`.
+:func:`fused_attn_py_f16`), including THD ragged offsets and paged-KV forward, plus
+the FP8/MXFP8 forward + backward execute functions (:func:`fused_attn_fwd_fp8` /
+:func:`fused_attn_bwd_fp8`), which bind the caller's quantized inputs / scale
+tensors and allocate outputs. Dispatch wiring into ``FusedAttnFunc`` (and the FP8
+quantizer plumbing) is intentionally left out here so it can be placed alongside
+the ``FusedAttentionParams`` work without churn -- callers reach this path
+explicitly via the ``fused_attn_fwd_*`` / ``fused_attn_bwd_*`` functions.
 
 Everything cuDNN/torch-specific is imported lazily so this module can be
 imported (and its gate queried) without a GPU or the cuDNN Python package.
@@ -37,13 +40,19 @@ from transformer_engine.common.fused_attn_py.builders.f16 import (
     build_f16_bwd_graph,
     build_f16_fwd_graph,
 )
-from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass
+from transformer_engine.common.fused_attn_py.builders.fp8 import (
+    build_fp8_bwd_graph,
+    build_fp8_fwd_graph,
+)
+from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass, _canonical_dtype
 from transformer_engine.common.fused_attn_py.strides import qkvo_dims_strides
 
 # Process-wide graph caches, shared with the support probe so a graph the probe
 # built is reused here rather than rebuilt.
 FWD_GRAPH_CACHE = GraphCache()
 BWD_GRAPH_CACHE = GraphCache()
+FP8_FWD_GRAPH_CACHE = GraphCache()
+FP8_BWD_GRAPH_CACHE = GraphCache()
 
 _CUDNN_HANDLES: Dict[Any, Any] = {}
 _F16_AUTOGRAD_FN = None
@@ -323,6 +332,202 @@ def fused_attn_py_f16(
     )
 
 
+def _torch_dtype(dtype):
+    """Map a neutral canonical dtype (or NVTE enum/name) to a torch dtype."""
+    import torch
+
+    name = _canonical_dtype(dtype)
+    mapping = {
+        "FLOAT16": torch.float16,
+        "BFLOAT16": torch.bfloat16,
+        "FLOAT32": torch.float32,
+        "FLOAT8E4M3": torch.float8_e4m3fn,
+        "FLOAT8E5M2": torch.float8_e5m2,
+    }
+    if name not in mapping:
+        raise ValueError(f"fused_attn_py: no torch dtype for canonical dtype {name!r}.")
+    return mapping[name]
+
+
+def _get_fp8_fwd_graph(cudnn, handle, cfg: FusedAttnConfig):
+    """Build or fetch the cached FP8/MXFP8 forward graph for this config."""
+    cfg.check_derived()
+    key = cfg.make_cache_key(Pass.Fwd)
+    return FP8_FWD_GRAPH_CACHE.get_or_build(key, lambda: build_fp8_fwd_graph(cudnn, handle, cfg))
+
+
+def _get_fp8_bwd_graph(cudnn, handle, cfg: FusedAttnConfig):
+    """Build or fetch the cached FP8/MXFP8 backward graph for this config."""
+    cfg.check_derived()
+    key = cfg.make_cache_key(Pass.Bwd)
+    return FP8_BWD_GRAPH_CACHE.get_or_build(key, lambda: build_fp8_bwd_graph(cudnn, handle, cfg))
+
+
+def _bind_fp8_inputs(variant_pack, t, fp8_tensors) -> None:
+    """Bind the caller's FP8 device inputs (descales/scales + MXFP8 helpers) by role.
+
+    ``fp8_tensors`` maps builder role names (``"DescaleQ"``, ``"ScaleS"``,
+    ``"ScaleO"``, ..., and for MXFP8 ``"Qt"``/``"Kt"``/``"dOf16"``/``"dOt"`` and
+    their block descales) to device tensors. Only roles the graph actually declares
+    are bound (current-scaling ``Scale_*`` are baked-in 1.0 constants, so those
+    roles are absent from ``t`` and correctly skipped).
+    """
+    if not fp8_tensors:
+        return
+    for role, tensor in fp8_tensors.items():
+        if role in t:
+            _require(tensor, role)
+            variant_pack[t[role]] = tensor
+
+
+def _alloc_amaxes(variant_pack, t, roles, device):
+    """Allocate + bind the amax scalar outputs the graph declares. Returns a dict."""
+    import torch
+
+    amaxes: Dict[str, Any] = {}
+    for role in roles:
+        if role in t:
+            a = torch.empty((1, 1, 1, 1), dtype=torch.float32, device=device)
+            variant_pack[t[role]] = a
+            amaxes[role] = a
+    return amaxes
+
+
+def fused_attn_fwd_fp8(
+    cfg: FusedAttnConfig,
+    q,
+    k,
+    v,
+    *,
+    attn_scale: float,
+    fp8_tensors: Dict[str, Any],
+    seq_len_q=None,
+    seq_len_kv=None,
+    dropout_seed=None,
+    dropout_offset=None,
+    ragged_offsets: Optional[Dict[str, Any]] = None,
+    page_tables: Optional[Dict[str, Any]] = None,
+) -> Tuple[Any, Any, Dict[str, Any]]:
+    """Run the FP8/MXFP8 forward SDPA through the Python cuDNN graph path.
+
+    ``q``/``k``/``v`` are the FP8 inputs. ``fp8_tensors`` supplies every FP8 device
+    input the graph declares (tensor scaling: ``Descale_q/k/v/s``, ``Scale_s`` and,
+    for delayed scaling, ``Scale_o``; MXFP8: the ``FP8_E8M0`` block descales). ``O``
+    is allocated with ``cfg.o_dtype``, ``Stats`` is float32; the amax outputs are
+    allocated only when the graph surfaces them (tensor scaling only). Returns
+    ``(o, stats, amaxes)`` where ``amaxes`` is a role-keyed dict (empty for MXFP8).
+    """
+    import torch
+
+    cudnn = _import_cudnn()
+    handle = _get_cudnn_handle(q.device)
+    entry = _get_fp8_fwd_graph(cudnn, handle, cfg)
+
+    ds = qkvo_dims_strides(cfg)
+    o_dim, o_stride = ds["O"]
+    b, h, s_q = int(cfg.graph_batch_size_fwd), int(cfg.num_attn_heads), int(cfg.graph_max_seqlen_q)
+    o = torch.empty_strided(o_dim, o_stride, dtype=_torch_dtype(cfg.o_dtype), device=q.device)
+    stats = torch.empty((b, h, s_q, 1), dtype=torch.float32, device=q.device)
+
+    t = entry.tensors
+    scale = torch.full((1, 1, 1, 1), float(attn_scale), dtype=torch.float32, device=q.device)
+    variant_pack: Dict[Any, Any] = {
+        t["Q"]: q,
+        t["K"]: k,
+        t["V"]: v,
+        t["attn_scale"]: scale,
+        t["O"]: o,
+        t["Stats"]: stats,
+    }
+    _bind_fp8_inputs(variant_pack, t, fp8_tensors)
+    amaxes = _alloc_amaxes(variant_pack, t, ("AmaxS", "AmaxO"), q.device)
+    if cfg.is_padding:
+        _require(seq_len_q, "seq_len_q")
+        _require(seq_len_kv, "seq_len_kv")
+        variant_pack[t["seq_q"]] = seq_len_q
+        variant_pack[t["seq_kv"]] = seq_len_kv
+    if cfg.is_dropout:
+        _require(dropout_seed, "dropout_seed")
+        _require(dropout_offset, "dropout_offset")
+        variant_pack[t["dropout_seed"]] = dropout_seed
+        variant_pack[t["dropout_offset"]] = dropout_offset
+    _bind_extra(variant_pack, t, ragged_offsets, page_tables)
+
+    workspace = torch.empty(entry.workspace_size, dtype=torch.uint8, device=q.device)
+    entry.graph.execute(variant_pack, workspace, handle=handle)
+    return o, stats, amaxes
+
+
+def fused_attn_bwd_fp8(
+    cfg: FusedAttnConfig,
+    q,
+    k,
+    v,
+    o,
+    d_o,
+    stats,
+    *,
+    attn_scale: float,
+    fp8_tensors: Dict[str, Any],
+    seq_len_q=None,
+    seq_len_kv=None,
+    dropout_seed=None,
+    dropout_offset=None,
+    ragged_offsets: Optional[Dict[str, Any]] = None,
+) -> Tuple[Any, Any, Any, Dict[str, Any]]:
+    """Run the FP8/MXFP8 backward SDPA. Returns ``(dQ, dK, dV, amaxes)``.
+
+    ``fp8_tensors`` supplies every FP8 device input the graph declares -- the
+    descales/scales (tensor scaling) or block descales plus the transpose/f16
+    helper tensors ``Qt``/``Kt``/``dOf16``/``dOt`` (MXFP8). Grads are allocated with
+    ``cfg.dqkv_dtype``; the grad amaxes are allocated only when the graph surfaces
+    them (tensor scaling only) and returned in the ``amaxes`` dict.
+    """
+    import torch
+
+    cudnn = _import_cudnn()
+    handle = _get_cudnn_handle(q.device)
+    entry = _get_fp8_bwd_graph(cudnn, handle, cfg)
+
+    ds = qkvo_dims_strides(cfg, batch_size=int(cfg.graph_batch_size_bwd))
+    dqkv_dtype = _torch_dtype(cfg.dqkv_dtype)
+    d_q = torch.empty_strided(ds["Q"][0], ds["Q"][1], dtype=dqkv_dtype, device=q.device)
+    d_k = torch.empty_strided(ds["K"][0], ds["K"][1], dtype=dqkv_dtype, device=q.device)
+    d_v = torch.empty_strided(ds["V"][0], ds["V"][1], dtype=dqkv_dtype, device=q.device)
+
+    t = entry.tensors
+    scale = torch.full((1, 1, 1, 1), float(attn_scale), dtype=torch.float32, device=q.device)
+    variant_pack: Dict[Any, Any] = {
+        t["Q"]: q,
+        t["K"]: k,
+        t["V"]: v,
+        t["O"]: o,
+        t["dO"]: d_o,
+        t["stats"]: stats,
+        t["attn_scale"]: scale,
+        t["dQ"]: d_q,
+        t["dK"]: d_k,
+        t["dV"]: d_v,
+    }
+    _bind_fp8_inputs(variant_pack, t, fp8_tensors)
+    amaxes = _alloc_amaxes(variant_pack, t, ("AmaxdQ", "AmaxdK", "AmaxdV", "AmaxdP"), q.device)
+    if cfg.is_padding:
+        _require(seq_len_q, "seq_len_q")
+        _require(seq_len_kv, "seq_len_kv")
+        variant_pack[t["seq_q"]] = seq_len_q
+        variant_pack[t["seq_kv"]] = seq_len_kv
+    if cfg.is_dropout:
+        _require(dropout_seed, "dropout_seed")
+        _require(dropout_offset, "dropout_offset")
+        variant_pack[t["dropout_seed"]] = dropout_seed
+        variant_pack[t["dropout_offset"]] = dropout_offset
+    _bind_extra(variant_pack, t, ragged_offsets, None)
+
+    workspace = torch.empty(entry.workspace_size, dtype=torch.uint8, device=q.device)
+    entry.graph.execute(variant_pack, workspace, handle=handle)
+    return d_q, d_k, d_v, amaxes
+
+
 def _require(value: Optional[Any], name: str) -> None:
     if value is None:
         raise ValueError(f"fused_attn_fwd_f16: cfg requires '{name}' but it was not provided.")
@@ -348,6 +553,10 @@ __all__ = [
     "fused_attn_fwd_f16",
     "fused_attn_bwd_f16",
     "fused_attn_py_f16",
+    "fused_attn_fwd_fp8",
+    "fused_attn_bwd_fp8",
     "FWD_GRAPH_CACHE",
     "BWD_GRAPH_CACHE",
+    "FP8_FWD_GRAPH_CACHE",
+    "FP8_BWD_GRAPH_CACHE",
 ]
