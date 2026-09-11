@@ -310,12 +310,23 @@ class _FakeCudnnGraph:
         self.calls = []
         self.sdpa_kwargs = None
 
-    def tensor(self, **kw):
+    def tensor(self, value=None, **kw):
+        # ``value`` supports the ``graph.tensor(1.0)`` constant used for the FP8
+        # current-scaling Scale_o.
         return _FakeCudnnTensor(**kw)
 
     def sdpa(self, q, k, v, **kw):
         self.sdpa_kwargs = kw
         return _FakeCudnnTensor(name="O"), _FakeCudnnTensor(name="Stats")
+
+    def sdpa_fp8(self, q, k, v, *scales, **kw):
+        self.sdpa_kwargs = kw
+        return (
+            _FakeCudnnTensor(name="O"),
+            _FakeCudnnTensor(name="Stats"),
+            _FakeCudnnTensor(name="Amax_s"),
+            _FakeCudnnTensor(name="Amax_o"),
+        )
 
     def sdpa_backward(self, q, k, v, o, dO, stats, **kw):
         self.sdpa_kwargs = kw
@@ -359,6 +370,9 @@ class _FakeCudnn:
         FLOAT = "FLOAT"
         INT32 = "INT32"
         INT64 = "INT64"
+        FP8_E4M3 = "FP8_E4M3"
+        FP8_E5M2 = "FP8_E5M2"
+        FP8_E8M0 = "FP8_E8M0"
 
     class diagonal_alignment:  # noqa: N801
         TOP_LEFT = "TL"
@@ -588,6 +602,76 @@ def test_stage4_thd_ragged_and_paged():
         f16_builder.build_f16_bwd_graph(
             cudnn, handle=1, cfg=config.FusedAttnConfig(**_PAGED).derive(_rt(12600))
         )
+
+
+fp8_builder = importlib.import_module("transformer_engine.common.fused_attn_py.builders.fp8")
+
+
+def _fp8_cfg(rt, *, o_dtype="kNVTEFloat8E4M3", **over):
+    """Delayed (FP8 out) or current (F16 out) tensor-scaling FP8 config."""
+    base = dict(
+        qkv_layout="NVTE_BSHD_BSHD_BSHD",
+        batch_size=2,
+        num_attn_heads=8,
+        num_gqa_groups=8,
+        head_dim_qk=64,
+        head_dim_v=64,
+        max_seqlen_q=128,
+        max_seqlen_kv=128,
+        qkv_dtype="kNVTEFloat8E4M3",
+        o_dtype=o_dtype,
+        scaling_mode="NVTE_DELAYED_TENSOR_SCALING",
+    )
+    base.update(over)
+    return config.FusedAttnConfig(**base).derive(rt)
+
+
+def test_stage6_fp8_fwd_builder():
+    """FP8 forward builder: tensor-scaling descale/scale/amax tensors + dispatch."""
+    cudnn = _FakeCudnn()
+
+    # Delayed scaling (FP8 output): real Scale_o input; descales + amaxes present.
+    c = _fp8_cfg(_rt(12800))
+    assert c.is_tensor_scaling and c.is_delayed_scaling_fwd
+    e = fp8_builder.build_fp8_fwd_graph(cudnn, handle=1, cfg=c)
+    scale_in = {"DescaleQ", "DescaleK", "DescaleV", "DescaleS", "ScaleS", "ScaleO"}
+    assert scale_in <= set(e.tensors)
+    assert {"O", "Stats", "AmaxS", "AmaxO"} <= set(e.tensors)
+    # attn_scale is a pass-by-value scalar and carries the FP8 AttnScale UID (49).
+    assert e.uids["attn_scale"] == int(uids_mod.FusedAttnUIDFP8.AttnScale) == 49
+
+    # Current scaling (BF16 output): Scale_o is a baked-in constant, so no ScaleO
+    # input tensor / UID.
+    c = _fp8_cfg(_rt(12800), o_dtype="kNVTEBFloat16")
+    assert c.is_current_scaling_fwd and not c.is_delayed_scaling_fwd
+    e = fp8_builder.build_fp8_fwd_graph(cudnn, handle=1, cfg=c)
+    assert "ScaleO" not in e.tensors and "DescaleS" in e.tensors
+
+    # MXFP8 and FP8 backward are deferred; both must raise cleanly.
+    with pytest.raises(NotImplementedError):
+        fp8_builder.build_fp8_fwd_graph(
+            cudnn, handle=1, cfg=_fp8_cfg(_rt(12800), scaling_mode="NVTE_MXFP8_1D_SCALING")
+        )
+    with pytest.raises(NotImplementedError):
+        serialize_mod.build_plan(
+            cudnn, _fp8_cfg(_rt(12800)), config.Pass.Bwd, attn_scale=1.0
+        )
+
+
+def test_stage6_fp8_plan_roles():
+    """serialize_entry splits FP8 roles: amaxes are outputs, descales are inputs."""
+    cudnn = _FakeCudnn()
+    U = uids_mod.FusedAttnUIDFP8
+    plan = serialize_mod.build_plan(
+        cudnn, _fp8_cfg(_rt(12800)), config.Pass.Fwd, attn_scale=1.3, cudnn_frontend_version=12800
+    )
+    # Amax_s / Amax_o are graph outputs; O and Stats too.
+    assert {int(U.AmaxS), int(U.AmaxO), int(U.O), int(U.Stats)} <= set(plan.output_uids)
+    # Descales/scales are ordinary device inputs (not scalars, not outputs).
+    assert {int(U.DescaleQ), int(U.DescaleS), int(U.ScaleS), int(U.ScaleO)} <= set(plan.input_uids)
+    # attn_scale is the only pass-by-value scalar.
+    assert plan.scalar_uids == [int(U.AttnScale)]
+    assert plan.scalar_sizes == [4] and len(plan.scalar_values) == 16
 
 
 serialize_mod = importlib.import_module("transformer_engine.common.fused_attn_py.serialize")

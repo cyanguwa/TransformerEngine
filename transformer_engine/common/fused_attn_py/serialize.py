@@ -30,8 +30,26 @@ from .config import FusedAttnConfig, Pass
 
 # Roles that are graph *outputs*; every other declared (non-scalar) role is an
 # input. Forward emits O and "Stats"; backward's "stats" (lowercase) is an
-# *input*, and it emits dQ/dK/dV plus dBias (when computable).
-_OUTPUT_ROLES = frozenset({"O", "Stats", "dQ", "dK", "dV", "dBias"})
+# *input*, and it emits dQ/dK/dV plus dBias (when computable). FP8 forward also
+# emits the amax outputs (Amax_s / Amax_o); FP8 backward emits dQ/dK/dV amaxes.
+# The FP8 descale/scale tensors are ordinary device *inputs*, so they are not
+# listed here.
+_OUTPUT_ROLES = frozenset(
+    {
+        "O",
+        "Stats",
+        "dQ",
+        "dK",
+        "dV",
+        "dBias",
+        "AmaxS",
+        "AmaxO",
+        "AmaxdP",
+        "AmaxdQ",
+        "AmaxdK",
+        "AmaxdV",
+    }
+)
 
 # Pass-by-value scalar roles: these are bound to the graph as host scalars, not
 # device buffers, so the executor carries them in scalar_uids/values (16-byte
@@ -203,23 +221,34 @@ def build_plan(
     cudnn_version: Optional[int] = None,
     cudnn_frontend_version: Optional[int] = None,
 ) -> Plan:
-    """Build the F16 graph for ``pass_`` and serialize it into a :class:`Plan`.
+    """Build the graph for ``pass_`` and serialize it into a :class:`Plan`.
 
     The shared build+serialize step both framework bridges use at lowering time.
-    ``handle`` may be ``None`` -- a graph can be built and serialized without a
-    device handle (the executor deserializes against its own handle), which is
-    what lets JAX produce the blob as a compile-time constant. ``attn_scale`` is
-    the compile-time softmax scale packed as the graph's pass-by-value scalar.
-    ``cudnn_version`` is the cuDNN *backend* version the builder gates masking
-    features on (defaults to ``cudnn.backend_version()``); ``cudnn_frontend_version``
-    is the *frontend* version stamped into the Plan for the deserialize check.
+    Dispatches to the F16 or FP8 builder based on the derived config's scaling
+    mode. ``handle`` may be ``None`` -- a graph can be built and serialized
+    without a device handle (the executor deserializes against its own handle),
+    which is what lets JAX produce the blob as a compile-time constant.
+    ``attn_scale`` is the compile-time softmax scale packed as the graph's
+    pass-by-value scalar. ``cudnn_version`` is the cuDNN *backend* version the
+    builder gates masking features on (defaults to ``cudnn.backend_version()``);
+    ``cudnn_frontend_version`` is the *frontend* version stamped into the Plan for
+    the deserialize check.
     """
     # Imported here (not at module load) to keep the cudnn-free import surface of
     # serialize.py minimal; builders only pull in the neutral config/strides/uids.
-    from .builders.f16 import build_f16_bwd_graph, build_f16_fwd_graph
+    if cfg.is_tensor_scaling or cfg.is_mxfp8:
+        from .builders.fp8 import build_fp8_fwd_graph
 
-    builder = build_f16_fwd_graph if pass_ is Pass.Fwd else build_f16_bwd_graph
-    entry = builder(cudnn, handle, cfg, cudnn_version=cudnn_version)
+        if pass_ is not Pass.Fwd:
+            raise NotImplementedError(
+                "fused_attn_py: FP8 backward Plan is not wired yet (Stage 6 is FP8 forward only)."
+            )
+        entry = build_fp8_fwd_graph(cudnn, handle, cfg, cudnn_version=cudnn_version)
+    else:
+        from .builders.f16 import build_f16_bwd_graph, build_f16_fwd_graph
+
+        builder = build_f16_fwd_graph if pass_ is Pass.Fwd else build_f16_bwd_graph
+        entry = builder(cudnn, handle, cfg, cudnn_version=cudnn_version)
     return serialize_entry(
         cudnn,
         entry,
