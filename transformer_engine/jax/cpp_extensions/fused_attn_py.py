@@ -72,28 +72,29 @@ def make_runtime_info(cudnn: Any, *, device: Any = None) -> RuntimeInfo:
     """Collect the device/library facts ``FusedAttnConfig.derive()`` needs on JAX.
 
     ``sm_arch`` comes from the target device's compute capability, the cuDNN
-    backend version from ``cudnn.backend_version()``, and the frontend versions
-    from the Python package (``cudnn.__version__``) and the C++ build
-    (``transformer_engine_jax.get_cudnn_frontend_version()``). Mirrors what the
-    C++ ``derive()`` reads from ``cudnnGetVersion`` / ``cuda::sm_arch``.
+    backend version (runtime == build) from ``cudnn.backend_version()``, and the
+    frontend version from the Python package (``cudnn.__version__``). Mirrors what
+    the C++ ``derive()`` reads from ``cudnnGetVersion`` / ``cuda::sm_arch``.
     """
     import jax
-
-    import transformer_engine_jax
 
     from transformer_engine.common.fused_attn_py.serialize import encode_cudnn_frontend_version
 
     if device is None:
         device = jax.local_devices()[0]
     sm_arch = _parse_sm_arch(device.compute_capability)
+    # cudnn_version / cudnn_build_version are cuDNN *backend* versions (runtime vs
+    # compile-time); JAX links a single cuDNN, so runtime == build. This field
+    # gates backend features in derive() (e.g. uses_cu_seqlens_directly, which
+    # compares it against a backend version like 92500) -- it must NOT be the
+    # frontend version. The *frontend* version is carried separately below.
     cudnn_version = int(cudnn.backend_version())
     fe_python = encode_cudnn_frontend_version(getattr(cudnn, "__version__"))
-    fe_cpp = int(transformer_engine_jax.get_cudnn_frontend_version())
     return RuntimeInfo(
         sm_arch=sm_arch,
         cudnn_version=cudnn_version,
         cudnn_frontend_version=fe_python,
-        cudnn_build_version=fe_cpp,
+        cudnn_build_version=cudnn_version,
     )
 
 
