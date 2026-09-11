@@ -13,12 +13,17 @@
 #include "../extensions.h"
 #include "common/common.h"
 #include "pybind.h"
+#include "transformer_engine/cudnn.h"
 
 namespace transformer_engine::pytorch {
 
 size_t get_cublasLt_version() { return cublasLtGetVersion(); }
 
 size_t get_cudnn_version() { return cudnnGetVersion(); }
+
+size_t get_cudnn_handle() {
+  return reinterpret_cast<size_t>(transformer_engine::nvte_get_cudnn_handle());
+}
 
 at::Tensor splits_to_offsets(const at::Tensor &first_dims, int64_t logical_last_dim) {
   NVTE_CHECK(first_dims.is_cuda(), "first_dims must be on CUDA.");

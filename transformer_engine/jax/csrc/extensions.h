@@ -152,6 +152,10 @@ XLA_FFI_DECLARE_HANDLER_SYMBOL(FusedAttnScoreModForwardHandler);
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(FusedAttnScoreModBackwardHandler);
 
+XLA_FFI_DECLARE_HANDLER_SYMBOL(FusedAttnFp8ForwardHandler);
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(FusedAttnFp8BackwardHandler);
+
 std::tuple<NVTE_Fused_Attn_Backend, std::string> GetFusedAttnBackend(
     const pybind11::object &params);
 

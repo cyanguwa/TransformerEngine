@@ -70,6 +70,12 @@ pybind11::dict Registrations() {
   dict["te_fused_attn_score_mod_backward_ffi"] =
       pybind11::dict(pybind11::arg("prepare") = EncapsulateFFI(CudnnHandleInitHandler),
                      pybind11::arg("execute") = EncapsulateFFI(FusedAttnScoreModBackwardHandler));
+  dict["te_fused_attn_fp8_forward_ffi"] =
+      pybind11::dict(pybind11::arg("prepare") = EncapsulateFFI(CudnnHandleInitHandler),
+                     pybind11::arg("execute") = EncapsulateFFI(FusedAttnFp8ForwardHandler));
+  dict["te_fused_attn_fp8_backward_ffi"] =
+      pybind11::dict(pybind11::arg("prepare") = EncapsulateFFI(CudnnHandleInitHandler),
+                     pybind11::arg("execute") = EncapsulateFFI(FusedAttnFp8BackwardHandler));
 
   // GEMM
   dict["te_gemm_ffi"] =

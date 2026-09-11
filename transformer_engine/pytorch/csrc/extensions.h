@@ -572,6 +572,10 @@ size_t get_cublasLt_version();
 
 size_t get_cudnn_version();
 
+// Opaque cuDNN handle for the current device, returned as an integer so Python
+// fused-attention graph builders can pass it to cudnn.pygraph(handle=...).
+size_t get_cudnn_handle();
+
 at::Tensor splits_to_offsets(const at::Tensor &first_dims, int64_t logical_last_dim);
 std::tuple<at::Tensor, std::vector<at::Tensor>> splits_to_offsets_multi(
     const at::Tensor &split_sizes, const c10::Device &device, const std::vector<int64_t> &strides,

@@ -24,6 +24,15 @@ namespace transformer_engine {
 
 void nvte_cudnn_handle_init();
 
+/*! \brief Return the current thread/device cuDNN handle as an opaque pointer.
+ *
+ * This is the seam Python fused-attention graph builders use to drive the same
+ * handle the C++ path uses, e.g. ``cudnn.pygraph(handle=<int>)``. The returned
+ * pointer is owned by TransformerEngine's per-device handle manager; callers
+ * must not destroy it.
+ */
+void *nvte_get_cudnn_handle();
+
 }  // namespace transformer_engine
 
 #endif  // TRANSFORMER_ENGINE_CUDNN_H_

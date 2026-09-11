@@ -75,6 +75,7 @@ from transformer_engine.pytorch.cpu_offload_v1 import is_current_layer_offloaded
 
 # Import attention utils
 import transformer_engine.pytorch.attention.dot_product_attention.utils as dpa_utils
+from transformer_engine.pytorch.attention.dot_product_attention import fused_attn_py
 from transformer_engine.pytorch.attention.dot_product_attention.utils import (
     FlashAttentionUtils as fa_utils,
     combine_and_quantize,
@@ -2044,6 +2045,111 @@ class FusedAttnFunc(torch.autograd.Function):
         )
 
 
+def _nvte_dtype_name(torch_dtype) -> str:
+    """Map a torch F16/BF16 dtype to the neutral canonical NVTE dtype name."""
+    return {
+        torch.float16: "kNVTEFloat16",
+        torch.bfloat16: "kNVTEBFloat16",
+    }[torch_dtype]
+
+
+def _maybe_fused_attn_py_forward(
+    module,
+    query_layer,
+    key_layer,
+    value_layer,
+    *,
+    qkv_layout,
+    qkv_format,
+    batch_size,
+    max_seqlen_q,
+    max_seqlen_kv,
+    attn_mask_type,
+    window_size,
+    bottom_right_diagonal,
+    core_attention_bias_type,
+    fp8,
+    context_parallel,
+    return_max_logit,
+    softmax_offset,
+    page_table,
+    inference_params,
+    packed_qkv,
+    packed_kv,
+):
+    """Opt-in F16/BF16 dispatch to the Python ``fused_attn_py`` path; else ``None``.
+
+    Returns the attention output in the framework layout (so the caller's
+    ``.view(*shape[:-2], -1)`` collapses ``(h, d)``), or ``None`` to fall back to the
+    default C-API :class:`FusedAttnFunc` path. Deliberately conservative: this
+    handles only the cleanly-portable slice (separate-QKV ``bshd``/``sbhd``,
+    non-padding masks, no bias/dropout/FP8/paged/CP/packed/softmax-sink) so that a
+    wrong-shape or unsupported case always defers to the validated default rather
+    than risking silently wrong results. The gate (``NVTE_FUSED_ATTN_PY``) is
+    checked by the caller, so there is zero overhead when it is off.
+    """
+    if fp8 or context_parallel or return_max_logit:
+        return None
+    if module.softmax_type != "vanilla" or softmax_offset is not None:
+        return None
+    if page_table is not None or inference_params is not None:
+        return None
+    if packed_qkv is not None or packed_kv is not None:
+        return None
+    if qkv_format not in ("bshd", "sbhd"):
+        return None
+    if "padding" in attn_mask_type or core_attention_bias_type != "no_bias":
+        return None
+    dropout_p = module.attention_dropout if module.training else 0.0
+    if dropout_p and float(dropout_p) > 0.0:
+        return None
+    if query_layer.dtype not in (torch.float16, torch.bfloat16):
+        return None
+
+    try:
+        from transformer_engine.common.fused_attn_py.config import FusedAttnConfig
+
+        win = window_size if window_size is not None else (-1, -1)
+        cfg = FusedAttnConfig(
+            is_training=module.training,
+            deterministic=module.deterministic,
+            attn_mask_type=attn_mask_type,
+            bias_type=core_attention_bias_type,
+            window_size_left=int(win[0]),
+            window_size_right=int(win[1]),
+            bottom_right_diagonal=(
+                True if bottom_right_diagonal is None else bool(bottom_right_diagonal)
+            ),
+            softmax_type=module.softmax_type,
+            dropout=0.0,
+            attn_scale=float(module.softmax_scale),
+            qkv_dtype=_nvte_dtype_name(query_layer.dtype),
+            o_dtype=_nvte_dtype_name(query_layer.dtype),
+            qkv_layout=qkv_layout,
+            batch_size=int(batch_size),
+            num_attn_heads=int(query_layer.shape[-2]),
+            num_gqa_groups=int(key_layer.shape[-2]),
+            head_dim_qk=int(query_layer.shape[-1]),
+            head_dim_v=int(value_layer.shape[-1]),
+            max_seqlen_q=int(max_seqlen_q),
+            max_seqlen_kv=int(max_seqlen_kv),
+        )
+        runtime = fused_attn_py.make_runtime_info(device=query_layer.device)
+        cfg = cfg.derive(runtime)
+        o = fused_attn_py.fused_attn_py_f16(
+            cfg, query_layer, key_layer, value_layer, attn_scale=float(module.softmax_scale)
+        )
+    except Exception:  # pylint: disable=broad-except
+        # Any build/support/execution issue -> defer to the default C-API path.
+        return None
+
+    # ``o`` is BHSD-logical ([b, h, s, d]) with physical strides matching
+    # ``qkv_layout``; permute to the framework layout so ``.view`` collapses (h, d).
+    if qkv_format == "bshd":
+        return o.permute(0, 2, 1, 3)
+    return o.permute(2, 0, 1, 3)  # sbhd
+
+
 class FusedAttention(torch.nn.Module):
     """Dot product attention using `cuDNN attention <https://github.com/NVIDIA/cudnn-frontend>`_:
 
@@ -2339,6 +2445,34 @@ class FusedAttention(torch.nn.Module):
                 score_mod_bprop_tensors,
                 self.deterministic,
             )
+        elif fused_attn_py.fused_attn_py_enabled() and (
+            _py_output := _maybe_fused_attn_py_forward(
+                self,
+                query_layer,
+                key_layer,
+                value_layer,
+                qkv_layout=qkv_layout,
+                qkv_format=qkv_format,
+                batch_size=batch_size,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_kv=max_seqlen_kv,
+                attn_mask_type=attn_mask_type,
+                window_size=window_size,
+                bottom_right_diagonal=bottom_right_diagonal,
+                core_attention_bias_type=core_attention_bias_type,
+                fp8=fp8,
+                context_parallel=context_parallel,
+                return_max_logit=self.return_max_logit,
+                softmax_offset=softmax_offset,
+                page_table=page_table,
+                inference_params=inference_params,
+                packed_qkv=packed_qkv,
+                packed_kv=packed_kv,
+            )
+        ) is not None:
+            # Opt-in Python fused-attention path (NVTE_FUSED_ATTN_PY); falls back to
+            # the default FusedAttnFunc below whenever the helper returns None.
+            output = _py_output
         else:
             with self.attention_dropout_ctx():
                 output = FusedAttnFunc.apply(
