@@ -44,7 +44,13 @@ from transformer_engine.common.fused_attn_py.builders.fp8 import (
     build_fp8_bwd_graph,
     build_fp8_fwd_graph,
 )
-from transformer_engine.common.fused_attn_py.config import FusedAttnConfig, Pass, _canonical_dtype
+from transformer_engine.common.fused_attn_py.config import (
+    FusedAttnConfig,
+    Pass,
+    RuntimeInfo,
+    _canonical_dtype,
+)
+from transformer_engine.common.fused_attn_py.serialize import encode_cudnn_frontend_version
 from transformer_engine.common.fused_attn_py.strides import qkvo_dims_strides
 
 # Process-wide graph caches, shared with the support probe so a graph the probe
@@ -71,6 +77,56 @@ def _import_cudnn():
             "The Python fused-attention path needs the cuDNN frontend package. "
             "Install it with: pip install nvidia-cudnn-frontend"
         ) from exc
+
+
+def _encode_cudnn_backend_version(version: Tuple[int, int, int]) -> int:
+    """Encode a ``(major, minor, patch)`` cuDNN backend version as ``M*10000+m*100+p``."""
+    major, minor, patch = version
+    return int(major) * 10000 + int(minor) * 100 + int(patch)
+
+
+def make_runtime_info(*, device=None) -> RuntimeInfo:
+    """Collect the device/library facts ``FusedAttnConfig.derive()`` needs on PyTorch.
+
+    ``sm_arch`` comes from the target CUDA device's compute capability, the cuDNN
+    *backend* version from ``transformer_engine_torch.get_cudnn_version()`` (used
+    both as the runtime and the build version -- PyTorch links a single cuDNN, so
+    they match), and the *frontend* version from the Python ``cudnn`` package
+    (``cudnn.__version__``). Mirrors the JAX ``make_runtime_info`` and what the C++
+    ``derive()`` reads from ``cudnnGetVersion`` / ``cuda::sm_arch``.
+    """
+    import torch
+
+    from transformer_engine.pytorch.utils import get_cudnn_version
+
+    cudnn = _import_cudnn()
+    if device is None:
+        device = torch.device("cuda", torch.cuda.current_device())
+    major, minor = torch.cuda.get_device_capability(device)
+    backend = _encode_cudnn_backend_version(get_cudnn_version())
+    fe_python = encode_cudnn_frontend_version(getattr(cudnn, "__version__"))
+    return RuntimeInfo(
+        sm_arch=int(major) * 10 + int(minor),
+        cudnn_version=backend,
+        cudnn_frontend_version=fe_python,
+        cudnn_build_version=backend,
+        device_id=device.index or 0,
+    )
+
+
+def config_from_fused_attn_params(
+    params: Any, runtime: RuntimeInfo, **overrides
+) -> FusedAttnConfig:
+    """Adapt a PyTorch ``FusedAttentionParams`` into a derived neutral ``FusedAttnConfig``.
+
+    ``FusedAttentionParams`` (dot_product_attention/utils.py) mirrors the C++
+    ``FusedAttnConfig`` field names with ``tex.NVTE_*`` enums, so the neutral config
+    copies the same-named fields and normalizes the enums/dtypes by name via
+    :meth:`FusedAttnConfig.from_params`. ``overrides`` forwards any field the params
+    object does not carry (e.g. ``check_for_forward_support``). This is the seam a
+    future ``FusedAttnFunc`` dispatch uses to build the config from call-site args.
+    """
+    return FusedAttnConfig.from_params(params, **overrides).derive(runtime)
 
 
 def _get_cudnn_handle(device) -> Any:
@@ -550,6 +606,8 @@ def _bind_extra(variant_pack, t, ragged_offsets, page_tables) -> None:
 
 __all__ = [
     "fused_attn_py_enabled",
+    "make_runtime_info",
+    "config_from_fused_attn_params",
     "fused_attn_fwd_f16",
     "fused_attn_bwd_f16",
     "fused_attn_py_f16",
